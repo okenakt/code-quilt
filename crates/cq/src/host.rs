@@ -96,6 +96,22 @@ impl vt100::Callbacks for ExtraModes {
     }
 }
 
+/// Environment variables Claude Code sets for its own child processes.
+const NESTED_SESSION_VARS: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SSE_PORT",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+];
+
 /// Number of recent agent events replayed to newly connected hubs and monitors.
 const EVENT_HISTORY: usize = 200;
 
@@ -252,6 +268,11 @@ pub async fn run(args: HostArgs) -> Result<()> {
     cmd.args(rest);
     cmd.cwd(&args.cwd);
     cmd.env("CQ_SESSION_ID", &args.id);
+    // Markers of an enclosing Claude Code session (e.g. when cqd was started from one) would
+    // make the agent believe it is a child session and, among other things, disable transcripts.
+    for var in NESTED_SESSION_VARS {
+        cmd.env_remove(var);
+    }
     let mut child = pair.slave.spawn_command(cmd).with_context(|| format!("spawn {prog}"))?;
     drop(pair.slave);
 

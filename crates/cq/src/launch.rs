@@ -72,6 +72,29 @@ pub fn spawn_host(id: &str, agent: &str, cwd: &str, size: Size, command: &[Strin
     spawn_detached(&mut cmd, &paths::root()?.join("logs").join(format!("{id}.log")))
 }
 
+/// Starts a session without a local terminal (dashboard launch or resume). Returns the id.
+pub fn launch_detached(req: &cq_proto::Launch) -> Result<String> {
+    if req.agent != "claude" {
+        anyhow::bail!("unsupported agent '{}'", req.agent);
+    }
+    let cwd = crate::config::check_allowed(&req.cwd)?;
+    paths::ensure_dirs()?;
+    let settings = write_claude_settings()?;
+    let mut command = vec![
+        "claude".to_owned(),
+        "--settings".to_owned(),
+        settings.to_string_lossy().into_owned(),
+    ];
+    if let Some(id) = &req.resume {
+        command.extend(["--resume".to_owned(), id.clone()]);
+    }
+    command.extend(req.args.iter().cloned());
+    let size = Size { cols: req.cols.max(20), rows: req.rows.max(5) };
+    let id = session::new_id();
+    spawn_host(&id, &req.agent, &cwd.to_string_lossy(), size, &command)?;
+    Ok(id)
+}
+
 /// Runs `cq claude [args...]` and returns the process exit code.
 pub async fn claude(args: Vec<String>) -> Result<i32> {
     paths::ensure_dirs()?;

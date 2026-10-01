@@ -219,6 +219,20 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                     Message::Unsubscribe(session) => {
                         subs.remove(&session);
                     }
+                    Message::Launch(req) => {
+                        let reply = match crate::launch::launch_detached(&req) {
+                            Ok(id) => Message::Launched(id),
+                            Err(e) => Message::Error(format!("launch failed: {e:#}")),
+                        };
+                        let _ = out.send(reply);
+                    }
+                    Message::ListDir(path) => {
+                        let reply = match crate::config::list_dir(&path) {
+                            Ok(l) => Message::DirList(l),
+                            Err(e) => Message::Error(format!("{e:#}")),
+                        };
+                        let _ = out.send(reply);
+                    }
                     Message::Routed { session, inner } => {
                         // Approvals go through the monitor so they work without a subscription.
                         let target = match *inner {

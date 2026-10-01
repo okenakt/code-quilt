@@ -3,11 +3,13 @@
 
 mod agent;
 mod attach;
+mod config;
 mod daemon;
 mod hook;
 mod host;
 mod ipc;
 mod launch;
+mod machine;
 mod paths;
 mod session;
 mod term;
@@ -37,6 +39,11 @@ enum Cmd {
     Attach { id: String },
     /// List sessions.
     Ls,
+    /// Manage remote machines shown in the dashboard.
+    Machine {
+        #[command(subcommand)]
+        action: MachineCmd,
+    },
     /// Run the machine daemon that relays sessions to dashboards.
     Daemon,
     /// Relay stdin/stdout to the local daemon (for `ssh <host> cq bridge`).
@@ -63,6 +70,23 @@ enum Cmd {
     /// Agent status line endpoint (internal).
     #[command(hide = true)]
     Statusline,
+}
+
+#[derive(Subcommand)]
+enum MachineCmd {
+    /// List registered machines.
+    List,
+    /// Register a machine; without HOST, choose from ~/.ssh/config.
+    Add {
+        host: Option<String>,
+        #[arg(long)]
+        label: Option<String>,
+        /// Path of `cq` on the remote machine (default: `cq` on PATH).
+        #[arg(long)]
+        cq_path: Option<String>,
+    },
+    /// Unregister a machine.
+    Remove { id: String },
 }
 
 fn main() {
@@ -107,6 +131,14 @@ async fn run(cmd: Cmd) -> Result<i32> {
                     m.agent_session_id.as_deref().unwrap_or("-"),
                     m.cwd
                 );
+            }
+            Ok(0)
+        }
+        Cmd::Machine { action } => {
+            match action {
+                MachineCmd::List => machine::list()?,
+                MachineCmd::Add { host, label, cq_path } => machine::add(host, label, cq_path)?,
+                MachineCmd::Remove { id } => machine::remove(&id)?,
             }
             Ok(0)
         }

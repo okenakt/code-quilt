@@ -116,6 +116,31 @@ pub struct Subscribe {
     pub rows: u16,
 }
 
+/// Request to start a new agent session on the daemon's machine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Launch {
+    pub agent: String,
+    pub cwd: String,
+    /// Extra agent arguments.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Agent session id to resume (`claude --resume <id>`).
+    #[serde(default)]
+    pub resume: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// Directory listing for choosing a launch directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirList {
+    /// Listed directory, or empty when listing the allowed roots.
+    pub path: String,
+    pub parent: Option<String>,
+    pub entries: Vec<String>,
+    pub roots: Vec<String>,
+}
+
 /// A decoded protocol message.
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -141,6 +166,14 @@ pub enum Message {
     Unsubscribe(String),
     /// A session message relayed by the daemon, tagged with the session id.
     Routed { session: String, inner: Box<Message> },
+    /// Client to daemon: start a session.
+    Launch(Launch),
+    /// Daemon to client: a launched session's id.
+    Launched(String),
+    /// Client to daemon: list subdirectories (empty path lists the allowed roots).
+    ListDir(String),
+    /// Daemon to client: directory listing.
+    DirList(DirList),
 }
 
 mod kind {
@@ -159,6 +192,10 @@ mod kind {
     pub const SUBSCRIBE: u8 = 0x32;
     pub const UNSUBSCRIBE: u8 = 0x33;
     pub const ROUTED: u8 = 0x34;
+    pub const LAUNCH: u8 = 0x35;
+    pub const LAUNCHED: u8 = 0x36;
+    pub const LIST_DIR: u8 = 0x37;
+    pub const DIR_LIST: u8 = 0x38;
     pub const ERROR: u8 = 0x7f;
 }
 
@@ -202,6 +239,10 @@ impl Message {
                 b.extend_from_slice(&ip);
                 (kind::ROUTED, b)
             }
+            Message::Launch(v) => (kind::LAUNCH, serde_json::to_vec(v)?),
+            Message::Launched(s) => (kind::LAUNCHED, s.as_bytes().to_vec()),
+            Message::ListDir(s) => (kind::LIST_DIR, s.as_bytes().to_vec()),
+            Message::DirList(v) => (kind::DIR_LIST, serde_json::to_vec(v)?),
         })
     }
 
@@ -236,6 +277,10 @@ impl Message {
                 let inner = Box::new(Message::decode(ik, payload[3 + n..].to_vec())?);
                 Message::Routed { session, inner }
             }
+            kind::LAUNCH => Message::Launch(serde_json::from_slice(&payload)?),
+            kind::LAUNCHED => Message::Launched(String::from_utf8(payload)?),
+            kind::LIST_DIR => Message::ListDir(String::from_utf8(payload)?),
+            kind::DIR_LIST => Message::DirList(serde_json::from_slice(&payload)?),
             other => bail!("unknown message kind 0x{other:02x}"),
         })
     }
