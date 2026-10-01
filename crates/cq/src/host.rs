@@ -470,7 +470,12 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
         while let Some(msg) = read_message(&mut rd).await? {
             let mut st = state.lock().unwrap();
             match msg {
-                Message::Input(_) | Message::Resize(_) if monitor => {}
+                // Monitors (e.g. Queen through the daemon) may type, but never take the input
+                // right or the PTY size from an attached terminal.
+                Message::Input(bytes) if monitor => {
+                    let _ = st.pty_tx.send(bytes);
+                }
+                Message::Resize(_) if monitor => {}
                 Message::Approve(a) => {
                     let payload = match st.approve(a.option) {
                         Ok(()) => serde_json::json!({

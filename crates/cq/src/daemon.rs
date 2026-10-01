@@ -234,9 +234,11 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                         let _ = out.send(reply);
                     }
                     Message::Routed { session, inner } => {
-                        // Approvals go through the monitor so they work without a subscription.
+                        // Approvals go through the monitor so they work without a subscription;
+                        // so does input for sessions that have no open tile (Queen).
                         let target = match *inner {
                             Message::Approve(_) => monitors.get(&session),
+                            Message::Input(_) => subs.get(&session).or_else(|| monitors.get(&session)),
                             _ => subs.get(&session),
                         };
                         if let Some(c) = target {
