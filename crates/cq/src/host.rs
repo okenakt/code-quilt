@@ -2,7 +2,7 @@
 //! every attached client. Runs detached so the session survives its terminal and the hub.
 
 use crate::agent::{self, PermissionPrompt};
-use crate::{ipc, paths, session};
+use crate::{ipc, paths, session, usage};
 use anyhow::{Context, Result, bail};
 use cq_proto::{
     AgentEvent, ClientKind, Exit, Hello, InputOwner, Message, PROTOCOL_VERSION, SessionMeta,
@@ -116,7 +116,12 @@ struct State {
     meta: SessionMeta,
     pty_tx: std::sync::mpsc::Sender<Vec<u8>>,
     events: VecDeque<AgentEvent>,
-    last_status: Option<AgentEvent>,
+    /// Latest value of each state event kind, replayed after the history.
+    latest: HashMap<String, AgentEvent>,
+    account: Option<usage::Account>,
+    /// Set to force an account re-read (e.g. after SessionStart, which follows /login).
+    account_recheck: bool,
+    transcript: usage::TranscriptTail,
     /// Set when output arrived since the last permission prompt scan.
     dirty: bool,
     prompt: Option<PermissionPrompt>,
@@ -135,10 +140,19 @@ impl State {
         }
     }
 
-    /// Records an event in the history and sends it to every client.
+    /// Records an event and sends it to every client. Frequently repeated state events (status
+    /// line, account, tokens) keep only their latest value so they never evict history.
     fn publish(&mut self, ev: AgentEvent) {
-        if ev.source == "statusline" {
-            self.last_status = Some(ev.clone());
+        let slot = match ev.source.as_str() {
+            "statusline" => Some("statusline".to_owned()),
+            "cq" => match ev.payload.get("type").and_then(|t| t.as_str()) {
+                Some(t @ ("account" | "tokens")) => Some(t.to_owned()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(slot) = slot {
+            self.latest.insert(slot, ev.clone());
         } else {
             if self.events.len() == EVENT_HISTORY {
                 self.events.pop_front();
@@ -282,7 +296,10 @@ pub async fn run(args: HostArgs) -> Result<()> {
         meta,
         pty_tx,
         events: VecDeque::new(),
-        last_status: None,
+        latest: HashMap::new(),
+        account: None,
+        account_recheck: true,
+        transcript: usage::TranscriptTail::default(),
         dirty: false,
         prompt: None,
     }));
@@ -295,6 +312,9 @@ pub async fn run(args: HostArgs) -> Result<()> {
                 state.lock().unwrap().scan_prompt();
             }
         });
+    }
+    if args.agent == "claude" {
+        tokio::spawn(poll_usage(state.clone()));
     }
 
     {
@@ -403,7 +423,7 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
         }
         let _ = tx.send(Message::InputOwner(InputOwner { owner: st.owner }));
         if hello.kind != ClientKind::Terminal {
-            for ev in st.events.iter().chain(st.last_status.iter()) {
+            for ev in st.events.iter().chain(st.latest.values()) {
                 let _ = tx.send(Message::Event(ev.clone()));
             }
             if st.prompt.is_some() {
@@ -492,13 +512,46 @@ fn strip_cpr_requests(buf: &[u8]) -> Vec<u8> {
     out
 }
 
+fn cq_event(payload: serde_json::Value) -> AgentEvent {
+    AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload }
+}
+
+/// Publishes account changes and transcript token totals every two seconds.
+async fn poll_usage(state: Shared) {
+    let mut stamp = None;
+    loop {
+        let recheck = std::mem::take(&mut state.lock().unwrap().account_recheck);
+        let now_stamp = usage::account_stamp();
+        if recheck || now_stamp != stamp {
+            stamp = now_stamp;
+            let account = tokio::task::spawn_blocking(usage::read_claude_account).await.ok().flatten();
+            let mut st = state.lock().unwrap();
+            if account != st.account {
+                st.account = account.clone();
+                st.publish(cq_event(serde_json::json!({ "type": "account", "account": account })));
+            }
+        }
+        {
+            let mut st = state.lock().unwrap();
+            if let Some(totals) = st.transcript.poll() {
+                st.publish(cq_event(serde_json::json!({ "type": "tokens", "tokens": totals })));
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
 fn handle_event(state: &Shared, ev: AgentEvent) {
     let mut st = state.lock().unwrap();
     // Agent events are a good moment to re-check the screen (e.g. Notification on a prompt).
     st.dirty = true;
+    if let Some(path) = ev.payload.get("transcript_path").and_then(|v| v.as_str()) {
+        st.transcript.set_path(path.into());
+    }
     if ev.source == "hook"
         && ev.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("SessionStart")
     {
+        st.account_recheck = true;
         if let Some(sid) = ev.payload.get("session_id").and_then(|v| v.as_str()) {
             st.meta.agent_session_id = Some(sid.to_owned());
             let _ = session::save(&st.meta);

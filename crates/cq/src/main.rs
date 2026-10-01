@@ -11,6 +11,7 @@ mod launch;
 mod paths;
 mod session;
 mod term;
+mod usage;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
