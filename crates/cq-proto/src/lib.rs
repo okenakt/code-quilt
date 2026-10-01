@@ -260,6 +260,35 @@ pub async fn read_message<R: AsyncRead + Unpin>(r: &mut R) -> Result<Option<Mess
     Message::decode(k, buf).map(Some)
 }
 
+/// Reads messages on a dedicated task and delivers them through a channel.
+///
+/// `read_message` is not cancel-safe: using it directly as a `select!` branch drops partially
+/// read frames whenever another branch wins, which desynchronizes the stream. Select on the
+/// returned channel instead. The channel closes on EOF; a read error is delivered as `Err`.
+pub fn spawn_reader<R>(mut rd: R) -> tokio::sync::mpsc::UnboundedReceiver<Result<Message>>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        loop {
+            match read_message(&mut rd).await {
+                Ok(Some(m)) => {
+                    if tx.send(Ok(m)).is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                    break;
+                }
+            }
+        }
+    });
+    rx
+}
+
 /// Writes one message and flushes.
 pub async fn write_message<W: AsyncWrite + Unpin>(w: &mut W, msg: &Message) -> Result<()> {
     w.write_all(&msg.encode()?).await?;

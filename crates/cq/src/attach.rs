@@ -3,7 +3,9 @@
 use crate::term::{self, DETACH_BYTE, InputMode, RawTerminal, TermEvent};
 use crate::{ipc, paths};
 use anyhow::{Result, bail};
-use cq_proto::{ClientKind, Hello, Message, PROTOCOL_VERSION, Size, read_message, write_message};
+use cq_proto::{
+    ClientKind, Hello, Message, PROTOCOL_VERSION, Size, read_message, spawn_reader, write_message,
+};
 use std::io::Write;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -71,13 +73,14 @@ pub async fn attach(endpoint: &str, connect_timeout: Duration) -> Result<Outcome
         });
     }
 
+    let mut msgs = spawn_reader(rd);
     let outcome = loop {
         tokio::select! {
-            msg = read_message(&mut rd) => match msg {
-                Ok(Some(Message::Snapshot(b) | Message::Output(b))) => raw.write(&b),
-                Ok(Some(Message::Exit(e))) => break Outcome::Exited(e.code),
-                Ok(Some(_)) => {}
-                Ok(None) | Err(_) => break Outcome::HostLost,
+            msg = msgs.recv() => match msg {
+                Some(Ok(Message::Snapshot(b) | Message::Output(b))) => raw.write(&b),
+                Some(Ok(Message::Exit(e))) => break Outcome::Exited(e.code),
+                Some(Ok(_)) => {}
+                None | Some(Err(_)) => break Outcome::HostLost,
             },
             ev = ev_rx.recv() => match ev {
                 Some(TermEvent::Input(bytes)) => {

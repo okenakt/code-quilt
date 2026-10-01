@@ -7,7 +7,7 @@
 use crate::{ipc, paths, session};
 use anyhow::{Context, Result, bail};
 use cq_proto::{
-    ClientKind, Hello, Message, PROTOCOL_VERSION, SessionMeta, SessionStatus, Subscribe,
+    ClientKind, Hello, Message, PROTOCOL_VERSION, SessionMeta, SessionStatus, Subscribe, spawn_reader,
     read_message, write_message,
 };
 use std::collections::HashMap;
@@ -88,13 +88,15 @@ fn open_host(
     let task = tokio::spawn(async move {
         let run = async {
             let stream = ipc::connect(&pipe, Duration::from_secs(1)).await?;
-            let (mut rd, mut wr) = tokio::io::split(stream);
+            let (rd, mut wr) = tokio::io::split(stream);
+            let mut msgs = spawn_reader(rd);
             let hello = Hello { protocol_version: PROTOCOL_VERSION, kind, cols, rows };
             write_message(&mut wr, &Message::Hello(hello)).await?;
             loop {
                 tokio::select! {
-                    msg = read_message(&mut rd) => {
-                        let Some(msg) = msg? else { break };
+                    msg = msgs.recv() => {
+                        let Some(msg) = msg else { break };
+                        let msg = msg?;
                         // Events arrive via the monitor connection; drop duplicates elsewhere.
                         let forward = match (&msg, kind) {
                             (Message::Event(_), ClientKind::Monitor) => true,
@@ -152,7 +154,10 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
         }
     });
 
+    let mut msgs = spawn_reader(rd);
     let mut monitors: HashMap<String, Conn> = HashMap::new();
+    // Hosts whose monitor connection ended recently (e.g. incompatible version); retried later.
+    let mut backoff: HashMap<String, tokio::time::Instant> = HashMap::new();
     let mut subs: HashMap<String, Conn> = HashMap::new();
     let mut sessions: Vec<SessionMeta> = Vec::new();
     let mut last_key = String::new();
@@ -167,19 +172,27 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                     last_key = key;
                     let _ = out.send(Message::SessionList(sessions.clone()));
                 }
-                monitors.retain(|id, c| !c.task.is_finished() && sessions.iter().any(|m| &m.id == id));
+                let now = tokio::time::Instant::now();
+                monitors.retain(|id, c| {
+                    let keep = !c.task.is_finished() && sessions.iter().any(|m| &m.id == id);
+                    if !keep {
+                        backoff.insert(id.clone(), now + Duration::from_secs(30));
+                    }
+                    keep
+                });
+                backoff.retain(|_, until| *until > now);
                 for m in sessions.iter().filter(|m| m.status == SessionStatus::Running) {
-                    if !monitors.contains_key(&m.id) {
+                    if !monitors.contains_key(&m.id) && !backoff.contains_key(&m.id) {
                         monitors.insert(m.id.clone(), open_host(m, ClientKind::Monitor, 0, 0, out.clone()));
                     }
                 }
                 subs.retain(|_, c| !c.task.is_finished());
             }
-            msg = read_message(&mut rd) => {
+            msg = msgs.recv() => {
                 let msg = match msg {
-                    Ok(Some(m)) => m,
-                    Ok(None) => break Ok(()),
-                    Err(e) => break Err(e),
+                    Some(Ok(m)) => m,
+                    None => break Ok(()),
+                    Some(Err(e)) => break Err(e),
                 };
                 match msg {
                     Message::ListSessions => {
