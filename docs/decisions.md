@@ -103,3 +103,109 @@
 
 - **自動承認ポリシー**：各エージェントのローカル設定の範囲であり、本プロジェクトでは扱わない。
 - **Telegramブリッジ**：当面はOS通知で足りる。
+
+## 16. 実装時の決定と仮決定（2026-10-02）
+
+M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は未決事項を暫定値で埋めたもので、使ってみて見直す。
+
+### 16.1 単一バイナリ `cq`
+
+**結論**：cq-host・cqdは別バイナリにせず、`cq host` / `cq daemon` / `cq bridge` / `cq hook` / `cq statusline` のサブコマンドにまとめた。
+
+**経緯**：リモートに置くものを1ファイルにするため。設計図上のcq-host・cqdは役割名として残る。
+
+### 16.2 IPC：interprocessではなくtokioのnamed pipe / unix socket
+
+**結論**：`tokio::net::windows::named_pipe` とunix socketを薄くラップした。
+
+**経緯**：DACLを現在ユーザーのみ（`D:P(A;;GA;;;<SID>)`）にする指定と、`PIPE_REJECT_REMOTE_CLIENTS` を直接書けるため。非同期処理との統合も素直。フレームの読み取りは `select!` 内でキャンセル安全でないため、専用タスクで読みチャネルで受け取る（`spawn_reader`）。
+
+### 16.3 カーソル位置問い合わせはhostが答える
+
+**結論**：hostが画面グリッドからCPR（`ESC[6n`）に応答し、クライアントへの出力からは要求を取り除く。
+
+**経緯**：portable-ptyはConPTYを `PSEUDOCONSOLE_INHERIT_CURSOR` 付きで作るため、起動時のCPRに誰も答えないと出力が止まる。ハブから端末なしで起動したセッションでは答える端末がいない。他の問い合わせ（DA、kittyの `?u`、OSC 11など）は接続中の端末が答えるため、複数端末の同時接続時に応答が重複しうる（既知の制約）。
+
+### 16.4 入力：VT素通しを既定、Shift+EnterはCSI u
+
+**結論**：attachはコンソールをVT入力モードにしてReadConsoleWで読み、そのまま流す（`CQ_INPUT_MODE=win32` でwin32-input-modeに切り替え可）。xterm.jsのタイルではShift+Enterを `ESC[13;2u` として送る。
+
+**経緯**：M0で、WezTerm経由のVTモードでShift+Enter・ブラケットペースト・Esc・日本語IMEが通ることを確認した。win32-input-modeで送ったShift+Enterは通常のEnterとして扱われた。表示崩れはコンソール出力モードで `ENABLE_WRAP_AT_EOL_OUTPUT` を落としていたことが原因で、修正済み。PowerShell（conhost / Windows Terminal）での確認は未実施。
+
+### 16.5 デタッチキー：Ctrl+\（仮）
+
+**結論**：0x1c（Ctrl+\）でデタッチする。
+
+**経緯**：JIS配列ではCtrl+\が0x1cにならない可能性がある。`CQ_TRACE=1` で入力バイト列を `~/.codequilt/logs/input-trace.log` に記録できるので、実機で確認して必要なら変える。
+
+### 16.6 セッション一覧：SQLiteは後回し
+
+**結論**：`~/.codequilt/sessions/<id>.json` をそのまま一覧と状態の永続化に使う。終了したセッションも残り、resumeできる。
+
+**経緯**：一覧・resume・終了状態の保持はJSONで足りた。状態履歴の検索やトークンの長期集計が必要になった時点でSQLiteを入れる。
+
+### 16.7 イベントの再送：hostのメモリとUIバックエンドのキャッシュ
+
+**結論**：hostが直近200件のイベントと、statusLine・account・tokensの最新値を保持し、ハブやMonitorの接続時に再送する。UIバックエンドもキャッシュを持ち、フロントエンドの再読み込み時に `replay` で渡す。スプールは耐久的な記録として残す。
+
+**経緯**：cqdを状態なしに保ったまま、cqdやハブの再起動で状態を失わないため。statusLineなどを履歴に積むとStopなど重要なイベントが押し出されるので、最新値だけを持つ。
+
+### 16.8 Monitor接続
+
+**結論**：cqdは稼働中の全セッションに、出力を受け取らないMonitor接続を張る。承認の回答と、タイルを開いていないセッションへの入力（Queen）はMonitor経由で送る。Monitorからの入力は入力権とPTYサイズを変えない。
+
+**経緯**：イベントは全セッション分必要だが、画面出力まで全部受けるのは無駄。Queenの貼り付けで手元ターミナルのサイズが変わるのも避けたい。
+
+### 16.9 承認の回答：番号キー
+
+**結論**：画面に見えている承認プロンプトを `agent.rs` で解析し、選んだ番号のキーを1文字送る。回答直前に画面を再走査し、プロンプトがなければ拒否する。
+
+**経緯**：Claude Code 2.1.286で、番号キーで選択と確定が行われることを確認した。プロンプトの文言・枠線（実線は境界、点線は枠内の区切り）に依存するため、判定はAdapterに閉じ込めた。
+
+### 16.10 入れ子セッションの環境変数を消す
+
+**結論**：hostはエージェント起動時に `CLAUDECODE`、`CLAUDE_CODE_CHILD_SESSION`、`CLAUDE_CODE_SESSION_ID` などを除く。Queenの `claude -p` も同様。
+
+**経緯**：cqdがClaude Codeセッション内から起動された場合などに、claudeが子セッションと判断してトランスクリプト保存を止めることを確認したため。
+
+### 16.11 アカウントの識別
+
+**結論**：`CLAUDE_CONFIG_DIR/.claude.json`、未設定なら `~/.claude.json` の `oauthAccount.accountUuid` と `emailAddress` を使う。失敗時は `claude auth status` の出力からメールアドレスを拾う。
+
+**経緯**：design.mdでは `~/.claude` 配下としていたが、既定の場所はホーム直下だった。
+
+### 16.12 マシンの接続方法：sshに加えて任意コマンド
+
+**結論**：`~/.codequilt/machines.json` の各エントリで `ssh`（`ssh -T -o BatchMode=yes <host> cq bridge`）か、`command`（例 `["wsl", "cq", "bridge"]`）を指定できる。`cq machine add` は `~/.ssh/config` のホストを候補に出す。
+
+**経緯**：WSLやコンテナも同じ仕組みで扱える。ローカルで `cq bridge` を起動するループバック構成で、sshと同じstdio経路を検証した（実際のsshは未検証）。
+
+### 16.13 新規起動の許可ルート（仮）
+
+**結論**：`~/.codequilt/config.json` の `allowed_roots`、未設定ならホームディレクトリ配下のみ起動を許可する。
+
+### 16.14 Queen（仮）
+
+**結論**：
+- モデルはhaiku。`--system-prompt` で既定のシステムプロンプトを差し替え、`--tools ""` と `--no-session-persistence` を付け、作業ディレクトリは `~/.codequilt`。`--bare` はOAuthを使わずサブスクリプション枠で動かせないため使わない。
+- 600文字を超える返答だけ要約する。要約はライブのイベントだけに行い、localStorageにキャッシュする（再読み込みでトークンを使わない）。
+- 宛先は `@名前`（表示名をスラッグ化、重複時はid先頭を付与）→ カードへの返信 → 稼働中が1つならそれ → LLMの推定 → 不明なら候補を選択肢で提示。
+- 送信はブラケットペーストで、Enterの自動送信は既定オン（パネルで切り替え）。
+
+**経緯**：ユーザーのグローバルCLAUDE.mdは読み込まれるため、要約は日本語になる。1回あたり約4〜5kトークン（haiku）。
+
+### 16.15 キーバインド（仮）
+
+| 操作 | キー |
+| --- | --- |
+| セッションをタイルで開く | Alt+1〜9 |
+| 前後のタイル | Ctrl+Shift+←/→（PageUp/PageDown） |
+| 右・下に分割して次のセッションを開く | Ctrl+Shift+\ / Ctrl+Shift+- |
+| タイルを閉じる | Ctrl+Shift+W |
+| 承認ダイアログを再表示 | Ctrl+Shift+A |
+
+アプリ側で先に捕まえ、xterm.jsには渡さない。
+
+### 16.16 リモートへのcq配布（仮）
+
+**結論**：当面は手動で配置し、パスが違う場合は `machines.json` の `cq_path` で指定する。プロトコルバージョンの不一致はマシンのエラーとして表示する。自動配布は後で検討する。
