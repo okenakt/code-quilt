@@ -2,6 +2,7 @@
 
 use crate::{attach, paths, session};
 use anyhow::{Context, Result};
+use cq_proto::Size;
 use serde_json::json;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -26,22 +27,12 @@ pub fn write_claude_settings() -> Result<std::path::PathBuf> {
     Ok(path)
 }
 
-/// Spawns `cq host` detached from the current console and process tree.
-fn spawn_host(id: &str, agent: &str, command: &[String]) -> Result<()> {
-    let exe = std::env::current_exe()?;
-    let cwd = std::env::current_dir()?.to_string_lossy().into_owned();
-    let size = crate::term::size();
-    let log_dir = paths::root()?.join("logs");
-    std::fs::create_dir_all(&log_dir)?;
-    let log = std::fs::File::create(log_dir.join(format!("{id}.log")))?;
-
-    let mut cmd = Command::new(exe);
-    cmd.args(["host", "--id", id, "--agent", agent, "--cwd", &cwd])
-        .args(["--cols", &size.cols.to_string(), "--rows", &size.rows.to_string(), "--"])
-        .args(command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(log);
+/// Spawns a command detached from the current console and process tree, with stderr to `log`.
+pub fn spawn_detached(cmd: &mut Command, log: &std::path::Path) -> Result<()> {
+    if let Some(dir) = log.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(std::fs::File::create(log)?);
 
     #[cfg(windows)]
     {
@@ -51,7 +42,7 @@ fn spawn_host(id: &str, agent: &str, command: &[String]) -> Result<()> {
         };
         let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
         // Break away from the terminal's job object so closing the terminal does not kill the
-        // host; fall back if the job forbids breakaway.
+        // process; fall back if the job forbids breakaway.
         cmd.creation_flags(base | CREATE_BREAKAWAY_FROM_JOB);
         if cmd.spawn().is_ok() {
             return Ok(());
@@ -68,8 +59,17 @@ fn spawn_host(id: &str, agent: &str, command: &[String]) -> Result<()> {
             });
         }
     }
-    cmd.spawn().context("spawn session host")?;
+    cmd.spawn().context("spawn detached process")?;
     Ok(())
+}
+
+/// Spawns `cq host` for a new session.
+pub fn spawn_host(id: &str, agent: &str, cwd: &str, size: Size, command: &[String]) -> Result<()> {
+    let mut cmd = Command::new(std::env::current_exe()?);
+    cmd.args(["host", "--id", id, "--agent", agent, "--cwd", cwd])
+        .args(["--cols", &size.cols.to_string(), "--rows", &size.rows.to_string(), "--"])
+        .args(command);
+    spawn_detached(&mut cmd, &paths::root()?.join("logs").join(format!("{id}.log")))
 }
 
 /// Runs `cq claude [args...]` and returns the process exit code.
@@ -83,7 +83,8 @@ pub async fn claude(args: Vec<String>) -> Result<i32> {
         settings.to_string_lossy().into_owned(),
     ];
     command.extend(args);
-    spawn_host(&id, "claude", &command)?;
+    let cwd = std::env::current_dir()?.to_string_lossy().into_owned();
+    spawn_host(&id, "claude", &cwd, crate::term::size(), &command)?;
     let endpoint = paths::session_endpoint(&id)?;
     let outcome = attach::attach(&endpoint, Duration::from_secs(10))
         .await

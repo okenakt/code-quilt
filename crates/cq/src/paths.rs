@@ -46,6 +46,29 @@ pub fn session_endpoint(id: &str) -> Result<String> {
     Ok(root()?.join("run").join(format!("{id}.sock")).to_string_lossy().into_owned())
 }
 
+fn user_tag() -> String {
+    std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "user".into())
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect()
+}
+
+/// IPC endpoint of the machine daemon. Pipe names are machine-global on Windows, so the user name
+/// is part of the name.
+#[cfg(windows)]
+pub fn daemon_endpoint() -> Result<String> {
+    Ok(format!(r"\\.\pipe\codequilt-cqd-{}", user_tag()))
+}
+
+/// IPC endpoint of the machine daemon.
+#[cfg(unix)]
+pub fn daemon_endpoint() -> Result<String> {
+    let _ = user_tag;
+    Ok(root()?.join("run").join("cqd.sock").to_string_lossy().into_owned())
+}
+
 /// Creates all state directories.
 pub fn ensure_dirs() -> Result<()> {
     for d in [sessions_dir()?, spool_dir()?, status_dir()?] {

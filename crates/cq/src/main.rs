@@ -3,6 +3,7 @@
 
 mod agent;
 mod attach;
+mod daemon;
 mod hook;
 mod host;
 mod ipc;
@@ -35,6 +36,10 @@ enum Cmd {
     Attach { id: String },
     /// List sessions.
     Ls,
+    /// Run the machine daemon that relays sessions to dashboards.
+    Daemon,
+    /// Relay stdin/stdout to the local daemon (for `ssh <host> cq bridge`).
+    Bridge,
     /// Session host process (internal).
     #[command(hide = true)]
     Host {
@@ -102,6 +107,14 @@ async fn run(cmd: Cmd) -> Result<i32> {
                     m.cwd
                 );
             }
+            Ok(0)
+        }
+        Cmd::Daemon => {
+            daemon::run().await?;
+            Ok(0)
+        }
+        Cmd::Bridge => {
+            daemon::bridge().await?;
             Ok(0)
         }
         Cmd::Host { id, agent, cwd, cols, rows, command } => {
