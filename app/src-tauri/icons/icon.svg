@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#14161a"/>
+  <g stroke="#14161a" stroke-width="10">
+    <polygon points="256,86 330,128 330,212 256,254 182,212 182,128" fill="#f5c451"/>
+    <polygon points="174,226 248,268 248,352 174,394 100,352 100,268" fill="#5fa8ff"/>
+    <polygon points="338,226 412,268 412,352 338,394 264,352 264,268" fill="#7bc47f"/>
+  </g>
+  <text x="256" y="196" text-anchor="middle" font-family="Segoe UI, sans-serif" font-weight="800" font-size="96" fill="#14161a">Q</text>
+</svg>

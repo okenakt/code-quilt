@@ -1,0 +1,202 @@
+import { useSyncExternalStore } from "react";
+import { sessionKey } from "./api";
+import { asRecord, num, str } from "./json";
+import type {
+  Activity,
+  AgentEvent,
+  MachineInfo,
+  PermissionPrompt,
+  RateWindow,
+  SessionMeta,
+  SessionState,
+  StatusLine,
+  TokenUsage,
+} from "./types";
+
+type Snapshot = {
+  machines: MachineInfo[];
+  sessions: SessionState[];
+};
+
+/** Something the UI should react to once (notifications), produced by live (non-replayed) events. */
+export type Signal =
+  | { type: "approval"; session: SessionState }
+  | { type: "turn-done"; session: SessionState; message: string | null };
+
+let machines: MachineInfo[] = [];
+const sessions = new Map<string, SessionState>();
+let snapshot: Snapshot = { machines, sessions: [] };
+const listeners = new Set<() => void>();
+const signalListeners = new Set<(s: Signal) => void>();
+
+/** Events older than this were replayed from host history and must not trigger notifications. */
+const startedAt = Date.now();
+
+const emit = () => {
+  snapshot = {
+    machines,
+    sessions: [...sessions.values()].sort((a, b) =>
+      a.machine === b.machine ? a.meta.started_at_ms - b.meta.started_at_ms : a.machine.localeCompare(b.machine),
+    ),
+  };
+  listeners.forEach((l) => l());
+};
+
+const signal = (s: Signal) => signalListeners.forEach((l) => l(s));
+
+/** Subscribes to one-shot UI signals; returns an unsubscribe function. */
+export const onSignal = (l: (s: Signal) => void): (() => void) => {
+  signalListeners.add(l);
+  return () => signalListeners.delete(l);
+};
+
+/** React hook returning the current machines and sessions. */
+export const useStore = (): Snapshot =>
+  useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => snapshot,
+  );
+
+/** Returns a session's display name. */
+export const displayName = (s: SessionState): string => {
+  if (s.status?.sessionName) return s.status.sessionName;
+  const base = s.meta.cwd.split(/[\\/]/).filter(Boolean).pop() ?? s.meta.cwd;
+  return `${base} #${s.meta.id.slice(0, 4)}`;
+};
+
+/** Replaces the machine list. */
+export const setMachines = (m: MachineInfo[]): void => {
+  machines = m;
+  emit();
+};
+
+/** Replaces a machine's session list, keeping derived state for known sessions. */
+export const setSessions = (machine: string, list: SessionMeta[]): void => {
+  const seen = new Set<string>();
+  for (const meta of list) {
+    const key = sessionKey(machine, meta.id);
+    seen.add(key);
+    const prev = sessions.get(key);
+    const exited = meta.status === "exited";
+    sessions.set(key, {
+      key,
+      machine,
+      meta,
+      activity: exited ? "exited" : (prev?.activity ?? "starting"),
+      prompt: exited ? null : (prev?.prompt ?? null),
+      status: prev?.status ?? null,
+      account: prev?.account ?? null,
+      tokens: prev?.tokens ?? null,
+      lastActivityAt: prev?.lastActivityAt ?? meta.started_at_ms,
+    });
+  }
+  for (const [key, s] of sessions) {
+    if (s.machine === machine && !seen.has(key)) sessions.delete(key);
+  }
+  emit();
+};
+
+const rateWindow = (v: unknown): RateWindow | null => {
+  const used = num(v, "used_percentage");
+  return used === null ? null : { usedPercentage: used, resetsAt: num(v, "resets_at") };
+};
+
+const parseStatus = (payload: unknown, receivedAt: number): StatusLine => ({
+  receivedAt,
+  model: str(payload, "model", "display_name") ?? str(payload, "model", "id"),
+  sessionName: str(payload, "session_name"),
+  contextPercent: num(payload, "context_window", "used_percentage"),
+  inputTokens: num(payload, "context_window", "total_input_tokens"),
+  outputTokens: num(payload, "context_window", "total_output_tokens"),
+  costUsd: num(payload, "cost", "total_cost_usd"),
+  fiveHour: rateWindow(asRecord(asRecord(payload)?.rate_limits)?.five_hour),
+  sevenDay: rateWindow(asRecord(asRecord(payload)?.rate_limits)?.seven_day),
+});
+
+const parsePrompt = (v: unknown): PermissionPrompt | null => {
+  const text = str(v, "text");
+  const opts = asRecord(v)?.options;
+  if (text === null || !Array.isArray(opts)) return null;
+  const options = opts.flatMap((o) => {
+    const n = num(o, "number");
+    const label = str(o, "label");
+    return n !== null && label !== null ? [{ number: n, label }] : [];
+  });
+  return { text, options };
+};
+
+const counts = (v: unknown) => ({
+  input: num(v, "input") ?? 0,
+  output: num(v, "output") ?? 0,
+  cacheRead: num(v, "cache_read") ?? 0,
+  cacheCreation: num(v, "cache_creation") ?? 0,
+});
+
+const parseTokens = (v: unknown): TokenUsage | null => {
+  const r = asRecord(v);
+  if (!r) return null;
+  const byModel: TokenUsage["byModel"] = {};
+  for (const [model, c] of Object.entries(asRecord(r.by_model) ?? {})) byModel[model] = counts(c);
+  return { ...counts(r.total), byModel };
+};
+
+/** Applies an agent event to the session's derived state. */
+export const applyEvent = (machine: string, session: string, ev: AgentEvent): void => {
+  const s = sessions.get(sessionKey(machine, session));
+  if (!s) return;
+  const live = ev.received_at_ms >= startedAt;
+  let activity: Activity = s.activity;
+  let prompt = s.prompt;
+  let status = s.status;
+  let account = s.account;
+  let tokens = s.tokens;
+  if (ev.source === "statusline") {
+    status = parseStatus(ev.payload, ev.received_at_ms);
+  } else if (ev.source === "hook") {
+    switch (str(ev.payload, "hook_event_name")) {
+      case "SessionStart":
+        activity = "idle";
+        break;
+      case "UserPromptSubmit":
+        activity = "working";
+        break;
+      case "Stop":
+        activity = "idle";
+        if (live) signal({ type: "turn-done", session: s, message: str(ev.payload, "last_assistant_message") });
+        break;
+      case "Notification":
+        if (str(ev.payload, "notification_type") === "permission_prompt") activity = "approval";
+        break;
+    }
+  } else if (ev.source === "cq") {
+    const type = str(ev.payload, "type");
+    if (type === "permission_prompt") {
+      prompt = parsePrompt(asRecord(ev.payload)?.prompt);
+      activity = "approval";
+    } else if (type === "permission_resolved") {
+      prompt = null;
+      if (activity === "approval") activity = "working";
+    } else if (type === "account") {
+      const id = str(ev.payload, "account", "id");
+      account = id ? { id, label: str(ev.payload, "account", "label") ?? id } : null;
+    } else if (type === "tokens") {
+      tokens = parseTokens(asRecord(ev.payload)?.tokens) ?? tokens;
+    }
+  }
+  if (s.meta.status === "exited") activity = "exited";
+  const next = { ...s, activity, prompt, status, account, tokens, lastActivityAt: Math.max(s.lastActivityAt, ev.received_at_ms) };
+  sessions.set(s.key, next);
+  if (live && prompt && prompt !== s.prompt) signal({ type: "approval", session: next });
+  emit();
+};
+
+/** Marks a session as exited after the host reports it. */
+export const markExited = (machine: string, session: string): void => {
+  const s = sessions.get(sessionKey(machine, session));
+  if (!s) return;
+  sessions.set(s.key, { ...s, activity: "exited", prompt: null, meta: { ...s.meta, status: "exited" } });
+  emit();
+};
