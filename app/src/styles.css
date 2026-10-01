@@ -578,3 +578,197 @@ kbd {
   white-space: nowrap;
   font-weight: 500;
 }
+
+.queen-open {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+  border-radius: 12px;
+  padding: 2px 12px;
+  cursor: pointer;
+}
+
+.queen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #14161a;
+}
+
+.queen-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.queen-title {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.queen-usage {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.queen-toggle {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.queen-feed {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--panel);
+}
+
+.card.info {
+  border-left-color: var(--idle);
+}
+
+.card.blocking {
+  border-left-color: var(--approval);
+  box-shadow: 0 0 0 1px rgba(255, 138, 76, 0.25);
+}
+
+.card.blocking.resolved {
+  box-shadow: none;
+  border-left-color: var(--exited);
+}
+
+.card.unread {
+  background: var(--panel-2);
+}
+
+.card.stale,
+.card.read,
+.card.answered,
+.card.answered-elsewhere {
+  opacity: 0.6;
+}
+
+.card.replying {
+  outline: 1px solid var(--accent);
+  opacity: 1;
+}
+
+.card header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.card-session {
+  border: 0;
+  background: transparent;
+  color: var(--working);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.card-kind.blocking {
+  color: var(--approval);
+}
+
+.card-flag {
+  color: var(--accent);
+}
+
+.card-time {
+  margin-left: auto;
+}
+
+.card-body {
+  margin-top: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+.card-note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.card footer {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.card footer button,
+.queen-choices button,
+.queen-suggest button,
+.queen-reply button {
+  border: 1px solid var(--line);
+  background: transparent;
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.queen-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.queen-choices button span {
+  color: var(--muted);
+}
+
+.queen-compose {
+  border-top: 1px solid var(--line);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.queen-compose textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.queen-reply,
+.queen-status {
+  color: var(--muted);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.queen-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}

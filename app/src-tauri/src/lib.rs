@@ -1,8 +1,10 @@
 //! CodeQuilt dashboard backend: Tauri commands over per-machine daemon connections.
 
 mod hub;
+mod queen;
 
 use hub::{Hub, MachineInfo};
+use queen::Queen;
 use std::sync::Arc;
 use tauri::{Manager, State};
 
@@ -101,6 +103,29 @@ async fn list_dir(
     }
 }
 
+#[tauri::command]
+async fn queen_summarize(
+    queen: State<'_, Arc<Queen>>,
+    session: String,
+    text: String,
+) -> Result<String, String> {
+    queen.summarize(&session, &text).await.map_err(err)
+}
+
+#[tauri::command]
+async fn queen_route(
+    queen: State<'_, Arc<Queen>>,
+    message: String,
+    candidates: Vec<queen::RouteCandidate>,
+) -> Result<queen::RouteDecision, String> {
+    queen.route(&message, &candidates).await.map_err(err)
+}
+
+#[tauri::command]
+fn queen_usage(queen: State<'_, Arc<Queen>>) -> queen::QueenUsage {
+    queen.usage()
+}
+
 /// Creates the main window from config. Debug builds honor `CQ_DEVTOOLS_PORT` to expose the
 /// WebView2 DevTools protocol for automated UI checks.
 fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
@@ -127,6 +152,7 @@ pub fn run() {
         .setup(|app| {
             let hub = Hub::start(app.handle().clone());
             app.manage(hub);
+            app.manage(Arc::new(Queen::default()));
             create_main_window(app)?;
             Ok(())
         })
@@ -140,7 +166,10 @@ pub fn run() {
             resize,
             approve,
             launch,
-            list_dir
+            list_dir,
+            queen_summarize,
+            queen_route,
+            queen_usage
         ])
         .run(tauri::generate_context!())
         .expect("error while running CodeQuilt");

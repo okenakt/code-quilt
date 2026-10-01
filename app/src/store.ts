@@ -67,6 +67,9 @@ export const displayName = (s: SessionState): string => {
   return `${base} #${s.meta.id.slice(0, 4)}`;
 };
 
+/** Returns a session's current state. */
+export const getSession = (key: string): SessionState | undefined => sessions.get(key);
+
 /** Replaces the machine list. */
 export const setMachines = (m: MachineInfo[]): void => {
   machines = m;
