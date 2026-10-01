@@ -74,6 +74,33 @@ fn approve(
     hub.approve(&machine, &session, option).map_err(err)
 }
 
+#[tauri::command]
+async fn launch(
+    hub: State<'_, HubState>,
+    machine: String,
+    cwd: String,
+    resume: Option<String>,
+    args: Vec<String>,
+) -> Result<String, String> {
+    let req = cq_proto::Launch { agent: "claude".into(), cwd, args, resume, cols: 120, rows: 36 };
+    match hub.call(&machine, cq_proto::Message::Launch(req)).await.map_err(err)? {
+        cq_proto::Message::Launched(id) => Ok(id),
+        other => Err(format!("unexpected reply {other:?}")),
+    }
+}
+
+#[tauri::command]
+async fn list_dir(
+    hub: State<'_, HubState>,
+    machine: String,
+    path: String,
+) -> Result<cq_proto::DirList, String> {
+    match hub.call(&machine, cq_proto::Message::ListDir(path)).await.map_err(err)? {
+        cq_proto::Message::DirList(l) => Ok(l),
+        other => Err(format!("unexpected reply {other:?}")),
+    }
+}
+
 /// Creates the main window from config. Debug builds honor `CQ_DEVTOOLS_PORT` to expose the
 /// WebView2 DevTools protocol for automated UI checks.
 fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
@@ -111,7 +138,9 @@ pub fn run() {
             unsubscribe,
             send_input,
             resize,
-            approve
+            approve,
+            launch,
+            list_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running CodeQuilt");

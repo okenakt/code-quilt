@@ -13,6 +13,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
 
 /// Id of the machine the dashboard runs on.
 pub const LOCAL: &str = "local";
@@ -23,10 +24,15 @@ pub struct MachineConfig {
     pub id: String,
     pub label: String,
     /// Host alias passed to `ssh`; `None` for the local machine.
+    #[serde(default)]
     pub ssh: Option<String>,
     /// Path of `cq` on the remote machine (default: `cq` on PATH).
     #[serde(default)]
     pub cq_path: Option<String>,
+    /// Arbitrary command whose stdio reaches a `cq bridge` (e.g. `["wsl", "cq", "bridge"]`).
+    /// Takes precedence over `ssh`.
+    #[serde(default)]
+    pub command: Option<Vec<String>>,
 }
 
 /// Machine state reported to the frontend.
@@ -62,7 +68,11 @@ struct EventPayload<'a> {
     event: &'a cq_proto::AgentEvent,
 }
 
+type Pending = Arc<Mutex<VecDeque<oneshot::Sender<Result<Message, String>>>>>;
+
 struct Machine {
+    /// Waiters for daemon replies to Launch / ListDir, answered in order.
+    pending: Pending,
     info: Arc<Mutex<MachineInfo>>,
     tx: UnboundedSender<Message>,
     /// Active subscriptions (session -> size), re-established after reconnects.
@@ -128,6 +138,7 @@ impl Hub {
             label: "local".into(),
             ssh: None,
             cq_path: None,
+            command: None,
         }];
         configs.extend(load_machine_configs());
         for cfg in configs {
@@ -145,12 +156,13 @@ impl Hub {
             error: None,
         }));
         let subs = Arc::new(Mutex::new(HashMap::new()));
+        let pending: Pending = Arc::default();
         self.machines
             .lock()
             .unwrap()
-            .insert(cfg.id.clone(), Machine { info: info.clone(), tx, subs: subs.clone() });
+            .insert(cfg.id.clone(), Machine { info: info.clone(), tx, subs: subs.clone(), pending: pending.clone() });
         let hub = self.clone();
-        tauri::async_runtime::spawn(async move { hub.machine_loop(cfg, info, subs, rx).await });
+        tauri::async_runtime::spawn(async move { hub.machine_loop(cfg, info, subs, pending, rx).await });
     }
 
     /// Returns all machines and their connection state.
@@ -215,6 +227,23 @@ impl Hub {
         self.send(machine, msg)
     }
 
+    /// Sends a request that the daemon answers with exactly one reply (or an error).
+    pub async fn call(&self, machine: &str, msg: Message) -> Result<Message> {
+        let (tx, rx) = oneshot::channel();
+        {
+            let machines = self.machines.lock().unwrap();
+            let m = machines.get(machine).context("unknown machine")?;
+            m.pending.lock().unwrap().push_back(tx);
+            m.tx.send(msg).ok().context("machine connection closed")?;
+        }
+        match tokio::time::timeout(Duration::from_secs(15), rx).await {
+            Ok(Ok(Ok(m))) => Ok(m),
+            Ok(Ok(Err(e))) => bail!(e),
+            Ok(Err(_)) => bail!("connection lost"),
+            Err(_) => bail!("timed out"),
+        }
+    }
+
     fn set_status(&self, info: &Mutex<MachineInfo>, online: bool, error: Option<String>) {
         {
             let mut i = info.lock().unwrap();
@@ -232,6 +261,7 @@ impl Hub {
         cfg: MachineConfig,
         info: Arc<Mutex<MachineInfo>>,
         subs: Arc<Mutex<HashMap<String, (u16, u16)>>>,
+        pending: Pending,
         mut rx: UnboundedReceiver<Message>,
     ) {
         loop {
@@ -240,7 +270,10 @@ impl Hub {
                     // Hosts replay their history to the new connection; drop the stale copy.
                     self.cache.lock().unwrap().events.retain(|(m, _), _| m != &cfg.id);
                     self.set_status(&info, true, None);
-                    match self.run_connection(&cfg.id, stream, &subs, &mut rx).await {
+                    let r = self.run_connection(&cfg.id, stream, &subs, &pending, &mut rx).await;
+                    // Requests in flight will never be answered on this connection.
+                    pending.lock().unwrap().clear();
+                    match r {
                         Ok(()) => "disconnected".to_owned(),
                         Err(e) => format!("{e:#}"),
                     }
@@ -265,6 +298,7 @@ impl Hub {
         machine: &str,
         stream: BoxStream,
         subs: &Mutex<HashMap<String, (u16, u16)>>,
+        pending: &Pending,
         rx: &mut UnboundedReceiver<Message>,
     ) -> Result<()> {
         let (rd, mut wr) = tokio::io::split(stream);
@@ -281,7 +315,7 @@ impl Hub {
             tokio::select! {
                 msg = msgs.recv() => {
                     let Some(msg) = msg else { return Ok(()) };
-                    self.dispatch(machine, msg?)?;
+                    self.dispatch(machine, msg?, pending)?;
                 }
                 cmd = rx.recv() => match cmd {
                     Some(m) => write_message(&mut wr, &m).await?,
@@ -322,14 +356,25 @@ impl Hub {
         q.push_back(ev.clone());
     }
 
-    fn dispatch(&self, machine: &str, msg: Message) -> Result<()> {
+    fn dispatch(&self, machine: &str, msg: Message, pending: &Pending) -> Result<()> {
         match msg {
             Message::SessionList(sessions) => {
                 self.cache.lock().unwrap().sessions.insert(machine.to_owned(), sessions.clone());
                 let _ = self.app.emit("sessions", SessionsPayload { machine, sessions: &sessions });
             }
             Message::Routed { session, inner } => self.dispatch_session(machine, &session, *inner),
-            Message::Error(e) => bail!("daemon error: {e}"),
+            Message::Launched(_) | Message::DirList(_) => {
+                if let Some(w) = pending.lock().unwrap().pop_front() {
+                    let _ = w.send(Ok(msg));
+                }
+            }
+            Message::Error(e) => match pending.lock().unwrap().pop_front() {
+                Some(w) => {
+                    let _ = w.send(Err(e));
+                }
+                // An unsolicited error (e.g. protocol mismatch) ends the connection.
+                None => bail!("daemon error: {e}"),
+            },
             other => {
                 let _ = self.app.emit("daemon-message", format!("{other:?}"));
             }
@@ -364,7 +409,7 @@ fn load_machine_configs() -> Vec<MachineConfig> {
     serde_json::from_slice::<Vec<MachineConfig>>(&data)
         .unwrap_or_default()
         .into_iter()
-        .filter(|m| m.id != LOCAL && m.ssh.is_some())
+        .filter(|m| m.id != LOCAL && (m.ssh.is_some() || m.command.is_some()))
         .collect()
 }
 
@@ -407,6 +452,10 @@ fn spawn_daemon() -> Result<()> {
 }
 
 async fn open_transport(cfg: &MachineConfig) -> Result<BoxStream> {
+    if let Some(cmd) = &cfg.command {
+        let (prog, args) = cmd.split_first().context("empty machine command")?;
+        return open_command(prog, args.iter().map(String::as_str)).await;
+    }
     match &cfg.ssh {
         None => {
             let endpoint = local::daemon_endpoint()?;
@@ -416,7 +465,12 @@ async fn open_transport(cfg: &MachineConfig) -> Result<BoxStream> {
             spawn_daemon()?;
             local::connect(&endpoint, Duration::from_secs(5)).await
         }
-        Some(host) => open_ssh(host, cfg.cq_path.as_deref().unwrap_or("cq")).await,
+        Some(host) => {
+            let cq = cfg.cq_path.as_deref().unwrap_or("cq");
+            // No port is opened on the remote side; the user's ssh key authentication applies.
+            let args = ["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", host, cq, "bridge"];
+            open_command("ssh", args.into_iter()).await
+        }
     }
 }
 
@@ -457,11 +511,11 @@ impl AsyncWrite for ChildStream {
     }
 }
 
-/// Runs `ssh <host> cq bridge` and uses its stdio as the daemon connection. No port is opened on
-/// the remote side and the user's existing ssh key authentication applies.
-async fn open_ssh(host: &str, cq_path: &str) -> Result<BoxStream> {
-    let mut cmd = tokio::process::Command::new("ssh");
-    cmd.args(["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", host, cq_path, "bridge"])
+/// Runs a command (`ssh <host> cq bridge`, `wsl cq bridge`, ...) and uses its stdio as the daemon
+/// connection.
+async fn open_command<'a>(prog: &str, args: impl Iterator<Item = &'a str>) -> Result<BoxStream> {
+    let mut cmd = tokio::process::Command::new(prog);
+    cmd.args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -471,8 +525,8 @@ async fn open_ssh(host: &str, cq_path: &str) -> Result<BoxStream> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let mut child = cmd.spawn().context("spawn ssh")?;
-    let stdout = child.stdout.take().context("ssh stdout")?;
-    let stdin = child.stdin.take().context("ssh stdin")?;
+    let mut child = cmd.spawn().with_context(|| format!("spawn {prog}"))?;
+    let stdout = child.stdout.take().context("child stdout")?;
+    let stdin = child.stdin.take().context("child stdin")?;
     Ok(Box::new(ChildStream { io: tokio::io::join(stdout, stdin), _child: child }))
 }

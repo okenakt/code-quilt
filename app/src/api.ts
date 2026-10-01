@@ -39,6 +39,15 @@ export const resize = (machine: string, session: string, cols: number, rows: num
 export const approve = (machine: string, session: string, option: number): Promise<void> =>
   invoke("approve", { machine, session, option });
 
+export type DirList = { path: string; parent: string | null; entries: string[]; roots: string[] };
+
+/** Lists subdirectories on a machine (an empty path lists the allowed roots). */
+export const listDir = (machine: string, path: string): Promise<DirList> => invoke("list_dir", { machine, path });
+
+/** Starts a session on a machine without a local terminal; resolves to its id. */
+export const launchSession = (machine: string, cwd: string, args: string[], resume: string | null): Promise<string> =>
+  invoke("launch", { machine, cwd, args, resume });
+
 type TerminalSink = (msg: SessionData) => void;
 
 const terminalSinks = new Map<string, TerminalSink>();

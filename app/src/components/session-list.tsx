@@ -71,10 +71,12 @@ type Props = {
   sessions: SessionState[];
   activeKey: string | null;
   onOpen: (s: SessionState) => void;
+  onNew: (machine: string) => void;
+  onResume: (s: SessionState) => void;
 };
 
 /** Task list: sessions grouped by machine, live ones first. */
-export const SessionList = ({ machines, sessions, activeKey, onOpen }: Props) => (
+export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume }: Props) => (
   <nav className="session-list">
     {machines.map((m) => {
       const mine = sessions.filter((s) => s.machine === m.id);
@@ -86,13 +88,21 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen }: Props) =>
             <span className={`dot ${m.online ? "online" : "offline"}`} />
             {m.label}
             {!m.online && <span className="machine-offline">offline</span>}
+            {m.online && (
+              <button className="machine-new" title="New session" onClick={() => onNew(m.id)}>
+                +
+              </button>
+            )}
           </header>
           {live.length === 0 && <div className="empty">no running sessions</div>}
           {[...live, ...exited].map((s) => (
-            <button
+            <div
               key={s.key}
+              role="button"
+              tabIndex={0}
               className={`session ${s.activity} ${s.key === activeKey ? "active" : ""}`}
               onClick={() => onOpen(s)}
+              onKeyDown={(e) => e.key === "Enter" && onOpen(s)}
               title={s.meta.cwd}
             >
               <div className="session-row">
@@ -102,7 +112,18 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen }: Props) =>
               <div className="session-cwd">{s.meta.cwd}</div>
               <UsageBadge s={s} />
               {s.key === activeKey && <TokenDetail s={s} />}
-            </button>
+              {s.activity === "exited" && s.meta.agent_session_id && m.online && (
+                <button
+                  className="session-resume"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onResume(s);
+                  }}
+                >
+                  resume
+                </button>
+              )}
+            </div>
           ))}
         </section>
       );

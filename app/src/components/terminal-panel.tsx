@@ -64,12 +64,22 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
       } else if (msg.kind === "exit") {
         term.write("\r\n\x1b[2m[session exited]\x1b[0m\r\n");
       } else if (msg.kind === "error") {
-        term.write(`\r\n\x1b[31m[${String(msg.json)}]\x1b[0m\r\n`);
+        // A freshly launched host may not be listening yet; retry a few times.
+        if (retries < 5) {
+          retries += 1;
+          retryTimer = setTimeout(doSubscribe, 1000);
+        } else {
+          term.write(`\r\n\x1b[31m[${String(msg.json)}]\x1b[0m\r\n`);
+        }
       }
     });
-    void subscribe(machine, session, term.cols, term.rows).catch((e: unknown) =>
-      term.write(`\x1b[31m${String(e)}\x1b[0m\r\n`),
-    );
+    let retries = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const doSubscribe = () =>
+      void subscribe(machine, session, term.cols, term.rows).catch((e: unknown) =>
+        term.write(`\x1b[31m${String(e)}\x1b[0m\r\n`),
+      );
+    doSubscribe();
 
     const ro = new ResizeObserver(() => {
       if (el.clientWidth > 0 && el.clientHeight > 0) fit.fit();
@@ -81,6 +91,7 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
     if (panelApi.isActive) term.focus();
 
     return () => {
+      clearTimeout(retryTimer);
       activeSub.dispose();
       ro.disconnect();
       off();

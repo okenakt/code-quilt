@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
-import { connectBackend, getMachines, getReplay, refreshSessions } from "./api";
+import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, sessionKey } from "./api";
 import { ApprovalDialog } from "./components/approval-dialog";
+import { NewSessionDialog } from "./components/new-session-dialog";
 import { SessionList } from "./components/session-list";
 import { TerminalPanel } from "./components/terminal-panel";
 import { UsageBar } from "./components/usage-bar";
@@ -37,6 +38,7 @@ export const App = () => {
   const apiRef = useRef<DockviewApi | null>(null);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [approvalFocus, setApprovalFocus] = useState(0);
+  const [newSessionFor, setNewSessionFor] = useState<string | null>(null);
   const sessionsRef = useRef<SessionState[]>(sessions);
   sessionsRef.current = sessions;
   const activeKeyRef = useRef(activeKey);
@@ -95,6 +97,27 @@ export const App = () => {
       params: { machine: s.machine, session: s.meta.id },
     });
   }, []);
+
+  /** Opens a tile for a session that may not be in the list yet (just launched). */
+  const openById = useCallback((machine: string, id: string) => {
+    const api = apiRef.current;
+    const key = sessionKey(machine, id);
+    if (!api || api.getPanel(key)) return;
+    api.addPanel({ id: key, component: "terminal", title: id, params: { machine, session: id } });
+  }, []);
+
+  const launch = useCallback(
+    async (machine: string, cwd: string, args: string[], resume: string | null = null) => {
+      const id = await launchSession(machine, cwd, args, resume);
+      openById(machine, id);
+    },
+    [openById],
+  );
+
+  const resumeSession = useCallback(
+    (s: SessionState) => void launch(s.machine, s.meta.cwd, [], s.meta.agent_session_id).catch((e: unknown) => alert(String(e))),
+    [launch],
+  );
 
   // Keep tab titles in sync with session names.
   useEffect(() => {
@@ -194,7 +217,14 @@ export const App = () => {
         )}
       </header>
       <aside className="sidebar">
-        <SessionList machines={machines} sessions={sessions} activeKey={activeKey} onOpen={openSession} />
+        <SessionList
+          machines={machines}
+          sessions={sessions}
+          activeKey={activeKey}
+          onOpen={openSession}
+          onNew={setNewSessionFor}
+          onResume={resumeSession}
+        />
         <footer className="help">
           {SHORTCUT_HELP.map(([k, v]) => (
             <div key={k}>
@@ -210,6 +240,14 @@ export const App = () => {
         )}
       </main>
       <ApprovalDialog sessions={sessions} machines={machines} focusToken={approvalFocus} />
+      {newSessionFor && (
+        <NewSessionDialog
+          machines={machines}
+          initialMachine={newSessionFor}
+          onLaunch={(m, cwd, args) => launch(m, cwd, args)}
+          onClose={() => setNewSessionFor(null)}
+        />
+      )}
     </div>
   );
 };
