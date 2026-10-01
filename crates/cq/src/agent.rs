@@ -29,9 +29,11 @@ fn parse_option(line: &str) -> Option<PromptOption> {
     Some(PromptOption { number, label: rest.trim().to_owned() })
 }
 
+/// A solid horizontal rule, which Claude Code draws above a prompt box. Dashed rules (`╌`) are
+/// separators inside the box and are not boundaries.
 fn is_rule(line: &str) -> bool {
     let t = line.trim();
-    t.chars().count() >= 10 && t.chars().all(|c| matches!(c, '─' | '━' | '╌' | '-' | '╭' | '╮' | '╰' | '╯'))
+    t.chars().count() >= 10 && t.chars().all(|c| matches!(c, '─' | '━'))
 }
 
 /// Finds a Claude Code permission prompt ("Do you want to ...?" followed by numbered options).
@@ -97,6 +99,34 @@ mod tests {
         assert!(p.options[1].label.ends_with("in C:\\work"));
         assert!(p.text.starts_with("Bash command"));
         assert!(p.text.ends_with("Do you want to proceed?"));
+    }
+
+    #[test]
+    fn keeps_tool_and_command_above_dashed_separators() {
+        // Layout observed with Claude Code 2.1.286.
+        let screen = "\
+● Running…
+  ⎿  $ powershell -NoProfile -Command 1+1
+────────────────────────────────────────────────────
+ Bash command
+ Run the PowerShell command
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ powershell -NoProfile -Command 1+1
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for: powershell -NoProfile -Command 1+1
+   3. No
+
+ Esc to cancel · Tab to amend
+";
+        let p = find_claude_permission_prompt(screen).unwrap();
+        assert!(p.text.starts_with("Bash command"), "{}", p.text);
+        assert!(p.text.contains("powershell -NoProfile -Command 1+1"));
+        assert_eq!(p.options.len(), 3);
+        assert_eq!(p.options[2].label, "No");
     }
 
     #[test]
