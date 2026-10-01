@@ -24,6 +24,8 @@ pub enum ClientKind {
     Hub,
     /// One-shot event sender (`cq hook`, `cq statusline`).
     Event,
+    /// Observer that receives events, input-owner changes and exit, but no terminal output.
+    Monitor,
 }
 
 /// First message sent by a client.
@@ -96,6 +98,21 @@ pub struct Exit {
     pub code: Option<u32>,
 }
 
+/// Answer to a permission prompt, by 1-based option number as shown on screen.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Approve {
+    pub option: u8,
+}
+
+/// Request to open a relayed connection to a session through the daemon.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Subscribe {
+    pub session: String,
+    pub kind: ClientKind,
+    pub cols: u16,
+    pub rows: u16,
+}
+
 /// A decoded protocol message.
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -109,7 +126,18 @@ pub enum Message {
     InputOwner(InputOwner),
     Event(AgentEvent),
     Exit(Exit),
+    Approve(Approve),
     Error(String),
+    /// Client to daemon: request the session list.
+    ListSessions,
+    /// Daemon to client: all known sessions on the machine.
+    SessionList(Vec<SessionMeta>),
+    /// Client to daemon: open a relayed connection to a session.
+    Subscribe(Subscribe),
+    /// Client to daemon: close a relayed connection.
+    Unsubscribe(String),
+    /// A session message relayed by the daemon, tagged with the session id.
+    Routed { session: String, inner: Box<Message> },
 }
 
 mod kind {
@@ -122,13 +150,29 @@ mod kind {
     pub const INPUT_OWNER: u8 = 0x13;
     pub const EVENT: u8 = 0x20;
     pub const EXIT: u8 = 0x21;
+    pub const APPROVE: u8 = 0x22;
+    pub const LIST_SESSIONS: u8 = 0x30;
+    pub const SESSION_LIST: u8 = 0x31;
+    pub const SUBSCRIBE: u8 = 0x32;
+    pub const UNSUBSCRIBE: u8 = 0x33;
+    pub const ROUTED: u8 = 0x34;
     pub const ERROR: u8 = 0x7f;
 }
 
 impl Message {
     /// Encodes the message into a complete frame.
     pub fn encode(&self) -> Result<Vec<u8>> {
-        let (k, payload): (u8, Vec<u8>) = match self {
+        let (k, payload) = self.encode_parts()?;
+        let len = u32::try_from(payload.len() + 1).context("frame too large")?;
+        let mut frame = Vec::with_capacity(payload.len() + 5);
+        frame.extend_from_slice(&len.to_le_bytes());
+        frame.push(k);
+        frame.extend_from_slice(&payload);
+        Ok(frame)
+    }
+
+    fn encode_parts(&self) -> Result<(u8, Vec<u8>)> {
+        Ok(match self {
             Message::Hello(v) => (kind::HELLO, serde_json::to_vec(v)?),
             Message::Welcome(v) => (kind::WELCOME, serde_json::to_vec(v)?),
             Message::Snapshot(b) => (kind::SNAPSHOT, b.clone()),
@@ -138,14 +182,24 @@ impl Message {
             Message::InputOwner(v) => (kind::INPUT_OWNER, serde_json::to_vec(v)?),
             Message::Event(v) => (kind::EVENT, serde_json::to_vec(v)?),
             Message::Exit(v) => (kind::EXIT, serde_json::to_vec(v)?),
+            Message::Approve(v) => (kind::APPROVE, serde_json::to_vec(v)?),
             Message::Error(s) => (kind::ERROR, s.as_bytes().to_vec()),
-        };
-        let len = u32::try_from(payload.len() + 1).context("frame too large")?;
-        let mut frame = Vec::with_capacity(payload.len() + 5);
-        frame.extend_from_slice(&len.to_le_bytes());
-        frame.push(k);
-        frame.extend_from_slice(&payload);
-        Ok(frame)
+            Message::ListSessions => (kind::LIST_SESSIONS, Vec::new()),
+            Message::SessionList(v) => (kind::SESSION_LIST, serde_json::to_vec(v)?),
+            Message::Subscribe(v) => (kind::SUBSCRIBE, serde_json::to_vec(v)?),
+            Message::Unsubscribe(s) => (kind::UNSUBSCRIBE, s.as_bytes().to_vec()),
+            Message::Routed { session, inner } => {
+                // [u16 LE id length][id][inner kind][inner payload]
+                let id = session.as_bytes();
+                let (ik, ip) = inner.encode_parts()?;
+                let mut b = Vec::with_capacity(id.len() + ip.len() + 3);
+                b.extend_from_slice(&u16::try_from(id.len())?.to_le_bytes());
+                b.extend_from_slice(id);
+                b.push(ik);
+                b.extend_from_slice(&ip);
+                (kind::ROUTED, b)
+            }
+        })
     }
 
     /// Decodes a message from its kind byte and payload.
@@ -160,7 +214,25 @@ impl Message {
             kind::INPUT_OWNER => Message::InputOwner(serde_json::from_slice(&payload)?),
             kind::EVENT => Message::Event(serde_json::from_slice(&payload)?),
             kind::EXIT => Message::Exit(serde_json::from_slice(&payload)?),
+            kind::APPROVE => Message::Approve(serde_json::from_slice(&payload)?),
             kind::ERROR => Message::Error(String::from_utf8_lossy(&payload).into_owned()),
+            kind::LIST_SESSIONS => Message::ListSessions,
+            kind::SESSION_LIST => Message::SessionList(serde_json::from_slice(&payload)?),
+            kind::SUBSCRIBE => Message::Subscribe(serde_json::from_slice(&payload)?),
+            kind::UNSUBSCRIBE => Message::Unsubscribe(String::from_utf8(payload)?),
+            kind::ROUTED => {
+                if payload.len() < 3 {
+                    bail!("short routed frame");
+                }
+                let n = u16::from_le_bytes([payload[0], payload[1]]) as usize;
+                if payload.len() < 2 + n + 1 {
+                    bail!("short routed frame");
+                }
+                let session = String::from_utf8(payload[2..2 + n].to_vec())?;
+                let ik = payload[2 + n];
+                let inner = Box::new(Message::decode(ik, payload[3 + n..].to_vec())?);
+                Message::Routed { session, inner }
+            }
             other => bail!("unknown message kind 0x{other:02x}"),
         })
     }
@@ -202,6 +274,10 @@ mod tests {
             Message::Output(b"\x1b[31mhi\x1b[0m".to_vec()),
             Message::Resize(Size { cols: 80, rows: 24 }),
             Message::Exit(Exit { code: Some(0) }),
+            Message::Routed {
+                session: "abc".into(),
+                inner: Box::new(Message::Input(b"x".to_vec())),
+            },
         ];
         let mut buf = Vec::new();
         for m in &msgs {
@@ -211,6 +287,13 @@ mod tests {
         assert!(matches!(read_message(&mut cur).await.unwrap(), Some(Message::Output(b)) if b == b"\x1b[31mhi\x1b[0m"));
         assert!(matches!(read_message(&mut cur).await.unwrap(), Some(Message::Resize(Size { cols: 80, rows: 24 }))));
         assert!(matches!(read_message(&mut cur).await.unwrap(), Some(Message::Exit(Exit { code: Some(0) }))));
+        match read_message(&mut cur).await.unwrap() {
+            Some(Message::Routed { session, inner }) => {
+                assert_eq!(session, "abc");
+                assert!(matches!(*inner, Message::Input(b) if b == b"x"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
         assert!(read_message(&mut cur).await.unwrap().is_none());
     }
 }

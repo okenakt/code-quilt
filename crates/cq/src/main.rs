@@ -1,6 +1,7 @@
 //! `cq`: CodeQuilt command line. A single binary provides the user commands, the per-session
 //! host, and the hook/status line endpoints invoked by agents.
 
+mod agent;
 mod attach;
 mod hook;
 mod host;

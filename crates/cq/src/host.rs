@@ -1,6 +1,7 @@
 //! Session host (`cq host`): owns the agent's PTY, keeps a screen grid, and fans output out to
 //! every attached client. Runs detached so the session survives its terminal and the hub.
 
+use crate::agent::{self, PermissionPrompt};
 use crate::{ipc, paths, session};
 use anyhow::{Context, Result, bail};
 use cq_proto::{
@@ -8,7 +9,7 @@ use cq_proto::{
     SessionStatus, Size, Welcome, read_message, write_message,
 };
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -95,9 +96,14 @@ impl vt100::Callbacks for ExtraModes {
     }
 }
 
+/// Number of recent agent events replayed to newly connected hubs and monitors.
+const EVENT_HISTORY: usize = 200;
+
 struct Client {
     tx: mpsc::UnboundedSender<Message>,
     size: Size,
+    /// Monitors receive events but no terminal output, and never own input.
+    monitor: bool,
 }
 
 struct State {
@@ -109,6 +115,11 @@ struct State {
     size: Size,
     meta: SessionMeta,
     pty_tx: std::sync::mpsc::Sender<Vec<u8>>,
+    events: VecDeque<AgentEvent>,
+    last_status: Option<AgentEvent>,
+    /// Set when output arrived since the last permission prompt scan.
+    dirty: bool,
+    prompt: Option<PermissionPrompt>,
 }
 
 impl State {
@@ -116,6 +127,62 @@ impl State {
         for c in self.clients.values() {
             let _ = c.tx.send(msg.clone());
         }
+    }
+
+    fn broadcast_output(&self, msg: &Message) {
+        for c in self.clients.values().filter(|c| !c.monitor) {
+            let _ = c.tx.send(msg.clone());
+        }
+    }
+
+    /// Records an event in the history and sends it to every client.
+    fn publish(&mut self, ev: AgentEvent) {
+        if ev.source == "statusline" {
+            self.last_status = Some(ev.clone());
+        } else {
+            if self.events.len() == EVENT_HISTORY {
+                self.events.pop_front();
+            }
+            self.events.push_back(ev.clone());
+        }
+        self.broadcast(&Message::Event(ev));
+    }
+
+    fn prompt_event(&self) -> AgentEvent {
+        let payload = match &self.prompt {
+            Some(p) => serde_json::json!({ "type": "permission_prompt", "prompt": p }),
+            None => serde_json::json!({ "type": "permission_resolved" }),
+        };
+        AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload }
+    }
+
+    /// Re-scans the screen and publishes prompt appearance or resolution.
+    fn scan_prompt(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        self.dirty = false;
+        let found = match self.meta.agent.as_str() {
+            "claude" => agent::find_claude_permission_prompt(&self.parser.screen().contents()),
+            _ => None,
+        };
+        if found != self.prompt {
+            self.prompt = found;
+            let ev = self.prompt_event();
+            self.publish(ev);
+        }
+    }
+
+    fn approve(&mut self, option: u8) -> std::result::Result<(), String> {
+        // Answer only a prompt that is visible right now, so a stale dialog cannot approve a
+        // different request.
+        self.dirty = true;
+        self.scan_prompt();
+        let Some(p) = &self.prompt else { return Err("no permission prompt on screen".into()) };
+        if !p.options.iter().any(|o| o.number == option) {
+            return Err(format!("option {option} not offered"));
+        }
+        self.pty_tx.send(vec![b'0' + option]).map_err(|e| e.to_string())
     }
 
     fn apply_size(&mut self, size: Size) {
@@ -214,7 +281,21 @@ pub async fn run(args: HostArgs) -> Result<()> {
         size: args.size,
         meta,
         pty_tx,
+        events: VecDeque::new(),
+        last_status: None,
+        dirty: false,
+        prompt: None,
     }));
+
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                state.lock().unwrap().scan_prompt();
+            }
+        });
+    }
 
     {
         let state = state.clone();
@@ -230,7 +311,8 @@ pub async fn run(args: HostArgs) -> Result<()> {
                         if !replies.is_empty() {
                             let _ = st.pty_tx.send(replies);
                         }
-                        st.broadcast(&Message::Output(strip_cpr_requests(&buf[..n])));
+                        st.dirty = true;
+                        st.broadcast_output(&Message::Output(strip_cpr_requests(&buf[..n])));
                     }
                 }
             }
@@ -303,6 +385,7 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
         return Ok(());
     }
 
+    let monitor = hello.kind == ClientKind::Monitor;
     let (tx, mut rx) = mpsc::unbounded_channel();
     let id = {
         let mut st = state.lock().unwrap();
@@ -315,10 +398,20 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
             session: st.meta.clone(),
         }));
         // Snapshot and subscription happen under one lock so no output is lost or duplicated.
-        let _ = tx.send(Message::Snapshot(st.snapshot()));
+        if !monitor {
+            let _ = tx.send(Message::Snapshot(st.snapshot()));
+        }
         let _ = tx.send(Message::InputOwner(InputOwner { owner: st.owner }));
-        st.clients.insert(id, Client { tx, size });
-        if st.owner.is_none() {
+        if hello.kind != ClientKind::Terminal {
+            for ev in st.events.iter().chain(st.last_status.iter()) {
+                let _ = tx.send(Message::Event(ev.clone()));
+            }
+            if st.prompt.is_some() {
+                let _ = tx.send(Message::Event(st.prompt_event()));
+            }
+        }
+        st.clients.insert(id, Client { tx, size, monitor });
+        if st.owner.is_none() && !monitor {
             st.set_owner(Some(id));
         }
         id
@@ -336,6 +429,22 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
         while let Some(msg) = read_message(&mut rd).await? {
             let mut st = state.lock().unwrap();
             match msg {
+                Message::Input(_) | Message::Resize(_) if monitor => {}
+                Message::Approve(a) => {
+                    let payload = match st.approve(a.option) {
+                        Ok(()) => serde_json::json!({
+                            "type": "approval_result", "ok": true, "option": a.option,
+                        }),
+                        Err(e) => serde_json::json!({
+                            "type": "approval_result", "ok": false, "option": a.option, "reason": e,
+                        }),
+                    };
+                    let ev =
+                        AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload };
+                    if let Some(c) = st.clients.get(&id) {
+                        let _ = c.tx.send(Message::Event(ev));
+                    }
+                }
                 Message::Input(bytes) => {
                     // Last writer wins the input right, and the PTY follows its size.
                     st.set_owner(Some(id));
@@ -385,6 +494,8 @@ fn strip_cpr_requests(buf: &[u8]) -> Vec<u8> {
 
 fn handle_event(state: &Shared, ev: AgentEvent) {
     let mut st = state.lock().unwrap();
+    // Agent events are a good moment to re-check the screen (e.g. Notification on a prompt).
+    st.dirty = true;
     if ev.source == "hook"
         && ev.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("SessionStart")
     {
@@ -393,5 +504,5 @@ fn handle_event(state: &Shared, ev: AgentEvent) {
             let _ = session::save(&st.meta);
         }
     }
-    st.broadcast(&Message::Event(ev));
+    st.publish(ev);
 }

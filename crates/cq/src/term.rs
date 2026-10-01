@@ -33,7 +33,7 @@ pub const DETACH_BYTE: u8 = 0x1c;
 
 /// Escape sequences that undo modes an agent may have left enabled in the outer terminal.
 pub const RESET_MODES: &[u8] =
-    b"\x1b[<99u\x1b[?2004l\x1b[?1004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1l\x1b>\x1b[0m\x1b[?25h\r\n";
+    b"\x1b[<99u\x1b[?2004l\x1b[?1004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1l\x1b>\x1b[0m\x1b[?25h\x1b[999;1H\r\n";
 
 #[cfg(windows)]
 mod imp {
