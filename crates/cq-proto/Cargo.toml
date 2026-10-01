@@ -1,10 +1,16 @@
 [package]
 name = "cq-proto"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Local endpoint naming and client connections (named pipes / unix sockets).
+local = ["dep:dirs", "tokio/net", "tokio/time"]
 
 [dependencies]
 anyhow = "1.0.104"
+dirs = { version = "7.0.0", optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["io-util"] }

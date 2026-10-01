@@ -4,6 +4,9 @@
 //! byte and the payload. Control messages carry JSON payloads; terminal output and input carry raw
 //! bytes so escape sequences pass through untouched.
 
+#[cfg(feature = "local")]
+pub mod local;
+
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};

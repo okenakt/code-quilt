@@ -4,24 +4,16 @@
 //! the agent's terminal.
 
 use anyhow::Result;
-use tokio::io::{AsyncRead, AsyncWrite};
 
-/// A bidirectional local IPC stream.
-pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static {}
-impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Stream for T {}
-
-pub type BoxStream = Box<dyn Stream>;
+pub use cq_proto::local::{BoxStream, connect};
 
 #[cfg(windows)]
 mod imp {
     use super::BoxStream;
     use anyhow::{Context, Result, bail};
     use std::ffi::c_void;
-    use std::time::Duration;
-    use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
-    use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, HANDLE, LocalFree,
-    };
+    use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, LocalFree};
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
         SDDL_REVISION_1,
@@ -133,24 +125,6 @@ mod imp {
         }
     }
 
-    /// Connects to an endpoint, retrying while all pipe instances are busy, up to `timeout`.
-    pub async fn connect(name: &str, timeout: Duration) -> Result<BoxStream> {
-        let deadline = tokio::time::Instant::now() + timeout;
-        loop {
-            match ClientOptions::new().open(name) {
-                Ok(c) => return Ok(Box::new(c)),
-                Err(e)
-                    if (e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32)
-                        || e.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32))
-                        && tokio::time::Instant::now() < deadline =>
-                {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-                Err(e) => return Err(e).with_context(|| format!("connect {name}")),
-            }
-        }
-    }
-
     /// Removes a stale endpoint (no-op on Windows: pipes vanish with their owner).
     pub fn cleanup(_name: &str) {}
 }
@@ -160,8 +134,7 @@ mod imp {
     use super::BoxStream;
     use anyhow::{Context, Result};
     use std::os::unix::fs::PermissionsExt;
-    use std::time::Duration;
-    use tokio::net::{UnixListener, UnixStream};
+    use tokio::net::UnixListener;
 
     /// Listening endpoint that yields one stream per client.
     pub struct Listener(UnixListener);
@@ -182,27 +155,13 @@ mod imp {
         }
     }
 
-    /// Connects to an endpoint, retrying until `timeout` while it does not exist yet.
-    pub async fn connect(name: &str, timeout: Duration) -> Result<BoxStream> {
-        let deadline = tokio::time::Instant::now() + timeout;
-        loop {
-            match UnixStream::connect(name).await {
-                Ok(s) => return Ok(Box::new(s)),
-                Err(_) if tokio::time::Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-                Err(e) => return Err(e).with_context(|| format!("connect {name}")),
-            }
-        }
-    }
-
     /// Removes the socket file.
     pub fn cleanup(name: &str) {
         let _ = std::fs::remove_file(name);
     }
 }
 
-pub use imp::{Listener, cleanup, connect};
+pub use imp::{Listener, cleanup};
 
 /// Connects without waiting; used by hooks that must never block the agent.
 pub async fn connect_now(name: &str) -> Result<BoxStream> {

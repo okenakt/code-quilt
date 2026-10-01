@@ -1,12 +1,13 @@
 //! Filesystem and IPC endpoint locations under `~/.codequilt`.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::PathBuf;
+
+pub use cq_proto::local::{daemon_endpoint, session_endpoint};
 
 /// Root directory of CodeQuilt state (`~/.codequilt`).
 pub fn root() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("cannot determine home directory")?;
-    Ok(home.join(".codequilt"))
+    cq_proto::local::state_root()
 }
 
 /// Directory holding `<id>.json` session metadata.
@@ -34,45 +35,10 @@ pub fn session_file(id: &str) -> Result<PathBuf> {
     Ok(sessions_dir()?.join(format!("{id}.json")))
 }
 
-/// IPC endpoint name for a session host.
-#[cfg(windows)]
-pub fn session_endpoint(id: &str) -> Result<String> {
-    Ok(format!(r"\\.\pipe\codequilt-{id}"))
-}
-
-/// IPC endpoint name for a session host.
-#[cfg(unix)]
-pub fn session_endpoint(id: &str) -> Result<String> {
-    Ok(root()?.join("run").join(format!("{id}.sock")).to_string_lossy().into_owned())
-}
-
-fn user_tag() -> String {
-    std::env::var("USERNAME")
-        .or_else(|_| std::env::var("USER"))
-        .unwrap_or_else(|_| "user".into())
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .collect()
-}
-
-/// IPC endpoint of the machine daemon. Pipe names are machine-global on Windows, so the user name
-/// is part of the name.
-#[cfg(windows)]
-pub fn daemon_endpoint() -> Result<String> {
-    Ok(format!(r"\\.\pipe\codequilt-cqd-{}", user_tag()))
-}
-
-/// IPC endpoint of the machine daemon.
-#[cfg(unix)]
-pub fn daemon_endpoint() -> Result<String> {
-    let _ = user_tag;
-    Ok(root()?.join("run").join("cqd.sock").to_string_lossy().into_owned())
-}
-
 /// Creates all state directories.
 pub fn ensure_dirs() -> Result<()> {
-    for d in [sessions_dir()?, spool_dir()?, status_dir()?] {
-        std::fs::create_dir_all(&d).with_context(|| format!("create {}", d.display()))?;
+    for d in [sessions_dir()?, spool_dir()?, status_dir()?, root()?.join("logs")] {
+        std::fs::create_dir_all(&d)?;
     }
     #[cfg(unix)]
     std::fs::create_dir_all(root()?.join("run"))?;
