@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
-import { connectBackend, getMachines, refreshSessions } from "./api";
+import { connectBackend, getMachines, getReplay, refreshSessions } from "./api";
 import { ApprovalDialog } from "./components/approval-dialog";
 import { SessionList } from "./components/session-list";
 import { TerminalPanel } from "./components/terminal-panel";
@@ -57,6 +57,11 @@ export const App = () => {
       off = o;
       const ms = await getMachines();
       setMachines(ms);
+      const replay = await getReplay();
+      replay.sessions.forEach((r) => setSessions(r.machine, r.sessions));
+      replay.events
+        .sort((a, b) => a.event.received_at_ms - b.event.received_at_ms)
+        .forEach((r) => applyEvent(r.machine, r.session, r.event));
       ms.forEach((m) => void refreshSessions(m.id).catch(() => undefined));
     });
     return () => {

@@ -5,7 +5,7 @@ use base64::Engine;
 use cq_proto::local::{self, BoxStream};
 use cq_proto::{ClientKind, Hello, Message, PROTOCOL_VERSION, Subscribe, spawn_reader, write_message};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context as TaskContext, Poll};
@@ -69,16 +69,60 @@ struct Machine {
     subs: Arc<Mutex<HashMap<String, (u16, u16)>>>,
 }
 
+/// Events kept per session for frontend reloads.
+const CACHE_EVENTS: usize = 300;
+
+/// What the backend has received so far, so a reloaded frontend can rebuild its state.
+#[derive(Default)]
+struct Cache {
+    sessions: HashMap<String, Vec<cq_proto::SessionMeta>>,
+    events: HashMap<(String, String), VecDeque<cq_proto::AgentEvent>>,
+}
+
+/// Kind of state event that only matters in its latest form.
+fn latest_slot(ev: &cq_proto::AgentEvent) -> Option<&str> {
+    match ev.source.as_str() {
+        "statusline" => Some("statusline"),
+        "cq" => ev.payload.get("type").and_then(|t| t.as_str()).filter(|t| matches!(*t, "account" | "tokens")),
+        _ => None,
+    }
+}
+
+#[derive(Serialize)]
+pub struct ReplaySessions {
+    machine: String,
+    sessions: Vec<cq_proto::SessionMeta>,
+}
+
+#[derive(Serialize)]
+pub struct ReplayEvent {
+    machine: String,
+    session: String,
+    event: cq_proto::AgentEvent,
+}
+
+/// Cached sessions and events for a frontend that (re)starts after the backend connected.
+#[derive(Serialize)]
+pub struct Replay {
+    sessions: Vec<ReplaySessions>,
+    events: Vec<ReplayEvent>,
+}
+
 /// Owns one connection task per machine.
 pub struct Hub {
     app: AppHandle,
     machines: Mutex<HashMap<String, Machine>>,
+    cache: Mutex<Cache>,
 }
 
 impl Hub {
     /// Creates the hub and connects to the local machine and every configured remote.
     pub fn start(app: AppHandle) -> Arc<Self> {
-        let hub = Arc::new(Self { app, machines: Mutex::new(HashMap::new()) });
+        let hub = Arc::new(Self {
+            app,
+            machines: Mutex::new(HashMap::new()),
+            cache: Mutex::new(Cache::default()),
+        });
         let mut configs = vec![MachineConfig {
             id: LOCAL.into(),
             label: "local".into(),
@@ -193,6 +237,8 @@ impl Hub {
         loop {
             let err = match open_transport(&cfg).await {
                 Ok(stream) => {
+                    // Hosts replay their history to the new connection; drop the stale copy.
+                    self.cache.lock().unwrap().events.retain(|(m, _), _| m != &cfg.id);
                     self.set_status(&info, true, None);
                     match self.run_connection(&cfg.id, stream, &subs, &mut rx).await {
                         Ok(()) => "disconnected".to_owned(),
@@ -245,9 +291,41 @@ impl Hub {
         }
     }
 
+    /// Returns everything cached so far.
+    pub fn replay(&self) -> Replay {
+        let cache = self.cache.lock().unwrap();
+        Replay {
+            sessions: cache
+                .sessions
+                .iter()
+                .map(|(m, s)| ReplaySessions { machine: m.clone(), sessions: s.clone() })
+                .collect(),
+            events: cache
+                .events
+                .iter()
+                .flat_map(|((m, s), evs)| {
+                    evs.iter().map(|e| ReplayEvent { machine: m.clone(), session: s.clone(), event: e.clone() })
+                })
+                .collect(),
+        }
+    }
+
+    fn cache_event(&self, machine: &str, session: &str, ev: &cq_proto::AgentEvent) {
+        let mut cache = self.cache.lock().unwrap();
+        let q = cache.events.entry((machine.to_owned(), session.to_owned())).or_default();
+        if let Some(slot) = latest_slot(ev) {
+            q.retain(|e| latest_slot(e) != Some(slot));
+        }
+        if q.len() == CACHE_EVENTS {
+            q.pop_front();
+        }
+        q.push_back(ev.clone());
+    }
+
     fn dispatch(&self, machine: &str, msg: Message) -> Result<()> {
         match msg {
             Message::SessionList(sessions) => {
+                self.cache.lock().unwrap().sessions.insert(machine.to_owned(), sessions.clone());
                 let _ = self.app.emit("sessions", SessionsPayload { machine, sessions: &sessions });
             }
             Message::Routed { session, inner } => self.dispatch_session(machine, &session, *inner),
@@ -268,6 +346,7 @@ impl Hub {
             Message::Snapshot(b) => data("snapshot", Some(b64(&b)), None),
             Message::Output(b) => data("output", Some(b64(&b)), None),
             Message::Event(ev) => {
+                self.cache_event(machine, session, &ev);
                 let _ = self.app.emit("session-event", EventPayload { machine, session, event: &ev });
             }
             Message::Welcome(w) => data("welcome", None, serde_json::to_value(w).ok()),

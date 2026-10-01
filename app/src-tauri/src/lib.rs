@@ -18,6 +18,11 @@ fn machines(hub: State<'_, HubState>) -> Vec<MachineInfo> {
 }
 
 #[tauri::command]
+fn replay(hub: State<'_, HubState>) -> hub::Replay {
+    hub.replay()
+}
+
+#[tauri::command]
 fn list_sessions(hub: State<'_, HubState>, machine: String) -> Result<(), String> {
     hub.request(&machine, cq_proto::Message::ListSessions).map_err(err)
 }
@@ -100,6 +105,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             machines,
+            replay,
             list_sessions,
             subscribe,
             unsubscribe,

@@ -8,6 +8,14 @@ export const sessionKey = (machine: string, session: string): string => `${machi
 /** Returns all machines and their connection state. */
 export const getMachines = (): Promise<MachineInfo[]> => invoke("machines");
 
+export type Replay = {
+  sessions: { machine: string; sessions: SessionMeta[] }[];
+  events: { machine: string; session: string; event: AgentEvent }[];
+};
+
+/** Returns sessions and events the backend received before this page loaded. */
+export const getReplay = (): Promise<Replay> => invoke("replay");
+
 /** Asks a machine's daemon to resend its session list. */
 export const refreshSessions = (machine: string): Promise<void> => invoke("list_sessions", { machine });
 

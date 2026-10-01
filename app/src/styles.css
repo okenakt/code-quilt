@@ -418,3 +418,28 @@ kbd {
   color: var(--muted);
   font-size: 11px;
 }
+
+.token-detail {
+  width: 100%;
+  margin-top: 6px;
+  border-collapse: collapse;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.token-detail th,
+.token-detail td {
+  text-align: right;
+  padding: 1px 4px;
+}
+
+.token-detail th:first-child,
+.token-detail td:first-child {
+  text-align: left;
+}
+
+.token-detail tfoot td {
+  text-align: left;
+  padding-top: 3px;
+}
