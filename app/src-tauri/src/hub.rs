@@ -29,10 +29,6 @@ pub struct MachineConfig {
     /// Path of `cq` on the remote machine (default: `cq` on PATH).
     #[serde(default)]
     pub cq_path: Option<String>,
-    /// Arbitrary command whose stdio reaches a `cq bridge` (e.g. `["wsl", "cq", "bridge"]`).
-    /// Takes precedence over `ssh`.
-    #[serde(default)]
-    pub command: Option<Vec<String>>,
 }
 
 /// Machine state reported to the frontend.
@@ -138,7 +134,6 @@ impl Hub {
             label: "local".into(),
             ssh: None,
             cq_path: None,
-            command: None,
         }];
         configs.extend(load_machine_configs());
         for cfg in configs {
@@ -409,7 +404,7 @@ fn load_machine_configs() -> Vec<MachineConfig> {
     serde_json::from_slice::<Vec<MachineConfig>>(&data)
         .unwrap_or_default()
         .into_iter()
-        .filter(|m| m.id != LOCAL && (m.ssh.is_some() || m.command.is_some()))
+        .filter(|m| m.id != LOCAL && m.ssh.is_some())
         .collect()
 }
 
@@ -452,10 +447,6 @@ fn spawn_daemon() -> Result<()> {
 }
 
 async fn open_transport(cfg: &MachineConfig) -> Result<BoxStream> {
-    if let Some(cmd) = &cfg.command {
-        let (prog, args) = cmd.split_first().context("empty machine command")?;
-        return open_command(prog, args.iter().map(String::as_str)).await;
-    }
     match &cfg.ssh {
         None => {
             let endpoint = local::daemon_endpoint()?;
@@ -469,7 +460,7 @@ async fn open_transport(cfg: &MachineConfig) -> Result<BoxStream> {
             let cq = cfg.cq_path.as_deref().unwrap_or("cq");
             // No port is opened on the remote side; the user's ssh key authentication applies.
             let args = ["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", host, cq, "bridge"];
-            open_command("ssh", args.into_iter()).await
+            open_ssh(args.into_iter()).await
         }
     }
 }
@@ -511,10 +502,9 @@ impl AsyncWrite for ChildStream {
     }
 }
 
-/// Runs a command (`ssh <host> cq bridge`, `wsl cq bridge`, ...) and uses its stdio as the daemon
-/// connection.
-async fn open_command<'a>(prog: &str, args: impl Iterator<Item = &'a str>) -> Result<BoxStream> {
-    let mut cmd = tokio::process::Command::new(prog);
+/// Runs `ssh ... cq bridge` and uses its stdio as the daemon connection.
+async fn open_ssh<'a>(args: impl Iterator<Item = &'a str>) -> Result<BoxStream> {
+    let mut cmd = tokio::process::Command::new("ssh");
     cmd.args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -525,7 +515,7 @@ async fn open_command<'a>(prog: &str, args: impl Iterator<Item = &'a str>) -> Re
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let mut child = cmd.spawn().with_context(|| format!("spawn {prog}"))?;
+    let mut child = cmd.spawn().context("spawn ssh")?;
     let stdout = child.stdout.take().context("child stdout")?;
     let stdin = child.stdin.take().context("child stdin")?;
     Ok(Box::new(ChildStream { io: tokio::io::join(stdout, stdin), _child: child }))
