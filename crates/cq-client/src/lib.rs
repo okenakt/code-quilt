@@ -1,0 +1,223 @@
+//! Client library for CodeQuilt: connect to the local daemon and keep a model of every session
+//! built from the daemon's messages. Used by `cq mcp`, `cq-queen`, and other clients.
+
+use anyhow::{Context, Result};
+use cq_proto::local::{self, BoxStream};
+use cq_proto::{AgentEvent, MachineInfo, Message, SessionMeta, SessionStatus};
+use serde_json::Value;
+use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
+use std::time::Duration;
+
+/// Turns kept per session.
+pub const MAX_TURNS: usize = 20;
+
+/// One exchange: what the user (or an orchestrator) asked, and the agent's final reply.
+#[derive(Debug, Clone, Default)]
+pub struct Turn {
+    pub prompt: Option<String>,
+    pub reply: Option<String>,
+    pub at_ms: u64,
+}
+
+/// What a session is doing, derived from its events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Activity {
+    Starting,
+    Working,
+    Idle,
+    /// A permission prompt or confirmation dialog is waiting.
+    Waiting,
+    Exited,
+}
+
+impl Activity {
+    /// Short lowercase name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Activity::Starting => "starting",
+            Activity::Working => "working",
+            Activity::Idle => "idle",
+            Activity::Waiting => "approval",
+            Activity::Exited => "exited",
+        }
+    }
+}
+
+/// A session as seen by clients.
+#[derive(Debug, Clone)]
+pub struct Session {
+    pub machine: String,
+    pub meta: SessionMeta,
+    pub activity: Activity,
+    /// Pending prompt (`id`, `kind`, `text`, `options`) as reported by the host.
+    pub prompt: Option<Value>,
+    pub turns: VecDeque<Turn>,
+}
+
+impl Session {
+    /// `machine:id`.
+    pub fn key(&self) -> String {
+        format!("{}:{}", self.machine, self.meta.id)
+    }
+
+    /// The user-given name, or the id.
+    pub fn label(&self) -> &str {
+        self.meta.name.as_deref().unwrap_or(&self.meta.id)
+    }
+}
+
+/// Sessions and machines, kept up to date from daemon messages.
+#[derive(Debug, Default)]
+pub struct Model {
+    pub sessions: HashMap<(String, String), Session>,
+    pub machines: Vec<MachineInfo>,
+    /// The local machine's session list has arrived.
+    pub synced: bool,
+}
+
+impl Model {
+    /// Applies a daemon message; returns the session event it carried, if any.
+    pub fn apply(&mut self, msg: &Message) -> Option<(String, String, AgentEvent)> {
+        match msg {
+            Message::MachineList(l) => self.machines = l.clone(),
+            Message::SessionList(l) => self.apply_list(&l.machine, l.sessions.clone()),
+            Message::Routed { machine, session, inner } => {
+                if let Message::Event(ev) = inner.as_ref() {
+                    self.apply_event(machine, session, ev);
+                    return Some((machine.clone(), session.clone(), ev.clone()));
+                }
+                if let Message::Exit(_) = inner.as_ref() {
+                    if let Some(s) = self.sessions.get_mut(&(machine.clone(), session.clone())) {
+                        s.activity = Activity::Exited;
+                        s.meta.status = SessionStatus::Exited;
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn apply_list(&mut self, machine: &str, list: Vec<SessionMeta>) {
+        let keep: Vec<_> = list.iter().map(|m| (machine.to_owned(), m.id.clone())).collect();
+        self.sessions.retain(|k, _| k.0 != machine || keep.contains(k));
+        for meta in list {
+            let key = (machine.to_owned(), meta.id.clone());
+            let exited = meta.status == SessionStatus::Exited;
+            let entry = self.sessions.entry(key).or_insert_with(|| Session {
+                machine: machine.to_owned(),
+                meta: meta.clone(),
+                activity: Activity::Starting,
+                prompt: None,
+                turns: VecDeque::new(),
+            });
+            entry.meta = meta;
+            if exited {
+                entry.activity = Activity::Exited;
+                entry.prompt = None;
+            }
+        }
+        if machine == cq_proto::LOCAL_MACHINE {
+            self.synced = true;
+        }
+    }
+
+    fn apply_event(&mut self, machine: &str, session: &str, ev: &AgentEvent) {
+        let Some(s) = self.sessions.get_mut(&(machine.to_owned(), session.to_owned())) else { return };
+        let text = |k: &str| ev.payload.get(k).and_then(Value::as_str).map(str::to_owned);
+        match (ev.source.as_str(), ev.payload.get("hook_event_name").and_then(Value::as_str)) {
+            ("hook", Some("SessionStart")) => s.activity = Activity::Idle,
+            ("hook", Some("UserPromptSubmit")) => {
+                s.activity = Activity::Working;
+                s.turns.push_back(Turn { prompt: text("prompt"), reply: None, at_ms: ev.received_at_ms });
+                while s.turns.len() > MAX_TURNS {
+                    s.turns.pop_front();
+                }
+            }
+            ("hook", Some("Stop")) => {
+                s.activity = Activity::Idle;
+                let reply = text("last_assistant_message");
+                match s.turns.back_mut() {
+                    Some(t) if t.reply.is_none() => t.reply = reply,
+                    _ => s.turns.push_back(Turn { prompt: None, reply, at_ms: ev.received_at_ms }),
+                }
+            }
+            ("cq", _) => match ev.payload.get("type").and_then(Value::as_str) {
+                Some("permission_prompt") => {
+                    s.prompt = ev.payload.get("prompt").cloned();
+                    s.activity = Activity::Waiting;
+                }
+                Some("permission_resolved") => {
+                    s.prompt = None;
+                    if s.activity == Activity::Waiting {
+                        s.activity = Activity::Working;
+                    }
+                }
+                Some("meta") => {
+                    s.meta.name = text("name");
+                    if let Some(tags) = ev.payload.get("tags").and_then(Value::as_array) {
+                        s.meta.tags = tags.iter().filter_map(|t| t.as_str().map(str::to_owned)).collect();
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        if s.meta.status == SessionStatus::Exited {
+            s.activity = Activity::Exited;
+        }
+    }
+}
+
+/// Locates the `cq` binary: `CQ_BIN`, next to this executable, or on PATH.
+pub fn cq_binary() -> PathBuf {
+    if let Some(p) = std::env::var_os("CQ_BIN") {
+        return p.into();
+    }
+    let name = if cfg!(windows) { "cq.exe" } else { "cq" };
+    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) {
+        let p = dir.join(name);
+        if p.is_file() {
+            return p;
+        }
+    }
+    name.into()
+}
+
+/// Starts a process detached from this console and process tree.
+pub fn spawn_detached(cmd: &mut std::process::Command) -> Result<()> {
+    cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+        cmd.creation_flags(base | CREATE_BREAKAWAY_FROM_JOB);
+        if cmd.spawn().is_ok() {
+            return Ok(());
+        }
+        cmd.creation_flags(base);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd.spawn().context("spawn detached process")?;
+    Ok(())
+}
+
+/// Connects to the local daemon, starting `cq daemon` if it is not running.
+pub async fn connect_daemon() -> Result<BoxStream> {
+    let endpoint = local::daemon_endpoint()?;
+    if let Ok(s) = local::connect(&endpoint, Duration::ZERO).await {
+        return Ok(s);
+    }
+    let mut cmd = std::process::Command::new(cq_binary());
+    cmd.arg("daemon").stderr(std::process::Stdio::null());
+    spawn_detached(&mut cmd)?;
+    local::connect(&endpoint, Duration::from_secs(5)).await
+}

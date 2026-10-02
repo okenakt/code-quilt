@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
+cq-client = { path = "../cq-client" }
 cq-proto = { path = "../cq-proto", features = ["local"] }
 dirs = "7.0.0"
 portable-pty = "0.9.0"

@@ -1,0 +1,15 @@
+[package]
+name = "cq-queen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+cq-client = { path = "../cq-client" }
+cq-proto = { path = "../cq-proto", features = ["local"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["full"] }
+toml = "1.1.6"

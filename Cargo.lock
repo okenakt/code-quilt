@@ -680,6 +680,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "cq-client",
  "cq-proto",
  "dirs",
  "libc",
@@ -693,6 +694,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cq-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cq-proto",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "cq-proto"
 version = "0.1.0"
 dependencies = [
@@ -701,6 +712,20 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "cq-queen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "cq-client",
+ "cq-proto",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]

@@ -3,41 +3,14 @@
 
 use crate::daemon;
 use anyhow::{Result, anyhow, bail};
-use cq_proto::{
-    AgentEvent, ClientKind, DAEMON_PROTOCOL_VERSION, Hello, LOCAL_MACHINE, Message, SessionMeta,
-    SessionStatus, spawn_reader, write_message,
-};
+use cq_client::{Activity, MAX_TURNS, Model, Session};
+use cq_proto::{ClientKind, DAEMON_PROTOCOL_VERSION, Hello, LOCAL_MACHINE, Message, spawn_reader, write_message};
 use serde_json::{Value, json};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
-
-/// Turns kept per session.
-const MAX_TURNS: usize = 20;
-
-#[derive(Clone, Default)]
-struct Turn {
-    prompt: Option<String>,
-    reply: Option<String>,
-    at_ms: u64,
-}
-
-#[derive(Clone)]
-struct Session {
-    machine: String,
-    meta: SessionMeta,
-    activity: &'static str,
-    prompt: Option<Value>,
-    turns: VecDeque<Turn>,
-}
-
-impl Session {
-    fn key(&self) -> String {
-        format!("{}:{}", self.machine, self.meta.id)
-    }
-}
 
 /// Which sessions this server may see and drive.
 #[derive(Clone, Default)]
@@ -67,95 +40,11 @@ impl Scope {
     }
 }
 
-#[derive(Default)]
-struct Model {
-    sessions: HashMap<(String, String), Session>,
-    machines: Vec<cq_proto::MachineInfo>,
-    synced: bool,
-    approvals: HashMap<(String, String), oneshot::Sender<Value>>,
-}
-
-impl Model {
-    fn apply_list(&mut self, machine: &str, list: Vec<SessionMeta>) {
-        let keep: Vec<_> = list.iter().map(|m| (machine.to_owned(), m.id.clone())).collect();
-        self.sessions.retain(|k, _| k.0 != machine || keep.contains(k));
-        for meta in list {
-            let key = (machine.to_owned(), meta.id.clone());
-            let exited = meta.status == SessionStatus::Exited;
-            let entry = self.sessions.entry(key).or_insert_with(|| Session {
-                machine: machine.to_owned(),
-                meta: meta.clone(),
-                activity: "starting",
-                prompt: None,
-                turns: VecDeque::new(),
-            });
-            entry.meta = meta;
-            if exited {
-                entry.activity = "exited";
-                entry.prompt = None;
-            }
-        }
-        if machine == LOCAL_MACHINE {
-            self.synced = true;
-        }
-    }
-
-    fn apply_event(&mut self, machine: &str, session: &str, ev: AgentEvent) {
-        let key = (machine.to_owned(), session.to_owned());
-        if ev.source == "cq" && ev.payload.get("type").and_then(Value::as_str) == Some("approval_result") {
-            if let Some(w) = self.approvals.remove(&key) {
-                let _ = w.send(ev.payload.clone());
-            }
-            return;
-        }
-        let Some(s) = self.sessions.get_mut(&key) else { return };
-        let text = |k: &str| ev.payload.get(k).and_then(Value::as_str).map(str::to_owned);
-        match (ev.source.as_str(), ev.payload.get("hook_event_name").and_then(Value::as_str)) {
-            ("hook", Some("SessionStart")) => s.activity = "idle",
-            ("hook", Some("UserPromptSubmit")) => {
-                s.activity = "working";
-                s.turns.push_back(Turn { prompt: text("prompt"), reply: None, at_ms: ev.received_at_ms });
-                while s.turns.len() > MAX_TURNS {
-                    s.turns.pop_front();
-                }
-            }
-            ("hook", Some("Stop")) => {
-                s.activity = "idle";
-                let reply = text("last_assistant_message");
-                match s.turns.back_mut() {
-                    Some(t) if t.reply.is_none() => t.reply = reply,
-                    _ => s.turns.push_back(Turn { prompt: None, reply, at_ms: ev.received_at_ms }),
-                }
-            }
-            ("cq", _) => match ev.payload.get("type").and_then(Value::as_str) {
-                Some("permission_prompt") => {
-                    s.prompt = ev.payload.get("prompt").cloned();
-                    s.activity = "approval";
-                }
-                Some("permission_resolved") => {
-                    s.prompt = None;
-                    if s.activity == "approval" {
-                        s.activity = "working";
-                    }
-                }
-                Some("meta") => {
-                    s.meta.name = text("name");
-                    if let Some(tags) = ev.payload.get("tags").and_then(Value::as_array) {
-                        s.meta.tags = tags.iter().filter_map(|t| t.as_str().map(str::to_owned)).collect();
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-        if s.meta.status == SessionStatus::Exited {
-            s.activity = "exited";
-        }
-    }
-}
+type Approvals = Arc<Mutex<HashMap<(String, String), oneshot::Sender<Value>>>>;
 
 struct Server {
     model: Arc<Mutex<Model>>,
+    approvals: Approvals,
     tx: mpsc::UnboundedSender<Message>,
     scope: Scope,
     /// Declare the Claude Code channel capability.
@@ -180,7 +69,7 @@ impl Server {
     /// Resolves `machine:id`, a session name, or an id prefix to one visible session.
     fn resolve(&self, target: &str) -> Result<Session> {
         let m = self.model.lock().unwrap();
-        let live: Vec<&Session> = m.sessions.values().filter(|s| self.visible(s) && s.activity != "exited").collect();
+        let live: Vec<&Session> = m.sessions.values().filter(|s| self.visible(s) && s.activity != Activity::Exited).collect();
         let (machine, rest) = match target.split_once(':') {
             Some((mm, r)) if m.machines.iter().any(|x| x.id == mm) || mm == LOCAL_MACHINE => (Some(mm), r),
             _ => (None, target),
@@ -211,7 +100,7 @@ impl Server {
             "machine": s.machine,
             "agent": s.meta.agent,
             "cwd": s.meta.cwd,
-            "state": s.activity,
+            "state": s.activity.as_str(),
             "permission_prompt": s.prompt,
             "last_prompt": last.and_then(|t| t.prompt.as_deref()).map(|p| snippet(p, 200)),
             "last_reply": last.and_then(|t| t.reply.as_deref()).map(|r| snippet(r, 400)),
@@ -224,7 +113,7 @@ impl Server {
         let mut out: Vec<_> = m
             .sessions
             .values()
-            .filter(|s| self.visible(s) && (include_exited || s.activity != "exited"))
+            .filter(|s| self.visible(s) && (include_exited || s.activity != Activity::Exited))
             .collect();
         out.sort_by_key(|s| (s.machine.clone(), s.meta.started_at_ms));
         let machines: Vec<_> = m.machines.iter().map(|x| json!({ "id": x.id, "label": x.label, "online": x.online })).collect();
@@ -242,7 +131,7 @@ impl Server {
             .rev()
             .map(|t| json!({ "prompt": t.prompt, "reply": t.reply, "at_ms": t.at_ms }))
             .collect();
-        Ok(json!({ "session": s.key(), "name": s.meta.name, "state": s.activity, "permission_prompt": s.prompt, "turns": turns }))
+        Ok(json!({ "session": s.key(), "name": s.meta.name, "state": s.activity.as_str(), "permission_prompt": s.prompt, "turns": turns }))
     }
 
     fn send(&self, args: &Value) -> Result<Value> {
@@ -264,7 +153,7 @@ impl Server {
         let option = args.get("option").and_then(Value::as_u64).ok_or_else(|| anyhow!("missing 'option'"))? as u8;
         let prompt_id = str_arg(args, "prompt_id")?.to_owned();
         let (tx, rx) = oneshot::channel();
-        self.model.lock().unwrap().approvals.insert((s.machine.clone(), s.meta.id.clone()), tx);
+        self.approvals.lock().unwrap().insert((s.machine.clone(), s.meta.id.clone()), tx);
         let approve = cq_proto::Approve { option, prompt_id: Some(prompt_id) };
         self.tx
             .send(Message::Routed { machine: s.machine.clone(), session: s.meta.id.clone(), inner: Box::new(Message::Approve(approve)) })
@@ -316,6 +205,7 @@ pub fn channel_command(id: &str) -> String {
 /// registers the session's channel command and turns its invocations into channel notifications.
 async fn daemon_loop(
     model: Arc<Mutex<Model>>,
+    approvals: Approvals,
     mut rx: mpsc::UnboundedReceiver<Message>,
     channel: Option<(String, mpsc::UnboundedSender<Value>)>,
 ) {
@@ -335,15 +225,15 @@ async fn daemon_loop(
                 tokio::select! {
                     msg = msgs.recv() => {
                         let Some(msg) = msg else { return Ok::<_, anyhow::Error>(()) };
-                        let mut m = model.lock().unwrap();
-                        match msg? {
-                            Message::MachineList(l) => m.machines = l,
-                            Message::SessionList(l) => m.apply_list(&l.machine, l.sessions),
-                            Message::Routed { machine, session, inner } => {
-                                if let Message::Event(ev) = *inner {
-                                    m.apply_event(&machine, &session, ev);
+                        let msg = msg?;
+                        if let Some((machine, session, ev)) = model.lock().unwrap().apply(&msg) {
+                            if ev.source == "cq" && ev.payload.get("type").and_then(Value::as_str) == Some("approval_result") {
+                                if let Some(w) = approvals.lock().unwrap().remove(&(machine, session)) {
+                                    let _ = w.send(ev.payload.clone());
                                 }
                             }
+                        }
+                        match msg {
                             Message::InvokeCommand(inv) => {
                                 if let Some((name, out)) = &channel {
                                     if &inv.name == name {
@@ -398,8 +288,9 @@ pub async fn run(scope: Scope, channel: bool) -> Result<()> {
     let model = Arc::new(Mutex::new(Model::default()));
     let (tx, rx) = mpsc::unbounded_channel();
     let channel_cfg = if channel { own.as_deref().map(|id| (channel_command(id), out_tx.clone())) } else { None };
-    tokio::spawn(daemon_loop(model.clone(), rx, channel_cfg));
-    let server = Arc::new(Server { model, tx, scope, channel, own });
+    let approvals: Approvals = Arc::default();
+    tokio::spawn(daemon_loop(model.clone(), approvals.clone(), rx, channel_cfg));
+    let server = Arc::new(Server { model, approvals, tx, scope, channel, own });
 
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     while let Some(line) = lines.next_line().await? {

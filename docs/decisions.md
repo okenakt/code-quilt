@@ -269,3 +269,12 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 - `cq mcp --channel` は capabilities に `experimental: {"claude/channel": {}}` を宣言し、デスクトップのコマンド `channel:<セッションID>` を登録する。そのコマンドが呼ばれると `notifications/claude/channel`（`content`、`meta`）を送り、Claudeには `<channel source="cq" ...>` として届く。
 - `--channels` で指定できるのは許可リストに載ったチャネルだけで、cqのような独自サーバーは `--dangerously-load-development-channels server:cq` が必要。この場合、起動のたびに「ローカル開発用として使う」の確認が表示される。`--mcp-config` で渡したサーバーについて「その名前のMCPサーバーがない」と起動時に表示されるが、配信には影響しない（Claude Code 2.1.287で確認）。
 - コマンドはデスクトップ単位の仕組みなので、この方式はQueenがローカルマシンで動く場合に限られる。
+
+## 24. cq-queenの実装
+
+- **構成**：`crates/cq-client`（cqdへの接続と、イベントからセッションの状態・直近ターンを組み立てるモデル。`cq mcp` と共有）と `crates/cq-queen`。`cq-queen start [NAME] [--detach]` が設定（`~/.codequilt/queens/NAME.toml`、無ければ既定値で作成）からQueenセッションを `queen` タグ付きで起動し、配達役 `cq-queen run NAME` を切り離して起動する。既定ではこの端末にアタッチする。
+- **配達役**：担当範囲の承認プロンプト・確認ダイアログ・ターン終了を集め、`batch_seconds`（既定2.5秒）まとめてから、Queenがアイドルのときに届ける。直接入力（UserPromptSubmit）や解消されたプロンプトは取り下げ、未解決の承認は次の通知に「まだ待っているもの」として添える。接続時の履歴の再送は報告しない。Queenのセッションが終わると自分も終了する。二重起動はデスクトップのコマンド `queen:NAME` の有無で防ぐ。
+- **届け方**：Channelsでは、QueenのMCPサーバーがチャネルのコマンドを登録する（＝開発用チャネルの確認に答える）まで配信を待つ。PTYでは `Inject`（アイドル・入力欄が空のときだけ）を使う。
+- **確認の体験を揃える**：開発用チャネルの確認やフォルダ信頼など、番号で答えるダイアログも承認プロンプトと同様に検出し（`kind: "dialog"`）、ダッシュボードの承認ダイアログからも答えられる。
+- **ツールの許可**：`list_sessions` / `get_turns` / `send` は事前許可、`approve` は既定では事前許可せず、使うたびにQueen自身の承認確認を挟む（`allow_approve = true` で事前許可）。
+- **未実装**：`@名前` をQueenのhookで直接送る近道、Codexで動くQueen（M5）、リモートマシン上のQueen（チャネルのコマンドがデスクトップ単位のため）。

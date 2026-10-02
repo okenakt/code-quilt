@@ -1,0 +1,11 @@
+[package]
+name = "cq-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+cq-proto = { path = "../cq-proto", features = ["local"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["full"] }
