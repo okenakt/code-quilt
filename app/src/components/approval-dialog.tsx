@@ -61,7 +61,7 @@ export const ApprovalDialog = ({ sessions, machines, focusToken }: Props) => {
     <div className="approval-backdrop">
       <div className="approval-dialog" tabIndex={-1} ref={ref} onKeyDown={onKey} role="dialog" aria-modal="true">
         <header>
-          <div className="approval-title">Permission requested</div>
+          <div className="approval-title">{prompt.kind === "dialog" ? "Confirmation needed" : "Permission requested"}</div>
           <div className="approval-count">{visible.length > 1 ? `+${visible.length - 1} more` : ""}</div>
         </header>
         <dl className="approval-meta">

@@ -119,6 +119,7 @@ const parseStatus = (payload: unknown, receivedAt: number): StatusLine => ({
 
 const parsePrompt = (v: unknown): PermissionPrompt | null => {
   const id = str(v, "id") ?? "";
+  const kind = str(v, "kind") === "dialog" ? "dialog" : "permission";
   const text = str(v, "text");
   const opts = asRecord(v)?.options;
   if (text === null || !Array.isArray(opts)) return null;
@@ -127,7 +128,7 @@ const parsePrompt = (v: unknown): PermissionPrompt | null => {
     const label = str(o, "label");
     return n !== null && label !== null ? [{ number: n, label }] : [];
   });
-  return { id, text, options };
+  return { id, kind, text, options };
 };
 
 const counts = (v: unknown) => ({

@@ -30,7 +30,8 @@ export type MachineInfo = {
 
 export type PromptOption = { number: number; label: string };
 
-export type PermissionPrompt = { id: string; text: string; options: PromptOption[] };
+/** A numbered-choice prompt: a tool permission request or another confirmation dialog. */
+export type PermissionPrompt = { id: string; kind: "permission" | "dialog"; text: string; options: PromptOption[] };
 
 /** Coarse session activity derived from events. */
 export type Activity = "starting" | "working" | "idle" | "approval" | "exited";

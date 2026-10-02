@@ -10,11 +10,14 @@ pub struct PromptOption {
     pub label: String,
 }
 
-/// A permission prompt currently visible on screen.
+/// A numbered-choice prompt currently visible on screen: a tool permission request, or another
+/// confirmation dialog (folder trust, development channels, questions).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PermissionPrompt {
     /// Stable id derived from text and options, used to match answers to this exact prompt.
     pub id: String,
+    /// `permission` for tool permission requests, `dialog` for other confirmations.
+    pub kind: String,
     /// Prompt text as displayed (tool, command, question), without the options.
     pub text: String,
     pub options: Vec<PromptOption>,
@@ -88,12 +91,11 @@ fn is_rule(line: &str) -> bool {
     t.chars().count() >= 10 && t.chars().all(|c| matches!(c, '─' | '━'))
 }
 
-/// Finds a Claude Code permission prompt ("Do you want to ...?" followed by numbered options).
-pub fn find_claude_permission_prompt(screen: &str) -> Option<PermissionPrompt> {
-    let lines: Vec<&str> = screen.lines().collect();
-    let q = lines.iter().rposition(|l| l.contains("Do you want to"))?;
+/// Collects consecutive numbered options starting at `lines[0]` (blank lines before the first are
+/// skipped; indented continuation lines extend the previous label).
+fn collect_options(lines: &[&str]) -> Vec<PromptOption> {
     let mut options = Vec::new();
-    for l in &lines[q + 1..] {
+    for l in lines {
         if l.trim().is_empty() && options.is_empty() {
             continue;
         }
@@ -109,19 +111,40 @@ pub fn find_claude_permission_prompt(screen: &str) -> Option<PermissionPrompt> {
             None => break,
         }
     }
-    if options.len() < 2 {
+    options
+}
+
+/// Joins the lines that describe a prompt: from the nearest solid rule above `end` (at most
+/// `max` lines up) through `end` inclusive.
+fn prompt_text(lines: &[&str], end: usize, max: usize) -> String {
+    let start = lines[..end].iter().rposition(|l| is_rule(l)).map(|i| i + 1).unwrap_or(end.saturating_sub(max));
+    let start = start.max(end.saturating_sub(max));
+    lines[start..=end].iter().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n").trim().to_owned()
+}
+
+fn prompt(kind: &str, text: String, options: Vec<PromptOption>) -> PermissionPrompt {
+    PermissionPrompt { id: prompt_id(&text, &options), kind: kind.to_owned(), text, options }
+}
+
+/// Finds a Claude Code prompt that waits for a numbered choice: a permission request ("Do you
+/// want to ...?" followed by options), or another dialog whose options end with an
+/// "Enter to confirm" footer.
+pub fn find_claude_permission_prompt(screen: &str) -> Option<PermissionPrompt> {
+    let lines: Vec<&str> = screen.lines().collect();
+    if let Some(q) = lines.iter().rposition(|l| l.contains("Do you want to")) {
+        let options = collect_options(&lines[q + 1..]);
+        if options.len() >= 2 {
+            return Some(prompt("permission", prompt_text(&lines, q, 20), options));
+        }
+    }
+    let footer = lines.iter().rposition(|l| l.contains("Enter to confirm"))?;
+    let first = (footer.saturating_sub(15)..footer).find(|&i| parse_option(lines[i]).is_some_and(|o| o.number == 1))?;
+    let options = collect_options(&lines[first..footer]);
+    if options.len() < 2 || first == 0 {
         return None;
     }
-    let start = lines[..q].iter().rposition(|l| is_rule(l)).map(|i| i + 1).unwrap_or(q.saturating_sub(12));
-    let start = start.max(q.saturating_sub(20));
-    let text = lines[start..=q]
-        .iter()
-        .map(|l| l.trim_end())
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_owned();
-    Some(PermissionPrompt { id: prompt_id(&text, &options), text, options })
+    let text_end = (0..first).rev().find(|&i| !lines[i].trim().is_empty())?;
+    Some(prompt("dialog", prompt_text(&lines, text_end, 12), options))
 }
 
 #[cfg(test)]
@@ -211,6 +234,28 @@ mod tests {
         let o = vec![PromptOption { number: 1, label: "Yes".into() }];
         assert_eq!(prompt_id("a", &o), prompt_id("a", &o));
         assert_ne!(prompt_id("a", &o), prompt_id("b", &o));
+    }
+
+    #[test]
+    fn detects_confirmation_dialogs() {
+        let screen = "\
+ WARNING: Loading development channels
+
+ --dangerously-load-development-channels is for local channel development only.
+ Please use --channels to run a list of approved channels.
+
+ Channels: server:cq
+
+ ❯ 1. I am using this for local development
+   2. Exit
+
+ Enter to confirm · Esc to cancel
+";
+        let p = find_claude_permission_prompt(screen).unwrap();
+        assert_eq!(p.kind, "dialog");
+        assert_eq!(p.options.len(), 2);
+        assert!(p.text.starts_with("WARNING: Loading development channels"), "{}", p.text);
+        assert!(p.text.ends_with("Channels: server:cq"));
     }
 
     #[test]
