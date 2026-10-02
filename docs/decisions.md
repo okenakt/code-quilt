@@ -257,3 +257,9 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 - **アイドル時の注入**：hostが待ち行列を持ち、次の条件がそろったら1件ずつブラケットペーストで入れる。①Stop / SessionStartの後でUserPromptSubmitが来ていない、②承認プロンプトが出ていない、③入力が `quiet_ms` 以上ない、④入力欄が空。④はClaudeのAdapterで、実線直下の `❯` 行以降に「既定色かつdimでない」文字があるかで判定する（プレースホルダーは灰色かdimで描かれる）。
 - **フォーカスとコマンド**：デスクトップ単位の状態としてローカルのcqdがメモリに持つ。リモートのcqdには中継しない。コマンドは登録したクライアントが切断すると消える。
 - **CLI**：`cq rename` / `cq tag` / `cq inject` は `[machine:]id` を受け付け、cqd経由でhostに送り、hostの確認イベント（`meta`、`inject_queued`）を待ってから終了する。
+
+## 22. `cq mcp` の実装
+
+**結論**：MCPサーバーはSDK（rmcp）を使わず、stdioの改行区切りJSON-RPCで `initialize` / `tools/list` / `tools/call` だけを自前で実装した。ツールは `list_sessions`、`get_turns`、`send`、`approve` の4つ。サーバーはcqdに `federate` で接続し、イベントから各セッションの状態と直近20ターンを組み立てる。宛先は名前・`machine:id`・id前方一致で指定でき、`--scope tag:NAME` / `machine:ID` で範囲を絞る。自分が動いているセッション（`CQ_SESSION_ID`）は対象外。
+
+**経緯**：必要なメソッドが少なく、R5でChannelsの通知を足すときも同じサーバーを拡張するだけで済む。依存を増やさない方を選んだ。

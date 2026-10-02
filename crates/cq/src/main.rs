@@ -11,6 +11,7 @@ mod host;
 mod ipc;
 mod launch;
 mod machine;
+mod mcp;
 mod paths;
 mod remote;
 mod session;
@@ -70,6 +71,12 @@ enum Cmd {
     Machine {
         #[command(subcommand)]
         action: MachineCmd,
+    },
+    /// MCP server (stdio) exposing the sessions to an agent, e.g. an orchestrator.
+    Mcp {
+        /// Limit to sessions with a tag or on a machine: `tag:NAME` or `machine:ID` (repeatable).
+        #[arg(long)]
+        scope: Vec<String>,
     },
     /// Run the machine daemon that relays sessions to dashboards.
     Daemon,
@@ -217,6 +224,10 @@ async fn run(cmd: Cmd) -> Result<i32> {
                 MachineCmd::Add { host, label, cq_path } => machine::add(host, label, cq_path)?,
                 MachineCmd::Remove { id } => machine::remove(&id)?,
             }
+            Ok(0)
+        }
+        Cmd::Mcp { scope } => {
+            mcp::run(mcp::Scope::parse(&scope)?).await?;
             Ok(0)
         }
         Cmd::Daemon => {
