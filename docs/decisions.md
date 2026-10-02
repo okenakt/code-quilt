@@ -294,3 +294,10 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 - **回答と送信**：Codexのリストは数字で即確定するものと選択だけ動くものがあるため、数字を送って0.4秒後も同じプロンプトが残っていればEnterを送る。まとめて届いた入力はペーストとして扱われ末尾のEnterが改行になるため、ペーストの0.5秒後にEnterを送る。
 - **起動**：Windowsではnpm / Voltaが拡張子なしのシェルスクリプトと `.cmd` を並べて置くため、PATHEXTを優先して実行ファイルを探し、`.cmd` は `cmd.exe /c` で起動する。
 - **未対応**：CodexをQueenにすること（MCP設定と指示文の渡し方、Channels非対応のためPTY配信）。
+
+## 27. Linux（WSL）での確認と対応
+
+- WSL（Ubuntu 24.04）を「仮想のリモートLinux」として、ローカルcqd → ssh → WSLのcqdの経路で、claudeとcodexの起動・hooks・承認・使用量を確認した。
+- **PATH**：非対話のsshコマンドでは `~/.bashrc`（対話部分）も `~/.profile` も読まれず、Voltaや `~/.local/bin` のclaude / codexが見つからない。マシン登録に `login_shell`（`cq machine add HOST --login-shell`）を設け、`sh -lc 'exec cq bridge'` で起動して `~/.profile` を反映する。Windowsのリモートには `sh` が無いため既定は無効。
+- **TERM**：ssh経由で起動したcqdには `TERM` が無く、claudeが色なしで描画してプレースホルダーを入力済みと誤判定した。Unixのhostは `TERM` 未設定（またはdumb）なら `xterm-256color` と `COLORTERM=truecolor` を与える。加えてClaudeのプレースホルダー（`Try "…"`）を文面でも判定する。
+- **cqdの更新**：Linuxでは実行中のバイナリを置き換えられるが、古いcqdが動き続ける。プロトコルや起動処理を変えたら、cqdを止めて立ち上げ直す必要がある（停止コマンドは未実装）。
