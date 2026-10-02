@@ -114,6 +114,37 @@ const NESTED_SESSION_VARS: &[&str] = &[
     "CLAUDE_EFFORT",
 ];
 
+/// Finds the executable for a bare command name. On Windows, PATH may hold an extensionless
+/// shell shim next to the real `.exe` / `.cmd` (npm, Volta), so `PATHEXT` entries are preferred,
+/// and batch files run through `cmd.exe /c`. Returns the program and arguments to put before the
+/// caller's.
+fn resolve_program(prog: &str) -> (String, Vec<String>) {
+    if !cfg!(windows) || prog.contains(['/', '\\']) {
+        return (prog.to_owned(), Vec::new());
+    }
+    let exts: Vec<String> = std::env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
+        .split(';')
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_ascii_lowercase())
+        .collect();
+    let paths = std::env::var_os("PATH").unwrap_or_default();
+    for dir in std::env::split_paths(&paths) {
+        for ext in &exts {
+            let candidate = dir.join(format!("{prog}{ext}"));
+            if candidate.is_file() {
+                let path = candidate.to_string_lossy().into_owned();
+                return if ext == ".cmd" || ext == ".bat" {
+                    ("cmd.exe".to_owned(), vec!["/c".to_owned(), path])
+                } else {
+                    (path, Vec::new())
+                };
+            }
+        }
+    }
+    (prog.to_owned(), Vec::new())
+}
+
 /// Number of recent agent events replayed to newly connected hubs and monitors.
 const EVENT_HISTORY: usize = 200;
 
@@ -140,6 +171,7 @@ struct State {
     /// Set to force an account re-read (e.g. after SessionStart, which follows /login).
     account_recheck: bool,
     transcript: usage::TranscriptTail,
+    codex_rollout: usage::CodexTail,
     /// Set when output arrived since the last permission prompt scan.
     dirty: bool,
     prompt: Option<PermissionPrompt>,
@@ -201,7 +233,7 @@ impl State {
         }
         self.dirty = false;
         let found = match self.meta.agent.as_str() {
-            "claude" => agent::find_claude_permission_prompt(&self.parser.screen().contents()),
+            "claude" | "codex" => agent::find_choice_prompt(&self.parser.screen().contents()),
             _ => None,
         };
         if found != self.prompt {
@@ -322,7 +354,9 @@ pub async fn run(args: HostArgs) -> Result<()> {
         .openpty(PtySize { rows: args.size.rows, cols: args.size.cols, pixel_width: 0, pixel_height: 0 })
         .context("openpty")?;
     let Some((prog, rest)) = args.command.split_first() else { bail!("empty command") };
-    let mut cmd = CommandBuilder::new(prog);
+    let (program, prefix) = resolve_program(prog);
+    let mut cmd = CommandBuilder::new(&program);
+    cmd.args(&prefix);
     cmd.args(rest);
     cmd.cwd(&args.cwd);
     cmd.env("CQ_SESSION_ID", &args.id);
@@ -381,6 +415,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
         account: None,
         account_recheck: true,
         transcript: usage::TranscriptTail::default(),
+        codex_rollout: usage::CodexTail::default(),
         dirty: false,
         prompt: None,
         agent_idle: false,
@@ -399,7 +434,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
             }
         });
     }
-    if args.agent == "claude" {
+    if matches!(args.agent.as_str(), "claude" | "codex") {
         tokio::spawn(poll_usage(state.clone()));
     }
 
@@ -615,15 +650,17 @@ fn cq_event(payload: serde_json::Value) -> AgentEvent {
     AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload }
 }
 
-/// Publishes account changes and transcript token totals every two seconds.
+/// Publishes account changes and token totals (and, for Codex, its status) every two seconds.
 async fn poll_usage(state: Shared) {
+    let codex = state.lock().unwrap().meta.agent == "codex";
     let mut stamp = None;
     loop {
         let recheck = std::mem::take(&mut state.lock().unwrap().account_recheck);
-        let now_stamp = usage::account_stamp();
+        let now_stamp = if codex { usage::codex_account_stamp() } else { usage::account_stamp() };
         if recheck || now_stamp != stamp {
             stamp = now_stamp;
-            let account = tokio::task::spawn_blocking(usage::read_claude_account).await.ok().flatten();
+            let read = if codex { usage::read_codex_account } else { usage::read_claude_account };
+            let account = tokio::task::spawn_blocking(read).await.ok().flatten();
             let mut st = state.lock().unwrap();
             if account != st.account {
                 st.account = account.clone();
@@ -632,7 +669,17 @@ async fn poll_usage(state: Shared) {
         }
         {
             let mut st = state.lock().unwrap();
-            if let Some(totals) = st.transcript.poll() {
+            if codex {
+                if let Some(u) = st.codex_rollout.poll() {
+                    if let Some(totals) = u.tokens {
+                        st.publish(cq_event(serde_json::json!({ "type": "tokens", "tokens": totals })));
+                    }
+                    if let Some(status) = u.status {
+                        // Codex has no status line; publish the same shape from its rollout.
+                        st.publish(AgentEvent { source: "statusline".into(), received_at_ms: session::now_ms(), payload: status });
+                    }
+                }
+            } else if let Some(totals) = st.transcript.poll() {
                 st.publish(cq_event(serde_json::json!({ "type": "tokens", "tokens": totals })));
             }
         }
@@ -645,7 +692,11 @@ fn handle_event(state: &Shared, ev: AgentEvent) {
     // Agent events are a good moment to re-check the screen (e.g. Notification on a prompt).
     st.dirty = true;
     if let Some(path) = ev.payload.get("transcript_path").and_then(|v| v.as_str()) {
-        st.transcript.set_path(path.into());
+        if st.meta.agent == "codex" {
+            st.codex_rollout.set_path(path.into());
+        } else {
+            st.transcript.set_path(path.into());
+        }
     }
     let hook = if ev.source == "hook" { ev.payload.get("hook_event_name").and_then(|v| v.as_str()) } else { None };
     match hook {

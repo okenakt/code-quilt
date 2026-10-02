@@ -39,6 +39,12 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Run codex inside a detachable CodeQuilt session (same `--cq-*` options as `claude`).
+    #[command(disable_help_flag = true)]
+    Codex {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Attach this terminal to a running session (id or unique prefix). Ctrl+\ detaches.
     Attach { id: String },
     /// List sessions.
@@ -175,7 +181,11 @@ async fn run(cmd: Cmd) -> Result<i32> {
     match cmd {
         Cmd::Claude { args } => {
             let (labels, args) = split_labels(args);
-            launch::claude(labels, args).await
+            launch::run_agent("claude", labels, args).await
+        }
+        Cmd::Codex { args } => {
+            let (labels, args) = split_labels(args);
+            launch::run_agent("codex", labels, args).await
         }
         Cmd::Rename { target, name, clear } => {
             if name.is_none() && !clear {

@@ -62,6 +62,142 @@ pub fn account_stamp() -> Option<std::time::SystemTime> {
     std::fs::metadata(claude_json_path()?).and_then(|m| m.modified()).ok()
 }
 
+/// Codex's home directory: `CODEX_HOME`, else `~/.codex`.
+fn codex_home() -> Option<PathBuf> {
+    std::env::var_os("CODEX_HOME").map(PathBuf::from).or_else(|| dirs::home_dir().map(|h| h.join(".codex")))
+}
+
+/// Decodes base64url without padding (JWT segments).
+fn base64url_decode(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut buf, mut bits) = (0u32, 0u32);
+    for c in s.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'-' | b'+' => 62,
+            b'_' | b'/' => 63,
+            b'=' => break,
+            _ => return None,
+        };
+        buf = (buf << 6) | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
+/// Reads the logged-in ChatGPT account of Codex from the id token's claims in `auth.json`.
+/// Only the account id and email claims are read; tokens are never kept or passed on.
+pub fn read_codex_account() -> Option<Account> {
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(codex_home()?.join("auth.json")).ok()?).ok()?;
+    let jwt = v.pointer("/tokens/id_token")?.as_str()?;
+    let claims: serde_json::Value = serde_json::from_slice(&base64url_decode(jwt.split('.').nth(1)?)?).ok()?;
+    let email = claims.get("email").and_then(|e| e.as_str()).map(str::to_owned);
+    let id = claims
+        .pointer("/https:~1~1api.openai.com~1auth/chatgpt_account_id")
+        .and_then(|e| e.as_str())
+        .map(str::to_owned)
+        .or_else(|| email.clone())?;
+    Some(Account { label: email.unwrap_or_else(|| id.clone()), id })
+}
+
+/// Modification time of Codex's auth file, used to detect re-login.
+pub fn codex_account_stamp() -> Option<std::time::SystemTime> {
+    std::fs::metadata(codex_home()?.join("auth.json")).and_then(|m| m.modified()).ok()
+}
+
+/// What the latest Codex rollout lines report.
+pub struct CodexUpdate {
+    pub tokens: Option<TokenTotals>,
+    /// Status in the shape of Claude Code's status line payload (model, context, rate limits), so
+    /// clients read both agents the same way.
+    pub status: Option<serde_json::Value>,
+}
+
+/// Incrementally tails a Codex rollout file (`~/.codex/sessions/.../rollout-*.jsonl`).
+#[derive(Default)]
+pub struct CodexTail {
+    path: Option<PathBuf>,
+    offset: u64,
+    partial: Vec<u8>,
+    model: Option<String>,
+}
+
+impl CodexTail {
+    /// Switches to a new rollout file.
+    pub fn set_path(&mut self, path: PathBuf) {
+        if self.path.as_ref() != Some(&path) {
+            *self = Self { path: Some(path), ..Self::default() };
+        }
+    }
+
+    /// Reads appended lines; returns the latest token totals and status when they changed.
+    pub fn poll(&mut self) -> Option<CodexUpdate> {
+        let path = self.path.clone()?;
+        let mut f = std::fs::File::open(&path).ok()?;
+        let len = f.metadata().ok()?.len();
+        if len < self.offset {
+            self.offset = 0;
+            self.partial.clear();
+        }
+        if len == self.offset {
+            return None;
+        }
+        f.seek(SeekFrom::Start(self.offset)).ok()?;
+        let mut buf = Vec::new();
+        f.take(len - self.offset).read_to_end(&mut buf).ok()?;
+        self.offset += buf.len() as u64;
+        self.partial.extend_from_slice(&buf);
+        let mut update = CodexUpdate { tokens: None, status: None };
+        while let Some(nl) = self.partial.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = self.partial.drain(..=nl).collect();
+            let Ok(v) = serde_json::from_slice::<serde_json::Value>(&line) else { continue };
+            let payload = &v["payload"];
+            if v["type"] == "turn_context" {
+                if let Some(m) = payload.get("model").and_then(|m| m.as_str()) {
+                    self.model = Some(m.to_owned());
+                }
+                continue;
+            }
+            if v["type"] != "event_msg" || payload["type"] != "token_count" {
+                continue;
+            }
+            let n = |p: &str| payload.pointer(p).and_then(|x| x.as_u64()).unwrap_or(0);
+            let model = self.model.clone().unwrap_or_else(|| "codex".into());
+            if payload["info"].is_object() {
+                // OpenAI counts cached tokens inside input_tokens.
+                let cached = n("/info/total_token_usage/cached_input_tokens");
+                let counts = Counts {
+                    input: n("/info/total_token_usage/input_tokens").saturating_sub(cached),
+                    output: n("/info/total_token_usage/output_tokens"),
+                    cache_read: cached,
+                    cache_creation: n("/info/total_token_usage/cache_write_input_tokens"),
+                };
+                let mut totals = TokenTotals { total: counts, by_model: HashMap::new() };
+                totals.by_model.insert(model.clone(), counts);
+                update.tokens = Some(totals);
+            }
+            let window = |w: &str| {
+                let used = payload.pointer(&format!("/rate_limits/{w}/used_percent"))?.as_f64()?;
+                Some(serde_json::json!({ "used_percentage": used, "resets_at": payload.pointer(&format!("/rate_limits/{w}/resets_at")) }))
+            };
+            let ctx = n("/info/model_context_window");
+            let used_pct = (ctx > 0).then(|| n("/info/last_token_usage/total_tokens") as f64 * 100.0 / ctx as f64);
+            update.status = Some(serde_json::json!({
+                "model": { "id": model, "display_name": model },
+                "context_window": { "used_percentage": used_pct, "context_window_size": ctx },
+                "rate_limits": { "five_hour": window("primary"), "seven_day": window("secondary") },
+            }));
+        }
+        (update.tokens.is_some() || update.status.is_some()).then_some(update)
+    }
+}
+
 /// Token counts in one usage record.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct Counts {
@@ -172,6 +308,35 @@ impl TranscriptTail {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_codex_rollout_usage_and_limits() {
+        let dir = std::env::temp_dir().join(format!("cq-codex-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("rollout.jsonl");
+        let lines = [
+            r#"{"type":"turn_context","payload":{"model":"gpt-6"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":600,"cache_write_input_tokens":50,"output_tokens":40},"last_token_usage":{"total_tokens":2000},"model_context_window":10000},"rate_limits":{"primary":{"used_percent":12.5,"window_minutes":300,"resets_at":1790000000},"secondary":{"used_percent":40.0,"window_minutes":10080,"resets_at":1790500000}}}}"#,
+        ];
+        std::fs::write(&p, lines.join("\n") + "\n").unwrap();
+        let mut t = CodexTail::default();
+        t.set_path(p);
+        let u = t.poll().unwrap();
+        let tok = u.tokens.unwrap();
+        assert_eq!(tok.total, Counts { input: 400, output: 40, cache_read: 600, cache_creation: 50 });
+        assert!(tok.by_model.contains_key("gpt-6"));
+        let st = u.status.unwrap();
+        assert_eq!(st.pointer("/rate_limits/five_hour/used_percentage").unwrap(), 12.5);
+        assert_eq!(st.pointer("/rate_limits/seven_day/resets_at").unwrap(), 1790500000);
+        assert_eq!(st.pointer("/context_window/used_percentage").unwrap(), 20.0);
+        assert!(t.poll().is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn decodes_base64url() {
+        assert_eq!(base64url_decode("eyJhIjoxfQ").unwrap(), br#"{"a":1}"#);
+    }
 
     #[test]
     fn dedupes_blocks_of_one_message() {

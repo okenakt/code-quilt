@@ -126,42 +126,67 @@ pub fn spawn_host(id: &str, agent: &str, cwd: &str, size: Size, labels: &Labels,
 }
 
 /// Starts a session without a local terminal (dashboard launch or resume). Returns the id.
-pub fn launch_detached(req: &cq_proto::Launch) -> Result<String> {
-    if req.agent != "claude" {
-        anyhow::bail!("unsupported agent '{}'", req.agent);
+/// Codex has no `--settings`; its hooks are injected as `-c` config overrides. They run next to
+/// the user's own hooks from `~/.codex/hooks.json`.
+fn codex_hook_args() -> Result<Vec<String>> {
+    let exe = std::env::current_exe()?.to_string_lossy().replace('\\', "/");
+    if exe.contains(' ') {
+        anyhow::bail!("cq must be installed in a path without spaces to hook into codex ({exe})");
     }
+    let mut args = Vec::new();
+    for event in ["SessionStart", "UserPromptSubmit", "Stop", "PermissionRequest"] {
+        args.push("-c".to_owned());
+        args.push(format!(r#"hooks.{event}=[{{hooks=[{{type="command",command="{exe} hook",timeout=10}}]}}]"#));
+    }
+    Ok(args)
+}
+
+/// The agent command line for a new session, with CodeQuilt's hooks wired in.
+fn agent_command(agent: &str, id: &str, settings_extra: Option<&str>, resume: Option<&str>, args: &[String]) -> Result<Vec<String>> {
+    let mut command = match agent {
+        "claude" => {
+            let settings = session_settings(id, settings_extra)?;
+            let mut c = vec!["claude".to_owned(), "--settings".to_owned(), settings.to_string_lossy().into_owned()];
+            if let Some(r) = resume {
+                c.extend(["--resume".to_owned(), r.to_owned()]);
+            }
+            c
+        }
+        "codex" => {
+            if settings_extra.is_some() {
+                anyhow::bail!("extra settings are not supported for codex sessions yet");
+            }
+            let mut c = vec!["codex".to_owned()];
+            if let Some(r) = resume {
+                c.extend(["resume".to_owned(), r.to_owned()]);
+            }
+            c.extend(codex_hook_args()?);
+            c
+        }
+        other => anyhow::bail!("unsupported agent '{other}'"),
+    };
+    command.extend(args.iter().cloned());
+    Ok(command)
+}
+
+pub fn launch_detached(req: &cq_proto::Launch) -> Result<String> {
     let cwd = crate::config::check_allowed(&req.cwd)?;
     paths::ensure_dirs()?;
     let id = session::new_id();
-    let settings = session_settings(&id, req.settings_extra.as_deref())?;
-    let mut command = vec![
-        "claude".to_owned(),
-        "--settings".to_owned(),
-        settings.to_string_lossy().into_owned(),
-    ];
-    if let Some(id) = &req.resume {
-        command.extend(["--resume".to_owned(), id.clone()]);
-    }
-    command.extend(req.args.iter().cloned());
+    let command = agent_command(&req.agent, &id, req.settings_extra.as_deref(), req.resume.as_deref(), &req.args)?;
     let size = Size { cols: req.cols.max(20), rows: req.rows.max(5) };
     let labels = Labels { name: req.name.clone(), tags: req.tags.clone(), settings_extra: None };
     spawn_host(&id, &req.agent, &cwd.to_string_lossy(), size, &labels, &command)?;
     Ok(id)
 }
 
-/// Runs `cq claude [args...]` and returns the process exit code.
-pub async fn claude(labels: Labels, args: Vec<String>) -> Result<i32> {
+/// Runs `cq claude|codex [args...]` in this terminal and returns the process exit code.
+pub async fn run_agent(agent: &str, labels: Labels, args: Vec<String>) -> Result<i32> {
     paths::ensure_dirs()?;
     let id = session::new_id();
-    let settings = session_settings(&id, labels.settings_extra.as_deref())?;
-    let mut command = vec![
-        "claude".to_owned(),
-        "--settings".to_owned(),
-        settings.to_string_lossy().into_owned(),
-    ];
-    command.extend(args);
+    let command = agent_command(agent, &id, labels.settings_extra.as_deref(), None, &args)?;
     let cwd = std::env::current_dir()?.to_string_lossy().into_owned();
-    spawn_host(&id, "claude", &cwd, crate::term::size(), &labels, &command)?;
+    spawn_host(&id, agent, &cwd, crate::term::size(), &labels, &command)?;
     let endpoint = paths::session_endpoint(&id)?;
     let outcome = attach::attach(&endpoint, Duration::from_secs(10))
         .await

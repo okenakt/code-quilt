@@ -73,9 +73,9 @@ pub fn claude_input_empty(screen: &vt100::Screen) -> Option<bool> {
     Some(true)
 }
 
-/// Parses a numbered option line such as `❯ 1. Yes` or `  2. No (esc)`.
+/// Parses a numbered option line such as `❯ 1. Yes`, `› 1. Update now` or `  2. No (esc)`.
 fn parse_option(line: &str) -> Option<PromptOption> {
-    let t = line.trim_start().trim_start_matches(['❯', '>', ' ']).trim_end();
+    let t = line.trim_start().trim_start_matches(['❯', '›', '>', ' ']).trim_end();
     let (num, rest) = t.split_once(". ")?;
     let number: u8 = num.parse().ok()?;
     if !(1..=9).contains(&number) || rest.is_empty() {
@@ -126,10 +126,17 @@ fn prompt(kind: &str, text: String, options: Vec<PromptOption>) -> PermissionPro
     PermissionPrompt { id: prompt_id(&text, &options), kind: kind.to_owned(), text, options }
 }
 
-/// Finds a Claude Code prompt that waits for a numbered choice: a permission request ("Do you
+/// The key hint under a selection dialog: Claude Code's "Enter to confirm · Esc to cancel", or
+/// Codex's "enter confirm · esc skip" / "enter continue".
+fn is_dialog_footer(line: &str) -> bool {
+    let l = line.to_lowercase();
+    l.contains("enter to confirm") || (l.contains("enter") && (l.contains("confirm") || l.contains("continue")) && l.contains("esc"))
+}
+
+/// Finds a prompt that waits for a numbered choice (Claude Code and Codex): a permission request ("Do you
 /// want to ...?" followed by options), or another dialog whose options end with an
 /// "Enter to confirm" footer.
-pub fn find_claude_permission_prompt(screen: &str) -> Option<PermissionPrompt> {
+pub fn find_choice_prompt(screen: &str) -> Option<PermissionPrompt> {
     let lines: Vec<&str> = screen.lines().collect();
     if let Some(q) = lines.iter().rposition(|l| l.contains("Do you want to")) {
         let options = collect_options(&lines[q + 1..]);
@@ -137,7 +144,7 @@ pub fn find_claude_permission_prompt(screen: &str) -> Option<PermissionPrompt> {
             return Some(prompt("permission", prompt_text(&lines, q, 20), options));
         }
     }
-    let footer = lines.iter().rposition(|l| l.contains("Enter to confirm"))?;
+    let footer = lines.iter().rposition(|l| is_dialog_footer(l))?;
     let first = (footer.saturating_sub(15)..footer).find(|&i| parse_option(lines[i]).is_some_and(|o| o.number == 1))?;
     let options = collect_options(&lines[first..footer]);
     if options.len() < 2 || first == 0 {
@@ -168,7 +175,7 @@ mod tests {
    3. No, and tell Claude what to do differently (esc)
 
 ";
-        let p = find_claude_permission_prompt(screen).unwrap();
+        let p = find_choice_prompt(screen).unwrap();
         assert_eq!(p.options.len(), 3);
         assert_eq!(p.options[0].label, "Yes");
         assert!(p.options[1].label.ends_with("in C:\\work"));
@@ -197,7 +204,7 @@ mod tests {
 
  Esc to cancel · Tab to amend
 ";
-        let p = find_claude_permission_prompt(screen).unwrap();
+        let p = find_choice_prompt(screen).unwrap();
         assert!(p.text.starts_with("Bash command"), "{}", p.text);
         assert!(p.text.contains("powershell -NoProfile -Command 1+1"));
         assert_eq!(p.options.len(), 3);
@@ -251,7 +258,7 @@ mod tests {
 
  Enter to confirm · Esc to cancel
 ";
-        let p = find_claude_permission_prompt(screen).unwrap();
+        let p = find_choice_prompt(screen).unwrap();
         assert_eq!(p.kind, "dialog");
         assert_eq!(p.options.len(), 2);
         assert!(p.text.starts_with("WARNING: Loading development channels"), "{}", p.text);
@@ -259,7 +266,27 @@ mod tests {
     }
 
     #[test]
+    fn detects_codex_selection_dialogs() {
+        let screen = "\
+  Hooks need review
+  4 hooks are new or changed.
+  Hooks can run outside the sandbox after you trust them.
+
+› 1. Review hooks
+  2. Trust all and continue
+  3. Continue without trusting (hooks won't run)
+
+  enter confirm · esc skip
+";
+        let p = find_choice_prompt(screen).unwrap();
+        assert_eq!(p.kind, "dialog");
+        assert_eq!(p.options.len(), 3);
+        assert_eq!(p.options[1].label, "Trust all and continue");
+        assert!(p.text.starts_with("Hooks need review"));
+    }
+
+    #[test]
     fn ignores_plain_screen() {
-        assert!(find_claude_permission_prompt("❯ hello\n1. not a prompt\n").is_none());
+        assert!(find_choice_prompt("❯ hello\n1. not a prompt\n").is_none());
     }
 }
