@@ -4,6 +4,7 @@
 
 mod config;
 mod courier;
+mod hook;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -34,11 +35,25 @@ enum Cmd {
     /// Run the courier for a Queen (started automatically by `start`).
     #[command(hide = true)]
     Run { name: String },
+    /// UserPromptSubmit hook of a Queen session: sends `@name text` directly (internal).
+    #[command(hide = true)]
+    Hook,
     /// Print the settings file of a Queen, creating it with defaults if missing.
     Config {
         #[arg(default_value = "queen")]
         name: String,
     },
+}
+
+/// Writes the Queen's extra settings: a UserPromptSubmit hook that sends `@name text` directly.
+fn write_settings(name: &str) -> Result<std::path::PathBuf> {
+    let exe = std::env::current_exe()?.to_string_lossy().replace('\\', "/");
+    let settings = json!({
+        "hooks": { "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": format!("\"{exe}\" hook") }] }] }
+    });
+    let path = config::queens_dir()?.join(format!("{name}.settings.json"));
+    std::fs::write(&path, serde_json::to_vec_pretty(&settings)?)?;
+    Ok(path)
 }
 
 /// Agent arguments that give the session its Queen profile.
@@ -114,6 +129,7 @@ async fn launch_detached(name: &str, cwd: &std::path::Path, args: Vec<String>) -
         resume: None,
         name: Some(name.into()),
         tags: vec!["queen".into()],
+        settings_extra: Some(write_settings(name)?.to_string_lossy().into_owned()),
         cols: 120,
         rows: 36,
     };
@@ -145,6 +161,8 @@ async fn start(name: &str, detach: bool, extra: Vec<String>) -> Result<i32> {
     }
     let status = std::process::Command::new(cq_client::cq_binary())
         .args(["claude", "--cq-name", name, "--cq-tag", "queen"])
+        .arg("--cq-settings")
+        .arg(write_settings(name)?)
         .args(&args)
         .current_dir(&cwd)
         .status()
@@ -161,6 +179,7 @@ async fn main() {
             Ok((cfg, _)) => courier::run(&name, cfg).await.map(|()| 0),
             Err(e) => Err(e),
         },
+        Cmd::Hook => hook::run().await.map(|()| 0),
         Cmd::Config { name } => config::load_or_create(&name).map(|(_, p)| {
             println!("{}", p.display());
             0

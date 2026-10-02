@@ -154,6 +154,15 @@ impl Model {
                         s.activity = Activity::Working;
                     }
                 }
+                Some("prompt_blocked") => {
+                    // A hook stopped the prompt: no turn ran.
+                    if s.turns.back().is_some_and(|t| t.reply.is_none()) {
+                        s.turns.pop_back();
+                    }
+                    if s.activity == Activity::Working {
+                        s.activity = Activity::Idle;
+                    }
+                }
                 Some("meta") => {
                     s.meta.name = text("name");
                     if let Some(tags) = ev.payload.get("tags").and_then(Value::as_array) {
@@ -185,11 +194,30 @@ pub fn cq_binary() -> PathBuf {
     name.into()
 }
 
+/// Keeps this process's standard handles out of children it spawns. Windows children inherit
+/// every inheritable handle of the parent, so a detached process would otherwise hold e.g. the
+/// caller's stdout pipe open and a shell reading from it would never finish. Rust still hands
+/// children their own standard handles explicitly, so normal spawns are unaffected.
+#[cfg(windows)]
+pub fn disinherit_std_handles() {
+    use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+    use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        unsafe {
+            let h = GetStdHandle(which);
+            if !h.is_null() {
+                SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
+}
+
 /// Starts a process detached from this console and process tree.
 pub fn spawn_detached(cmd: &mut std::process::Command) -> Result<()> {
     cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null());
     #[cfg(windows)]
     {
+        disinherit_std_handles();
         use std::os::windows::process::CommandExt;
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;

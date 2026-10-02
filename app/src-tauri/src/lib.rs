@@ -100,6 +100,7 @@ async fn launch(
         resume,
         name: None,
         tags: vec![],
+        settings_extra: None,
         cols: 120,
         rows: 36,
     };

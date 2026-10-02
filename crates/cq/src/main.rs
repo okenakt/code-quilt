@@ -33,7 +33,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Run claude inside a detachable CodeQuilt session. `--cq-name NAME` and `--cq-tag TAG`
-    /// label the session; all other arguments go to claude.
+    /// label the session, `--cq-settings FILE` adds hooks; all other arguments go to claude.
     #[command(disable_help_flag = true)]
     Claude {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -139,7 +139,7 @@ enum MachineCmd {
     Remove { id: String },
 }
 
-/// Takes `--cq-name NAME` and `--cq-tag TAG` out of the agent arguments.
+/// Takes `--cq-name NAME`, `--cq-tag TAG` and `--cq-settings FILE` out of the agent arguments.
 fn split_labels(args: Vec<String>) -> (launch::Labels, Vec<String>) {
     let mut labels = launch::Labels::default();
     let mut rest = Vec::new();
@@ -148,6 +148,7 @@ fn split_labels(args: Vec<String>) -> (launch::Labels, Vec<String>) {
         match a.as_str() {
             "--cq-name" => labels.name = it.next(),
             "--cq-tag" => labels.tags.extend(it.next()),
+            "--cq-settings" => labels.settings_extra = it.next(),
             _ => rest.push(a),
         }
     }

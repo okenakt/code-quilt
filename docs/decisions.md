@@ -278,3 +278,10 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 - **確認の体験を揃える**：開発用チャネルの確認やフォルダ信頼など、番号で答えるダイアログも承認プロンプトと同様に検出し（`kind: "dialog"`）、ダッシュボードの承認ダイアログからも答えられる。
 - **ツールの許可**：`list_sessions` / `get_turns` / `send` は事前許可、`approve` は既定では事前許可せず、使うたびにQueen自身の承認確認を挟む（`allow_approve = true` で事前許可）。
 - **未実装**：`@名前` をQueenのhookで直接送る近道、Codexで動くQueen（M5）、リモートマシン上のQueen（チャネルのコマンドがデスクトップ単位のため）。
+
+## 25. `@名前` の近道と追加設定
+
+- **追加設定の合成**：Claude Codeは `--settings` を複数指定すると最後の1つしか使わない（hooksは合算されない）ことを確認した。そこで本体に汎用の仕組みとして `cq claude --cq-settings FILE`（起動要求では `settings_extra`）を設け、CodeQuiltのhooksと追加ファイルのhooksをイベントごとに連結したセッション専用の設定（`~/.codequilt/settings/<id>.json`）を作る。statusLineはCodeQuiltのものを優先する。
+- **`@名前`**：cq-queenはQueenセッションにUserPromptSubmit hook（`cq-queen hook`）を追加する。`@名前 本文`（`@machine:名前` も可）なら対象へ直接送り、`{"decision":"block"}` を返してQueenのLLMターンを使わない。該当なしなら素通しでQueenに任せ、複数該当ならブロックして候補を示す。
+- **`prompt_blocked`**：hookでプロンプトを止めると、並行して動くCodeQuiltのUserPromptSubmit hookがセッションを「作業中」にしてしまう。止めたhookが少し待ってから `prompt_blocked` イベントをhostへ送り、hostとcq-clientはセッションをアイドルに戻す（Queenへの配達が止まらないようにするため）。
+- **ハンドルの継承**：Windowsでは子プロセスが親の継承可能なハンドルをすべて引き継ぐため、切り離して起動したプロセスが呼び出し元のパイプを握り続けた。切り離し起動の前に自分の標準ハンドルの継承フラグを外す。

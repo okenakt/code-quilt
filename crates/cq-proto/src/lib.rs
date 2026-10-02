@@ -242,6 +242,9 @@ pub struct Launch {
     pub name: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Extra Claude Code settings file whose hooks run alongside CodeQuilt's own.
+    #[serde(default)]
+    pub settings_extra: Option<String>,
     pub cols: u16,
     pub rows: u16,
 }
