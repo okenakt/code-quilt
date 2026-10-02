@@ -1,28 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
 import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, sessionKey } from "./api";
 import { ApprovalDialog } from "./components/approval-dialog";
 import { NewSessionDialog } from "./components/new-session-dialog";
-import { QueenPanel } from "./components/queen-panel";
-import { queenOnEvent } from "./queen";
 import { SessionList } from "./components/session-list";
 import { TerminalPanel } from "./components/terminal-panel";
 import { UsageBar } from "./components/usage-bar";
 import { notify } from "./notify";
 import { SHORTCUT_HELP, matchShortcut, type ShortcutAction } from "./shortcuts";
-import { applyEvent, displayName, getSession, markExited, onSignal, setMachines, setSessions, useStore } from "./store";
-import type { AgentEvent, SessionState } from "./types";
+import { isPinned, usePins } from "./pins";
+import { applyEvent, displayName, markExited, onSignal, setMachines, setSessions, useStore } from "./store";
+import type { SessionState } from "./types";
 
-const LAYOUT_KEY = "cq.layout.v1";
-const QUEEN_PANEL = "queen";
-
-/** Applies an event to session state and Queen's cards. */
-const onAgentEvent = (machine: string, session: string, ev: AgentEvent) => {
-  applyEvent(machine, session, ev);
-  const s = getSession(sessionKey(machine, session));
-  queenOnEvent(machine, session, ev, s ? displayName(s) : session);
-};
+const LAYOUT_KEY = "cq.layout.v2";
+const components = { terminal: TerminalPanel };
 
 const loadLayout = (): unknown => {
   try {
@@ -59,7 +51,7 @@ export const App = () => {
     void connectBackend({
       machines: setMachines,
       sessions: setSessions,
-      event: onAgentEvent,
+      event: applyEvent,
       data: (msg) => {
         if (msg.kind === "exit") markExited(msg.machine, msg.session);
       },
@@ -72,7 +64,7 @@ export const App = () => {
       replay.sessions.forEach((r) => setSessions(r.machine, r.sessions));
       replay.events
         .sort((a, b) => a.event.received_at_ms - b.event.received_at_ms)
-        .forEach((r) => onAgentEvent(r.machine, r.session, r.event));
+        .forEach((r) => applyEvent(r.machine, r.session, r.event));
       void refreshSessions().catch(() => undefined);
     });
     return () => {
@@ -91,24 +83,6 @@ export const App = () => {
       }),
     [],
   );
-  const openQueen = useCallback(() => {
-    const api = apiRef.current;
-    if (!api) return;
-    const existing = api.getPanel(QUEEN_PANEL);
-    if (existing) {
-      existing.api.setActive();
-      return;
-    }
-    const first = api.panels.find((p) => p.id !== QUEEN_PANEL);
-    api.addPanel({
-      id: QUEEN_PANEL,
-      component: QUEEN_PANEL,
-      title: "Queen",
-      position: first ? { referencePanel: first.id, direction: "right" } : undefined,
-      initialWidth: 420,
-    });
-  }, []);
-
   const openSession = useCallback((s: SessionState) => {
     const api = apiRef.current;
     if (!api) return;
@@ -145,6 +119,33 @@ export const App = () => {
     (s: SessionState) => void launch(s.machine, s.meta.cwd, [], s.meta.agent_session_id).catch((e: unknown) => alert(String(e))),
     [launch],
   );
+
+  // Pinned sessions (manually, or tagged `queen`) open once per run in a group at the right edge.
+  const pins = usePins();
+  const autoOpened = useRef<Set<string>>(new Set());
+  const [layoutReady, setLayoutReady] = useState(false);
+  useEffect(() => {
+    const api = apiRef.current;
+    if (!api || !layoutReady) return;
+    for (const s of sessions) {
+      if (s.activity === "exited" || !isPinned(s, pins) || autoOpened.current.has(s.key)) continue;
+      autoOpened.current.add(s.key);
+      if (api.getPanel(s.key)) continue;
+      const pinnedPanel = api.panels.find((p) => {
+        const other = sessions.find((o) => o.key === p.id);
+        return other !== undefined && isPinned(other, pins);
+      });
+      api.addPanel({
+        id: s.key,
+        component: "terminal",
+        title: displayName(s),
+        params: { machine: s.machine, session: s.meta.id },
+        position: pinnedPanel ? { referencePanel: pinnedPanel.id, direction: "within" } : { direction: "right" },
+        initialWidth: 560,
+        inactive: true,
+      });
+    }
+  }, [sessions, pins, layoutReady]);
 
   // Keep tab titles in sync with session names.
   useEffect(() => {
@@ -224,18 +225,10 @@ export const App = () => {
         e.api.clear();
       }
     }
-    if (!e.api.getPanel(QUEEN_PANEL)) {
-      e.api.addPanel({ id: QUEEN_PANEL, component: QUEEN_PANEL, title: "Queen" });
-    }
+    setLayoutReady(true);
     e.api.onDidLayoutChange(() => saveLayout(e.api));
     e.api.onDidActivePanelChange((ev) => setActiveKey(ev.panel?.id ?? null));
   };
-
-  // Stable component identities so dockview never remounts panels on re-render.
-  const components = useMemo(
-    () => ({ terminal: TerminalPanel, [QUEEN_PANEL]: () => <QueenPanel onOpenSession={openSession} /> }),
-    [openSession],
-  );
 
   const pendingApprovals = sessions.filter((s) => s.prompt).length;
 
@@ -246,9 +239,6 @@ export const App = () => {
           Code<span>Quilt</span>
         </div>
         <UsageBar sessions={sessions} machines={machines} />
-        <button className="queen-open" onClick={openQueen}>
-          Queen
-        </button>
         {pendingApprovals > 0 && (
           <button className="approval-chip" onClick={() => setApprovalFocus((n) => n + 1)}>
             {pendingApprovals} approval{pendingApprovals > 1 ? "s" : ""}
@@ -263,6 +253,7 @@ export const App = () => {
           onOpen={openSession}
           onNew={setNewSessionFor}
           onResume={resumeSession}
+          pins={pins}
         />
         <footer className="help">
           {SHORTCUT_HELP.map(([k, v]) => (

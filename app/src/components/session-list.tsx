@@ -1,3 +1,4 @@
+import { isPinned, togglePin } from "../pins";
 import { displayName } from "../store";
 import type { Activity, MachineInfo, SessionState } from "../types";
 
@@ -66,6 +67,71 @@ const TokenDetail = ({ s }: { s: SessionState }) => {
   );
 };
 
+type ItemProps = {
+  s: SessionState;
+  machine: MachineInfo | undefined;
+  active: boolean;
+  pinned: boolean;
+  /** Show the machine label (in the pinned section, which mixes machines). */
+  showMachine: boolean;
+  onOpen: (s: SessionState) => void;
+  onResume: (s: SessionState) => void;
+};
+
+const SessionItem = ({ s, machine, active, pinned, showMachine, onOpen, onResume }: ItemProps) => (
+  <div
+    role="button"
+    tabIndex={0}
+    className={`session ${s.activity} ${active ? "active" : ""}`}
+    onClick={() => onOpen(s)}
+    onKeyDown={(e) => e.key === "Enter" && onOpen(s)}
+    title={s.meta.cwd}
+  >
+    <div className="session-row">
+      <span className="session-name">{displayName(s)}</span>
+      <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>
+      {s.activity !== "exited" && (
+        <button
+          className={`pin ${pinned ? "on" : ""}`}
+          title={pinned ? "unpin" : "pin to the front"}
+          onClick={(e) => {
+            e.stopPropagation();
+            togglePin(s.key);
+          }}
+        >
+          📌
+        </button>
+      )}
+    </div>
+    <div className="session-cwd">
+      {showMachine && machine ? `${machine.label} · ` : ""}
+      {s.meta.cwd}
+    </div>
+    {s.meta.tags.length > 0 && (
+      <div className="session-tags">
+        {s.meta.tags.map((t) => (
+          <span key={t} className="tag">
+            {t}
+          </span>
+        ))}
+      </div>
+    )}
+    <UsageBadge s={s} />
+    {active && <TokenDetail s={s} />}
+    {s.activity === "exited" && s.meta.agent_session_id && machine?.online && (
+      <button
+        className="session-resume"
+        onClick={(e) => {
+          e.stopPropagation();
+          onResume(s);
+        }}
+      >
+        resume
+      </button>
+    )}
+  </div>
+);
+
 type Props = {
   machines: MachineInfo[];
   sessions: SessionState[];
@@ -73,69 +139,64 @@ type Props = {
   onOpen: (s: SessionState) => void;
   onNew: (machine: string) => void;
   onResume: (s: SessionState) => void;
+  pins: Set<string>;
 };
 
-/** Task list: sessions grouped by machine, live ones first. */
-export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume }: Props) => (
-  <nav className="session-list">
-    {machines.map((m) => {
-      const mine = sessions.filter((s) => s.machine === m.id);
-      const live = mine.filter((s) => s.activity !== "exited");
-      const exited = mine.filter((s) => s.activity === "exited").slice(-8).reverse();
-      return (
-        <section key={m.id} className="machine">
-          <header className="machine-header" title={m.error ?? undefined}>
-            <span className={`dot ${m.online ? "online" : "offline"}`} />
-            {m.label}
-            {!m.online && <span className="machine-offline">offline</span>}
-            {m.online && (
-              <button className="machine-new" title="New session" onClick={() => onNew(m.id)}>
-                +
-              </button>
-            )}
-          </header>
-          {live.length === 0 && <div className="empty">no running sessions</div>}
-          {[...live, ...exited].map((s) => (
-            <div
+/** Task list: pinned sessions first, then sessions grouped by machine, live ones first. */
+export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume, pins }: Props) => {
+  const pinned = sessions.filter((s) => s.activity !== "exited" && isPinned(s, pins));
+  const machineOf = (s: SessionState) => machines.find((m) => m.id === s.machine);
+  return (
+    <nav className="session-list">
+      {pinned.length > 0 && (
+        <section className="machine pinned">
+          <header className="machine-header">Pinned</header>
+          {pinned.map((s) => (
+            <SessionItem
               key={s.key}
-              role="button"
-              tabIndex={0}
-              className={`session ${s.activity} ${s.key === activeKey ? "active" : ""}`}
-              onClick={() => onOpen(s)}
-              onKeyDown={(e) => e.key === "Enter" && onOpen(s)}
-              title={s.meta.cwd}
-            >
-              <div className="session-row">
-                <span className="session-name">{displayName(s)}</span>
-                <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>
-              </div>
-              <div className="session-cwd">{s.meta.cwd}</div>
-              {s.meta.tags.length > 0 && (
-                <div className="session-tags">
-                  {s.meta.tags.map((t) => (
-                    <span key={t} className="tag">
-                      {t}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <UsageBadge s={s} />
-              {s.key === activeKey && <TokenDetail s={s} />}
-              {s.activity === "exited" && s.meta.agent_session_id && m.online && (
-                <button
-                  className="session-resume"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onResume(s);
-                  }}
-                >
-                  resume
-                </button>
-              )}
-            </div>
+              s={s}
+              machine={machineOf(s)}
+              active={s.key === activeKey}
+              pinned
+              showMachine
+              onOpen={onOpen}
+              onResume={onResume}
+            />
           ))}
         </section>
-      );
-    })}
-  </nav>
-);
+      )}
+      {machines.map((m) => {
+        const mine = sessions.filter((s) => s.machine === m.id && !pinned.includes(s));
+        const live = mine.filter((s) => s.activity !== "exited");
+        const exited = mine.filter((s) => s.activity === "exited").slice(-8).reverse();
+        return (
+          <section key={m.id} className="machine">
+            <header className="machine-header" title={m.error ?? undefined}>
+              <span className={`dot ${m.online ? "online" : "offline"}`} />
+              {m.label}
+              {!m.online && <span className="machine-offline">offline</span>}
+              {m.online && (
+                <button className="machine-new" title="New session" onClick={() => onNew(m.id)}>
+                  +
+                </button>
+              )}
+            </header>
+            {live.length === 0 && <div className="empty">no running sessions</div>}
+            {[...live, ...exited].map((s) => (
+              <SessionItem
+                key={s.key}
+                s={s}
+                machine={m}
+                active={s.key === activeKey}
+                pinned={false}
+                showMachine={false}
+                onOpen={onOpen}
+                onResume={onResume}
+              />
+            ))}
+          </section>
+        );
+      })}
+    </nav>
+  );
+};
