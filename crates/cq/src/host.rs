@@ -181,6 +181,8 @@ struct State {
     last_input: std::time::Instant,
     /// Text waiting for the session to become idle.
     injections: VecDeque<Inject>,
+    /// Codex: an answered prompt that may still need Enter to confirm the selection.
+    pending_confirm: Option<(String, std::time::Instant)>,
 }
 
 impl State {
@@ -233,7 +235,7 @@ impl State {
         }
         self.dirty = false;
         let found = match self.meta.agent.as_str() {
-            "claude" | "codex" => agent::find_choice_prompt(&self.parser.screen().contents()),
+            "claude" | "codex" => agent::find_choice_prompt(&screen_lines(self.parser.screen())),
             _ => None,
         };
         if found != self.prompt {
@@ -255,7 +257,42 @@ impl State {
         if !p.options.iter().any(|o| o.number == option) {
             return Err(format!("option {option} not offered"));
         }
-        self.pty_tx.send(vec![b'0' + option]).map_err(|e| e.to_string())
+        let id = p.id.clone();
+        self.pty_tx.send(vec![b'0' + option]).map_err(|e| e.to_string())?;
+        if self.meta.agent == "codex" {
+            // Some Codex lists confirm on the digit, others only move the selection.
+            self.pending_confirm = Some((id, std::time::Instant::now()));
+        }
+        Ok(())
+    }
+
+    /// Codex: presses Enter for an answered prompt that is still on screen.
+    fn confirm_pending(&mut self) {
+        let Some((id, at)) = &self.pending_confirm else { return };
+        if at.elapsed() < Duration::from_millis(400) {
+            return;
+        }
+        if self.prompt.as_ref().is_some_and(|p| &p.id == id) {
+            let _ = self.pty_tx.send(b"\r".to_vec());
+        }
+        self.pending_confirm = None;
+    }
+
+    /// Writes input to the agent. Codex treats a burst of input as a paste, so the Enter that
+    /// ends a pasted message is sent a moment later to submit it.
+    fn write_input(&mut self, mut bytes: Vec<u8>) {
+        let tail = b"\x1b[201~\r";
+        if self.meta.agent == "codex" && bytes.ends_with(tail) {
+            bytes.pop();
+            let tx = self.pty_tx.clone();
+            let _ = self.pty_tx.send(bytes);
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(500));
+                let _ = tx.send(b"\r".to_vec());
+            });
+            return;
+        }
+        let _ = self.pty_tx.send(bytes);
     }
 
     fn set_meta(&mut self, m: SetMeta) {
@@ -299,7 +336,8 @@ impl State {
             bytes.push(b'\r');
             self.agent_idle = false;
         }
-        let ok = self.pty_tx.send(bytes).is_ok();
+        self.write_input(bytes);
+        let ok = true;
         self.last_input = std::time::Instant::now();
         let payload = serde_json::json!({ "type": "inject_result", "id": inj.id, "ok": ok });
         self.publish(AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload });
@@ -418,9 +456,11 @@ pub async fn run(args: HostArgs) -> Result<()> {
         codex_rollout: usage::CodexTail::default(),
         dirty: false,
         prompt: None,
-        agent_idle: false,
+        // Codex fires SessionStart only with the first turn, so it starts out idle.
+        agent_idle: args.agent == "codex",
         last_input: std::time::Instant::now(),
         injections: VecDeque::new(),
+        pending_confirm: None,
     }));
 
     {
@@ -431,6 +471,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
                 let mut st = state.lock().unwrap();
                 st.scan_prompt();
                 st.try_inject();
+                st.confirm_pending();
             }
         });
     }
@@ -574,7 +615,7 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
                 // right or the PTY size from an attached terminal.
                 Message::Input(bytes) if monitor => {
                     st.last_input = std::time::Instant::now();
-                    let _ = st.pty_tx.send(bytes);
+                    st.write_input(bytes);
                 }
                 Message::Inject(inj) => {
                     let payload = serde_json::json!({ "type": "inject_queued", "id": inj.id });
@@ -602,7 +643,7 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
                     // Last writer wins the input right, and the PTY follows its size.
                     st.set_owner(Some(id));
                     st.last_input = std::time::Instant::now();
-                    let _ = st.pty_tx.send(bytes);
+                    st.write_input(bytes);
                 }
                 Message::Resize(size) => {
                     if let Some(c) = st.clients.get_mut(&id) {
@@ -716,4 +757,11 @@ fn handle_event(state: &Shared, ev: AgentEvent) {
         }
     }
     st.publish(ev);
+}
+
+/// The visible screen as text, one line per row. Unlike `Screen::contents`, rows filled up to the
+/// last column are not joined with the next one (Codex pads highlighted rows to full width).
+fn screen_lines(screen: &vt100::Screen) -> String {
+    let (_, cols) = screen.size();
+    screen.rows(0, cols).map(|r| r.trim_end().to_owned()).collect::<Vec<_>>().join("\n")
 }

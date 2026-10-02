@@ -151,7 +151,10 @@ pub fn find_choice_prompt(screen: &str) -> Option<PermissionPrompt> {
         return None;
     }
     let text_end = (0..first).rev().find(|&i| !lines[i].trim().is_empty())?;
-    Some(prompt("dialog", prompt_text(&lines, text_end, 12), options))
+    // Codex asks for tool approval without "Do you want to"; its options give it away.
+    let is_permission = options.iter().any(|o| o.label.starts_with("Yes, proceed") || o.label.starts_with("Yes, and don't ask again"));
+    let kind = if is_permission { "permission" } else { "dialog" };
+    Some(prompt(kind, prompt_text(&lines, text_end, 12), options))
 }
 
 #[cfg(test)]
