@@ -2,42 +2,57 @@
 
 use cq_proto::Size;
 
-/// How keyboard input is captured from the local console.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputMode {
-    /// Read VT sequences produced by the console and forward the bytes unchanged.
-    Vt,
-    /// Windows only: read native key events and re-encode them as win32-input-mode sequences,
-    /// which ConPTY decodes back into full-fidelity key events for the agent.
-    Win32,
-}
-
-impl InputMode {
-    /// Reads the mode from `CQ_INPUT_MODE` (`vt` or `win32`), defaulting to `vt`.
-    pub fn from_env() -> Self {
-        match std::env::var("CQ_INPUT_MODE").as_deref() {
-            Ok("win32") if cfg!(windows) => InputMode::Win32,
-            _ => InputMode::Vt,
-        }
-    }
-}
-
 /// Events produced by the local console.
 pub enum TermEvent {
     Input(Vec<u8>),
     Resize(Size),
 }
 
-/// Byte that detaches the local terminal without stopping the session (Ctrl+).
-pub const DETACH_BYTE: u8 = 0x1c;
+/// Encodings of Ctrl+\ that detach the local terminal without stopping the session: the plain
+/// control byte, and the forms terminals send once the agent enables modifyOtherKeys or the kitty
+/// keyboard protocol.
+const DETACH_KEYS: &[&[u8]] = &[b"\x1c", b"\x1b[27;5;92~", b"\x1b[92;5u"];
+
+/// Returns whether an input chunk contains the detach key.
+pub fn is_detach(input: &[u8]) -> bool {
+    DETACH_KEYS.iter().any(|k| input.windows(k.len()).any(|w| w == *k))
+}
 
 /// Escape sequences that undo modes an agent may have left enabled in the outer terminal.
-pub const RESET_MODES: &[u8] =
-    b"\x1b[<99u\x1b[?2004l\x1b[?1004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1l\x1b>\x1b[0m\x1b[?25h\x1b[999;1H\r\n";
+pub const RESET_MODES: &[u8] = b"\x1b[<99u\x1b[>4m\x1b[?2004l\x1b[?1004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1l\x1b>\x1b[0m\x1b[?25h\x1b[999;1H\r\n";
+
+/// Sequence sent for Shift+Enter. Claude Code reads it as "insert newline".
+#[cfg(windows)]
+const SHIFT_ENTER: &str = "\x1b[13;2u";
+
+/// Tracks whether the input stream is inside a bracketed paste.
+#[cfg(any(windows, test))]
+#[derive(Default)]
+struct PasteTracker {
+    tail: Vec<u16>,
+    active: bool,
+}
+
+#[cfg(any(windows, test))]
+impl PasteTracker {
+    fn feed(&mut self, c: u16) {
+        self.tail.push(c);
+        if self.tail.len() > 6 {
+            self.tail.remove(0);
+        }
+        let start: Vec<u16> = "\x1b[200~".encode_utf16().collect();
+        let end: Vec<u16> = "\x1b[201~".encode_utf16().collect();
+        if self.tail == start {
+            self.active = true;
+        } else if self.tail == end {
+            self.active = false;
+        }
+    }
+}
 
 #[cfg(windows)]
 mod imp {
-    use super::{InputMode, TermEvent};
+    use super::{PasteTracker, SHIFT_ENTER, TermEvent};
     use anyhow::{Result, bail};
     use cq_proto::Size;
     use tokio::sync::mpsc::UnboundedSender as Sender;
@@ -60,7 +75,7 @@ mod imp {
 
     impl RawTerminal {
         /// Switches the console to raw VT mode.
-        pub fn enter(mode: InputMode) -> Result<Self> {
+        pub fn enter() -> Result<Self> {
             unsafe {
                 let stdin = GetStdHandle(STD_INPUT_HANDLE);
                 let stdout = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -79,11 +94,7 @@ mod imp {
                 };
                 SetConsoleCP(65001);
                 SetConsoleOutputCP(65001);
-                let raw_in = match mode {
-                    InputMode::Vt => ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_EXTENDED_FLAGS,
-                    InputMode::Win32 => ENABLE_WINDOW_INPUT | ENABLE_EXTENDED_FLAGS,
-                };
-                if SetConsoleMode(stdin, raw_in) == 0 {
+                if SetConsoleMode(stdin, ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_EXTENDED_FLAGS) == 0 {
                     bail!("SetConsoleMode(stdin): {}", std::io::Error::last_os_error());
                 }
                 // Autowrap must stay on: agents draw full-width lines and rely on deferred wrap.
@@ -139,86 +150,74 @@ mod imp {
     }
 
     /// Reads console input on a dedicated thread until the channel closes.
-    pub fn spawn_reader(mode: InputMode, tx: Sender<TermEvent>) {
+    pub fn spawn_reader(tx: Sender<TermEvent>) {
         std::thread::spawn(move || {
             let stdin = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
-            match mode {
-                InputMode::Vt => read_vt(stdin, tx),
-                InputMode::Win32 => read_win32(stdin, tx),
-            }
+            read_input(stdin, tx);
         });
     }
 
-    fn read_vt(stdin: HANDLE, tx: Sender<TermEvent>) {
-        // ReadConsoleW (UTF-16) is used instead of ReadFile because UTF-8 console input is
-        // unreliable for non-ASCII text such as IME-composed Japanese.
-        let mut buf = [0u16; 4096];
-        let mut pending: Option<u16> = None;
-        loop {
-            let mut n = 0u32;
-            let ok = unsafe {
-                ReadConsoleW(stdin, buf.as_mut_ptr().cast(), buf.len() as u32, &mut n, std::ptr::null())
-            };
-            if ok == 0 {
-                return;
-            }
-            let mut units: Vec<u16> = pending.take().into_iter().collect();
-            units.extend_from_slice(&buf[..n as usize]);
-            if let Some(&last) = units.last() {
-                if (0xD800..0xDC00).contains(&last) {
-                    pending = units.pop();
-                }
-            }
-            let text = String::from_utf16_lossy(&units);
-            if !text.is_empty() && tx.send(TermEvent::Input(text.into_bytes())).is_err() {
-                return;
-            }
-        }
-    }
-
-    fn read_win32(stdin: HANDLE, tx: Sender<TermEvent>) {
+    /// Reads input records in VT input mode.
+    ///
+    /// The console translates keys into VT sequences delivered as synthetic key-down records
+    /// (the same bytes `ReadConsoleW` would return, including IME text and bracketed pastes), but
+    /// VT has no Shift+Enter. Modifier keys still arrive as their own records, so modifier state
+    /// is tracked here and a bare Shift+Enter is re-encoded as `CSI 13;2u`.
+    fn read_input(stdin: HANDLE, tx: Sender<TermEvent>) {
+        const VK_SHIFT: u16 = 0x10;
+        const VK_CONTROL: u16 = 0x11;
+        const VK_MENU: u16 = 0x12;
         let mut records: [INPUT_RECORD; 128] = unsafe { std::mem::zeroed() };
+        let (mut shift, mut ctrl, mut alt) = (false, false, false);
+        let mut paste = PasteTracker::default();
+        let mut pending_high: Option<u16> = None;
         loop {
             let mut n = 0u32;
-            let ok = unsafe { ReadConsoleInputW(stdin, records.as_mut_ptr(), 128, &mut n) };
-            if ok == 0 {
+            if unsafe { ReadConsoleInputW(stdin, records.as_mut_ptr(), 128, &mut n) } == 0 {
                 return;
             }
-            let mut out = Vec::new();
+            let mut units: Vec<u16> = pending_high.take().into_iter().collect();
             for r in &records[..n as usize] {
-                match r.EventType as u32 {
-                    KEY_EVENT => {
-                        let k = unsafe { r.Event.KeyEvent };
-                        let uc = unsafe { k.uChar.UnicodeChar };
-                        if uc == u16::from(super::DETACH_BYTE) {
-                            if k.bKeyDown != 0 {
-                                out.push(super::DETACH_BYTE);
-                            }
-                            continue;
-                        }
-                        // win32-input-mode: CSI Vk ; Sc ; Uc ; Kd ; Cs ; Rc _
-                        out.extend_from_slice(
-                            format!(
-                                "\x1b[{};{};{};{};{};{}_",
-                                k.wVirtualKeyCode,
-                                k.wVirtualScanCode,
-                                uc,
-                                k.bKeyDown,
-                                k.dwControlKeyState,
-                                k.wRepeatCount
-                            )
-                            .as_bytes(),
-                        );
+                if r.EventType as u32 == WINDOW_BUFFER_SIZE_EVENT {
+                    if tx.send(TermEvent::Resize(size())).is_err() {
+                        return;
                     }
-                    WINDOW_BUFFER_SIZE_EVENT => {
-                        if tx.send(TermEvent::Resize(size())).is_err() {
-                            return;
-                        }
-                    }
+                    continue;
+                }
+                if r.EventType as u32 != KEY_EVENT {
+                    continue;
+                }
+                let k = unsafe { r.Event.KeyEvent };
+                let down = k.bKeyDown != 0;
+                match k.wVirtualKeyCode {
+                    VK_SHIFT => shift = down,
+                    VK_CONTROL => ctrl = down,
+                    VK_MENU => alt = down,
                     _ => {}
                 }
+                let c = unsafe { k.uChar.UnicodeChar };
+                if !down || c == 0 {
+                    continue;
+                }
+                for _ in 0..k.wRepeatCount.max(1) {
+                    if c == 0x0d && shift && !ctrl && !alt && !paste.active {
+                        units.extend(SHIFT_ENTER.encode_utf16());
+                    } else {
+                        units.push(c);
+                        paste.feed(c);
+                    }
+                }
             }
-            if !out.is_empty() && tx.send(TermEvent::Input(out)).is_err() {
+            if let Some(&last) = units.last() {
+                if (0xD800..0xDC00).contains(&last) {
+                    pending_high = units.pop();
+                }
+            }
+            if units.is_empty() {
+                continue;
+            }
+            let text = String::from_utf16_lossy(&units);
+            if tx.send(TermEvent::Input(text.into_bytes())).is_err() {
                 return;
             }
         }
@@ -227,7 +226,7 @@ mod imp {
 
 #[cfg(unix)]
 mod imp {
-    use super::{InputMode, TermEvent};
+    use super::TermEvent;
     use anyhow::{Result, bail};
     use cq_proto::Size;
     use std::io::{Read, Write};
@@ -240,7 +239,7 @@ mod imp {
 
     impl RawTerminal {
         /// Switches the terminal to raw mode.
-        pub fn enter(_mode: InputMode) -> Result<Self> {
+        pub fn enter() -> Result<Self> {
             unsafe {
                 let mut t: libc::termios = std::mem::zeroed();
                 if libc::tcgetattr(0, &mut t) != 0 {
@@ -279,8 +278,9 @@ mod imp {
         }
     }
 
-    /// Reads stdin on a dedicated thread until the channel closes.
-    pub fn spawn_reader(_mode: InputMode, tx: Sender<TermEvent>) {
+    /// Reads stdin on a dedicated thread until the channel closes. Unix terminals pass key
+    /// encodings (including Shift+Enter under the kitty protocol) through unchanged.
+    pub fn spawn_reader(tx: Sender<TermEvent>) {
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut stdin = std::io::stdin().lock();
@@ -294,3 +294,25 @@ mod imp {
 }
 
 pub use imp::{RawTerminal, size, spawn_reader};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_detach_encodings() {
+        assert!(is_detach(b"\x1c"));
+        assert!(is_detach(b"ab\x1b[27;5;92~"));
+        assert!(is_detach(b"\x1b[92;5u"));
+        assert!(!is_detach(b"\x1b[27;5;99~"));
+    }
+
+    #[test]
+    fn tracks_bracketed_paste() {
+        let mut p = PasteTracker::default();
+        "\x1b[200~x".encode_utf16().for_each(|c| p.feed(c));
+        assert!(p.active);
+        "y\x1b[201~".encode_utf16().for_each(|c| p.feed(c));
+        assert!(!p.active);
+    }
+}

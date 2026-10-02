@@ -1,6 +1,6 @@
 //! Terminal client (`cq attach`, and the foreground half of `cq claude`).
 
-use crate::term::{self, DETACH_BYTE, InputMode, RawTerminal, TermEvent};
+use crate::term::{self, RawTerminal, TermEvent};
 use crate::{ipc, paths};
 use anyhow::{Result, bail};
 use cq_proto::{
@@ -52,12 +52,11 @@ pub async fn attach(endpoint: &str, connect_timeout: Duration) -> Result<Outcome
         _ => bail!("unexpected handshake reply"),
     }
 
-    let mode = InputMode::from_env();
-    let raw = RawTerminal::enter(mode)?;
+    let raw = RawTerminal::enter()?;
     let (ev_tx, mut ev_rx) = mpsc::unbounded_channel();
-    term::spawn_reader(mode, ev_tx.clone());
-    if mode == InputMode::Vt {
-        // VT input mode delivers no resize events, so poll the window size.
+    term::spawn_reader(ev_tx.clone());
+    {
+        // Resize events are not reliable in VT input mode, so also poll the window size.
         tokio::spawn(async move {
             let mut last = size;
             loop {
@@ -85,8 +84,7 @@ pub async fn attach(endpoint: &str, connect_timeout: Duration) -> Result<Outcome
             ev = ev_rx.recv() => match ev {
                 Some(TermEvent::Input(bytes)) => {
                     trace_input(&bytes);
-                    // 0x1c never occurs inside escape sequences or UTF-8 text.
-                    if bytes.contains(&DETACH_BYTE) {
+                    if term::is_detach(&bytes) {
                         break Outcome::Detached;
                     }
                     if write_message(&mut wr, &Message::Input(bytes)).await.is_err() {
