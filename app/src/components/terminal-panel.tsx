@@ -4,7 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
-import { decodeBytes, registerTerminal, resize, sendInput, sessionKey, subscribe, unsubscribe } from "../api";
+import { decodeBytes, registerTerminal, resize, sendInput, sessionKey, setFocus, subscribe, unsubscribe } from "../api";
 import { matchShortcut } from "../shortcuts";
 
 export type TerminalParams = { machine: string; session: string };
@@ -52,8 +52,12 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
     });
     term.onData(send);
     term.onResize(({ cols, rows }) => void resize(machine, session, cols, rows).catch(() => undefined));
-    // Focusing a tile claims the input right so the PTY follows this tile's size.
-    term.textarea?.addEventListener("focus", () => send(""));
+    // Focusing a tile claims the input right so the PTY follows this tile's size, and makes it
+    // the desktop's focus (where e.g. voice input goes).
+    term.textarea?.addEventListener("focus", () => {
+      send("");
+      void setFocus(machine, session).catch(() => undefined);
+    });
 
     const off = registerTerminal(sessionKey(machine, session), (msg) => {
       if (msg.kind === "snapshot" && msg.data) {

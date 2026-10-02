@@ -10,6 +10,8 @@ export type SessionMeta = {
   status: "running" | "exited";
   exit_code: number | null;
   agent_session_id: string | null;
+  name: string | null;
+  tags: string[];
 };
 
 /** Agent event relayed from hooks, the status line, or the host itself. */
@@ -28,7 +30,7 @@ export type MachineInfo = {
 
 export type PromptOption = { number: number; label: string };
 
-export type PermissionPrompt = { text: string; options: PromptOption[] };
+export type PermissionPrompt = { id: string; text: string; options: PromptOption[] };
 
 /** Coarse session activity derived from events. */
 export type Activity = "starting" | "working" | "idle" | "approval" | "exited";

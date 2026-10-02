@@ -110,6 +110,15 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
                 <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>
               </div>
               <div className="session-cwd">{s.meta.cwd}</div>
+              {s.meta.tags.length > 0 && (
+                <div className="session-tags">
+                  {s.meta.tags.map((t) => (
+                    <span key={t} className="tag">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
               <UsageBadge s={s} />
               {s.key === activeKey && <TokenDetail s={s} />}
               {s.activity === "exited" && s.meta.agent_session_id && m.online && (

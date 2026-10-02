@@ -62,6 +62,7 @@ export const useStore = (): Snapshot =>
 
 /** Returns a session's display name. */
 export const displayName = (s: SessionState): string => {
+  if (s.meta.name) return s.meta.name;
   if (s.status?.sessionName) return s.status.sessionName;
   const base = s.meta.cwd.split(/[\\/]/).filter(Boolean).pop() ?? s.meta.cwd;
   return `${base} #${s.meta.id.slice(0, 4)}`;
@@ -120,6 +121,7 @@ const parseStatus = (payload: unknown, receivedAt: number): StatusLine => ({
 });
 
 const parsePrompt = (v: unknown): PermissionPrompt | null => {
+  const id = str(v, "id") ?? "";
   const text = str(v, "text");
   const opts = asRecord(v)?.options;
   if (text === null || !Array.isArray(opts)) return null;
@@ -128,7 +130,7 @@ const parsePrompt = (v: unknown): PermissionPrompt | null => {
     const label = str(o, "label");
     return n !== null && label !== null ? [{ number: n, label }] : [];
   });
-  return { text, options };
+  return { id, text, options };
 };
 
 const counts = (v: unknown) => ({

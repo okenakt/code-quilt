@@ -35,9 +35,13 @@ export const sendInput = (machine: string, session: string, data: string): Promi
 export const resize = (machine: string, session: string, cols: number, rows: number): Promise<void> =>
   invoke("resize", { machine, session, cols, rows });
 
-/** Answers a permission prompt with a 1-based option number. */
-export const approve = (machine: string, session: string, option: number): Promise<void> =>
-  invoke("approve", { machine, session, option });
+/** Answers a specific permission prompt with a 1-based option number. */
+export const approve = (machine: string, session: string, option: number, promptId: string): Promise<void> =>
+  invoke("approve", { machine, session, option, promptId });
+
+/** Tells the daemon which session the user is typing into (or none). */
+export const setFocus = (machine: string | null, session: string | null): Promise<void> =>
+  invoke("set_focus", { machine, session });
 
 export type DirList = { path: string; parent: string | null; entries: string[]; roots: string[] };
 

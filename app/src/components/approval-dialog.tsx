@@ -42,7 +42,7 @@ export const ApprovalDialog = ({ sessions, machines, focusToken }: Props) => {
     setBusy(true);
     setError(null);
     try {
-      await approve(current.machine, current.meta.id, option);
+      await approve(current.machine, current.meta.id, option, prompt.id);
     } catch (e) {
       setError(String(e));
       setBusy(false);

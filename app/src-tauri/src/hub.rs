@@ -171,9 +171,14 @@ impl Hub {
         self.routed(machine, session, Message::Resize(cq_proto::Size { cols, rows }))
     }
 
-    /// Answers a permission prompt.
-    pub fn approve(&self, machine: &str, session: &str, option: u8) -> Result<()> {
-        self.routed(machine, session, Message::Approve(cq_proto::Approve { option }))
+    /// Answers a specific permission prompt.
+    pub fn approve(&self, machine: &str, session: &str, option: u8, prompt_id: Option<String>) -> Result<()> {
+        self.routed(machine, session, Message::Approve(cq_proto::Approve { option, prompt_id }))
+    }
+
+    /// Tells the daemon which session the user is typing into.
+    pub fn set_focus(&self, focus: Option<SessionRef>) -> Result<()> {
+        self.send(Message::SetFocus(focus))
     }
 
     /// Allocates a request id.
@@ -297,6 +302,12 @@ impl Hub {
             Message::Launched(l) => self.reply(l.id, Ok(Message::Launched(l))),
             Message::DirList(l) => self.reply(l.id, Ok(Message::DirList(l))),
             Message::RequestFailed(f) => self.reply(f.id, Err(f.error)),
+            Message::Focus(f) => {
+                let _ = self.app.emit("focus", f);
+            }
+            Message::CommandList(list) => {
+                let _ = self.app.emit("commands", list);
+            }
             // An unsolicited error (e.g. protocol mismatch) ends the connection.
             Message::Error(e) => bail!("daemon error: {e}"),
             _ => {}

@@ -73,8 +73,15 @@ fn approve(
     machine: String,
     session: String,
     option: u8,
+    prompt_id: Option<String>,
 ) -> Result<(), String> {
-    hub.approve(&machine, &session, option).map_err(err)
+    hub.approve(&machine, &session, option, prompt_id).map_err(err)
+}
+
+#[tauri::command]
+fn set_focus(hub: State<'_, HubState>, machine: Option<String>, session: Option<String>) -> Result<(), String> {
+    let focus = machine.zip(session).map(|(machine, session)| cq_proto::SessionRef { machine, session });
+    hub.set_focus(focus).map_err(err)
 }
 
 #[tauri::command]
@@ -86,7 +93,18 @@ async fn launch(
     args: Vec<String>,
 ) -> Result<String, String> {
     let id = hub.next_id();
-    let req = cq_proto::Launch { id, machine, agent: "claude".into(), cwd, args, resume, cols: 120, rows: 36 };
+    let req = cq_proto::Launch {
+        id,
+        machine,
+        agent: "claude".into(),
+        cwd,
+        args,
+        resume,
+        name: None,
+        tags: vec![],
+        cols: 120,
+        rows: 36,
+    };
     match hub.call(id, cq_proto::Message::Launch(req)).await.map_err(err)? {
         cq_proto::Message::Launched(l) => Ok(l.session),
         other => Err(format!("unexpected reply {other:?}")),
@@ -168,6 +186,7 @@ pub fn run() {
             send_input,
             resize,
             approve,
+            set_focus,
             launch,
             list_dir,
             queen_summarize,
