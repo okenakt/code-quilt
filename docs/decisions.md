@@ -285,3 +285,12 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 - **`@名前`**：cq-queenはQueenセッションにUserPromptSubmit hook（`cq-queen hook`）を追加する。`@名前 本文`（`@machine:名前` も可）なら対象へ直接送り、`{"decision":"block"}` を返してQueenのLLMターンを使わない。該当なしなら素通しでQueenに任せ、複数該当ならブロックして候補を示す。
 - **`prompt_blocked`**：hookでプロンプトを止めると、並行して動くCodeQuiltのUserPromptSubmit hookがセッションを「作業中」にしてしまう。止めたhookが少し待ってから `prompt_blocked` イベントをhostへ送り、hostとcq-clientはセッションをアイドルに戻す（Queenへの配達が止まらないようにするため）。
 - **ハンドルの継承**：Windowsでは子プロセスが親の継承可能なハンドルをすべて引き継ぐため、切り離して起動したプロセスが呼び出し元のパイプを握り続けた。切り離し起動の前に自分の標準ハンドルの継承フラグを外す。
+
+## 26. Codex対応（M5）
+
+- **hooks**：Codex 0.159のhooksはClaude Codeとほぼ同じ（SessionStart / UserPromptSubmit / Stop / PermissionRequest、`transcript_path` と `last_assistant_message` あり、既定で有効）。`--settings` が無いので `-c hooks.<Event>=[...]` で注入する。初回はCodexが「Hooks need review」で信頼を求める（ユーザーの設定に残る）。SessionStartは最初のターンで発火するため、Codexのセッションは起動時からアイドル扱いにする。`-c` を使うと共有バックグラウンドサーバーを使わない組み込みモードになる旨の警告が出るが、動作に影響はない。
+- **使用量**：statusLineが無いので、rollout（`transcript_path`）の `token_count` からトークン累計とレート制限（primary=5時間、secondary=週）、`turn_context` からモデルを読む。クライアントが同じように読めるよう、Claudeのstatus line JSONと同じ形に揃えて `statusline` イベントとして流す。アカウントは `~/.codex/auth.json` のid tokenのクレーム（アカウントIDとメール）だけを読む。
+- **画面**：Codexの選択リスト（`›`、`enter confirm · esc skip` / `Press enter to confirm or esc to cancel`）も確認ダイアログとして検出する。選択中の行を行末まで反転表示で埋めるため、vt100の `contents()` が行を連結してしまう。行ごとに取り出して判定する。選択肢が「Yes, proceed」等ならpermission扱い。
+- **回答と送信**：Codexのリストは数字で即確定するものと選択だけ動くものがあるため、数字を送って0.4秒後も同じプロンプトが残っていればEnterを送る。まとめて届いた入力はペーストとして扱われ末尾のEnterが改行になるため、ペーストの0.5秒後にEnterを送る。
+- **起動**：Windowsではnpm / Voltaが拡張子なしのシェルスクリプトと `.cmd` を並べて置くため、PATHEXTを優先して実行ファイルを探し、`.cmd` は `cmd.exe /c` で起動する。
+- **未対応**：CodexをQueenにすること（MCP設定と指示文の渡し方、Channels非対応のためPTY配信）。
