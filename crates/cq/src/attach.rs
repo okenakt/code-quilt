@@ -43,6 +43,7 @@ pub async fn attach(endpoint: &str, connect_timeout: Duration) -> Result<Outcome
             kind: ClientKind::Terminal,
             cols: size.cols,
             rows: size.rows,
+            federate: false,
         }),
     )
     .await?;

@@ -11,8 +11,19 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Protocol version exchanged during the handshake.
+/// Version of the host protocol (terminal, hub, monitor and event clients of `cq host`).
 pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Version of the daemon protocol (machine-tagged relay through `cq daemon`). Versioned
+/// separately so running hosts stay reachable when only the daemon protocol changes.
+pub const DAEMON_PROTOCOL_VERSION: u32 = 2;
+
+/// Machine id under which a daemon reports its own sessions.
+pub const LOCAL_MACHINE: &str = "local";
+
+fn local_machine() -> String {
+    LOCAL_MACHINE.to_owned()
+}
 
 /// Upper bound for a single frame, to reject corrupted or hostile length prefixes.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -38,6 +49,9 @@ pub struct Hello {
     pub kind: ClientKind,
     pub cols: u16,
     pub rows: u16,
+    /// Daemon clients only: also relay the registered remote machines.
+    #[serde(default)]
+    pub federate: bool,
 }
 
 /// Static metadata describing a session, also persisted as `sessions/<id>.json`.
@@ -110,15 +124,44 @@ pub struct Approve {
 /// Request to open a relayed connection to a session through the daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subscribe {
+    #[serde(default = "local_machine")]
+    pub machine: String,
     pub session: String,
     pub kind: ClientKind,
     pub cols: u16,
     pub rows: u16,
 }
 
-/// Request to start a new agent session on the daemon's machine.
+/// A session on a machine.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionRef {
+    pub machine: String,
+    pub session: String,
+}
+
+/// A machine known to the daemon and whether it is reachable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MachineInfo {
+    pub id: String,
+    pub label: String,
+    pub online: bool,
+    pub error: Option<String>,
+}
+
+/// Sessions of one machine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionList {
+    pub machine: String,
+    pub sessions: Vec<SessionMeta>,
+}
+
+/// Request to start a new agent session on a machine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Launch {
+    /// Client-chosen id echoed in the reply.
+    pub id: u64,
+    #[serde(default = "local_machine")]
+    pub machine: String,
     pub agent: String,
     pub cwd: String,
     /// Extra agent arguments.
@@ -131,9 +174,36 @@ pub struct Launch {
     pub rows: u16,
 }
 
+/// Reply to [`Launch`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Launched {
+    pub id: u64,
+    pub machine: String,
+    pub session: String,
+}
+
+/// Request to list subdirectories (an empty path lists the allowed roots).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListDir {
+    pub id: u64,
+    #[serde(default = "local_machine")]
+    pub machine: String,
+    pub path: String,
+}
+
+/// Failure reply to an id-carrying request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestFailed {
+    pub id: u64,
+    pub error: String,
+}
+
 /// Directory listing for choosing a launch directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirList {
+    /// Id of the [`ListDir`] request.
+    #[serde(default)]
+    pub id: u64,
     /// Listed directory, or empty when listing the allowed roots.
     pub path: String,
     pub parent: Option<String>,
@@ -156,24 +226,28 @@ pub enum Message {
     Exit(Exit),
     Approve(Approve),
     Error(String),
-    /// Client to daemon: request the session list.
+    /// Client to daemon: request the session lists of all machines.
     ListSessions,
-    /// Daemon to client: all known sessions on the machine.
-    SessionList(Vec<SessionMeta>),
+    /// Daemon to client: all known sessions of one machine.
+    SessionList(SessionList),
+    /// Daemon to client: machines and their reachability.
+    MachineList(Vec<MachineInfo>),
     /// Client to daemon: open a relayed connection to a session.
     Subscribe(Subscribe),
     /// Client to daemon: close a relayed connection.
-    Unsubscribe(String),
-    /// A session message relayed by the daemon, tagged with the session id.
-    Routed { session: String, inner: Box<Message> },
+    Unsubscribe(SessionRef),
+    /// A session message relayed by the daemon, tagged with machine and session.
+    Routed { machine: String, session: String, inner: Box<Message> },
     /// Client to daemon: start a session.
     Launch(Launch),
-    /// Daemon to client: a launched session's id.
-    Launched(String),
-    /// Client to daemon: list subdirectories (empty path lists the allowed roots).
-    ListDir(String),
+    /// Daemon to client: a launched session.
+    Launched(Launched),
+    /// Client to daemon: list subdirectories.
+    ListDir(ListDir),
     /// Daemon to client: directory listing.
     DirList(DirList),
+    /// Daemon to client: an id-carrying request failed.
+    RequestFailed(RequestFailed),
 }
 
 mod kind {
@@ -196,6 +270,8 @@ mod kind {
     pub const LAUNCHED: u8 = 0x36;
     pub const LIST_DIR: u8 = 0x37;
     pub const DIR_LIST: u8 = 0x38;
+    pub const MACHINE_LIST: u8 = 0x39;
+    pub const REQUEST_FAILED: u8 = 0x3a;
     pub const ERROR: u8 = 0x7f;
 }
 
@@ -227,22 +303,25 @@ impl Message {
             Message::ListSessions => (kind::LIST_SESSIONS, Vec::new()),
             Message::SessionList(v) => (kind::SESSION_LIST, serde_json::to_vec(v)?),
             Message::Subscribe(v) => (kind::SUBSCRIBE, serde_json::to_vec(v)?),
-            Message::Unsubscribe(s) => (kind::UNSUBSCRIBE, s.as_bytes().to_vec()),
-            Message::Routed { session, inner } => {
-                // [u16 LE id length][id][inner kind][inner payload]
-                let id = session.as_bytes();
+            Message::Unsubscribe(v) => (kind::UNSUBSCRIBE, serde_json::to_vec(v)?),
+            Message::Routed { machine, session, inner } => {
+                // [u16 LE len][machine][u16 LE len][session][inner kind][inner payload]
                 let (ik, ip) = inner.encode_parts()?;
-                let mut b = Vec::with_capacity(id.len() + ip.len() + 3);
-                b.extend_from_slice(&u16::try_from(id.len())?.to_le_bytes());
-                b.extend_from_slice(id);
+                let mut b = Vec::with_capacity(machine.len() + session.len() + ip.len() + 5);
+                for part in [machine.as_bytes(), session.as_bytes()] {
+                    b.extend_from_slice(&u16::try_from(part.len())?.to_le_bytes());
+                    b.extend_from_slice(part);
+                }
                 b.push(ik);
                 b.extend_from_slice(&ip);
                 (kind::ROUTED, b)
             }
+            Message::MachineList(v) => (kind::MACHINE_LIST, serde_json::to_vec(v)?),
             Message::Launch(v) => (kind::LAUNCH, serde_json::to_vec(v)?),
-            Message::Launched(s) => (kind::LAUNCHED, s.as_bytes().to_vec()),
-            Message::ListDir(s) => (kind::LIST_DIR, s.as_bytes().to_vec()),
+            Message::Launched(v) => (kind::LAUNCHED, serde_json::to_vec(v)?),
+            Message::ListDir(v) => (kind::LIST_DIR, serde_json::to_vec(v)?),
             Message::DirList(v) => (kind::DIR_LIST, serde_json::to_vec(v)?),
+            Message::RequestFailed(v) => (kind::REQUEST_FAILED, serde_json::to_vec(v)?),
         })
     }
 
@@ -263,24 +342,34 @@ impl Message {
             kind::LIST_SESSIONS => Message::ListSessions,
             kind::SESSION_LIST => Message::SessionList(serde_json::from_slice(&payload)?),
             kind::SUBSCRIBE => Message::Subscribe(serde_json::from_slice(&payload)?),
-            kind::UNSUBSCRIBE => Message::Unsubscribe(String::from_utf8(payload)?),
+            kind::UNSUBSCRIBE => Message::Unsubscribe(serde_json::from_slice(&payload)?),
             kind::ROUTED => {
-                if payload.len() < 3 {
-                    bail!("short routed frame");
-                }
-                let n = u16::from_le_bytes([payload[0], payload[1]]) as usize;
-                if payload.len() < 2 + n + 1 {
-                    bail!("short routed frame");
-                }
-                let session = String::from_utf8(payload[2..2 + n].to_vec())?;
-                let ik = payload[2 + n];
-                let inner = Box::new(Message::decode(ik, payload[3 + n..].to_vec())?);
-                Message::Routed { session, inner }
+                let mut pos = 0usize;
+                let mut take = || -> Result<String> {
+                    let len_end = pos + 2;
+                    if payload.len() < len_end {
+                        bail!("short routed frame");
+                    }
+                    let n = u16::from_le_bytes([payload[pos], payload[pos + 1]]) as usize;
+                    if payload.len() < len_end + n {
+                        bail!("short routed frame");
+                    }
+                    let s = String::from_utf8(payload[len_end..len_end + n].to_vec())?;
+                    pos = len_end + n;
+                    Ok(s)
+                };
+                let machine = take()?;
+                let session = take()?;
+                let Some(&ik) = payload.get(pos) else { bail!("short routed frame") };
+                let inner = Box::new(Message::decode(ik, payload[pos + 1..].to_vec())?);
+                Message::Routed { machine, session, inner }
             }
+            kind::MACHINE_LIST => Message::MachineList(serde_json::from_slice(&payload)?),
             kind::LAUNCH => Message::Launch(serde_json::from_slice(&payload)?),
-            kind::LAUNCHED => Message::Launched(String::from_utf8(payload)?),
-            kind::LIST_DIR => Message::ListDir(String::from_utf8(payload)?),
+            kind::LAUNCHED => Message::Launched(serde_json::from_slice(&payload)?),
+            kind::LIST_DIR => Message::ListDir(serde_json::from_slice(&payload)?),
             kind::DIR_LIST => Message::DirList(serde_json::from_slice(&payload)?),
+            kind::REQUEST_FAILED => Message::RequestFailed(serde_json::from_slice(&payload)?),
             other => bail!("unknown message kind 0x{other:02x}"),
         })
     }
@@ -352,6 +441,7 @@ mod tests {
             Message::Resize(Size { cols: 80, rows: 24 }),
             Message::Exit(Exit { code: Some(0) }),
             Message::Routed {
+                machine: "devbox".into(),
                 session: "abc".into(),
                 inner: Box::new(Message::Input(b"x".to_vec())),
             },
@@ -365,7 +455,8 @@ mod tests {
         assert!(matches!(read_message(&mut cur).await.unwrap(), Some(Message::Resize(Size { cols: 80, rows: 24 }))));
         assert!(matches!(read_message(&mut cur).await.unwrap(), Some(Message::Exit(Exit { code: Some(0) }))));
         match read_message(&mut cur).await.unwrap() {
-            Some(Message::Routed { session, inner }) => {
+            Some(Message::Routed { machine, session, inner }) => {
+                assert_eq!(machine, "devbox");
                 assert_eq!(session, "abc");
                 assert!(matches!(*inner, Message::Input(b) if b == b"x"));
             }

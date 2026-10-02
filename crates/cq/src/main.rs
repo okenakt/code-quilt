@@ -11,6 +11,7 @@ mod ipc;
 mod launch;
 mod machine;
 mod paths;
+mod remote;
 mod session;
 mod term;
 mod usage;

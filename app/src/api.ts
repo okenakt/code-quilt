@@ -16,8 +16,8 @@ export type Replay = {
 /** Returns sessions and events the backend received before this page loaded. */
 export const getReplay = (): Promise<Replay> => invoke("replay");
 
-/** Asks a machine's daemon to resend its session list. */
-export const refreshSessions = (machine: string): Promise<void> => invoke("list_sessions", { machine });
+/** Asks the daemon to resend the session lists of all machines. */
+export const refreshSessions = (): Promise<void> => invoke("list_sessions");
 
 /** Opens a terminal relay for a session. */
 export const subscribe = (machine: string, session: string, cols: number, rows: number): Promise<void> =>

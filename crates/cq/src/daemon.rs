@@ -1,14 +1,18 @@
 //! Machine daemon (`cq daemon`) and its stdio bridge (`cq bridge`).
 //!
 //! The daemon discovers session hosts from `~/.codequilt/sessions` and relays them to clients over
-//! a single connection. It keeps no state of its own: event history lives in each host, so a
-//! restarted daemon (or client) simply reconnects and receives the replay.
+//! a single connection. For clients that ask for it (`federate`), it also connects to every
+//! registered remote machine and relays those too, so clients only ever talk to the local daemon.
+//! It keeps no state of its own: event history lives in each host, so a restarted daemon (or
+//! client) simply reconnects and receives the replay.
 
-use crate::{ipc, paths, session};
+use crate::machine::{self, MachineEntry};
+use crate::{ipc, paths, remote, session};
 use anyhow::{Context, Result, bail};
 use cq_proto::{
-    ClientKind, Hello, Message, PROTOCOL_VERSION, SessionMeta, SessionStatus, Subscribe, spawn_reader,
-    read_message, write_message,
+    ClientKind, DirList, Hello, DAEMON_PROTOCOL_VERSION, LOCAL_MACHINE, Launched, MachineInfo, Message, PROTOCOL_VERSION,
+    RequestFailed, SessionList, SessionMeta, SessionStatus, Subscribe, read_message, spawn_reader,
+    write_message,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -74,14 +78,12 @@ impl Drop for Conn {
     }
 }
 
+fn routed(session: &str, inner: Message) -> Message {
+    Message::Routed { machine: LOCAL_MACHINE.to_owned(), session: session.to_owned(), inner: Box::new(inner) }
+}
+
 /// Opens a host connection of the given kind and relays it as `Routed` messages.
-fn open_host(
-    meta: &SessionMeta,
-    kind: ClientKind,
-    cols: u16,
-    rows: u16,
-    out: UnboundedSender<Message>,
-) -> Conn {
+fn open_host(meta: &SessionMeta, kind: ClientKind, cols: u16, rows: u16, out: UnboundedSender<Message>) -> Conn {
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
     let session = meta.id.clone();
     let pipe = meta.pipe.clone();
@@ -90,7 +92,7 @@ fn open_host(
             let stream = ipc::connect(&pipe, Duration::from_secs(1)).await?;
             let (rd, mut wr) = tokio::io::split(stream);
             let mut msgs = spawn_reader(rd);
-            let hello = Hello { protocol_version: PROTOCOL_VERSION, kind, cols, rows };
+            let hello = Hello { protocol_version: PROTOCOL_VERSION, kind, cols, rows, federate: false };
             write_message(&mut wr, &Message::Hello(hello)).await?;
             loop {
                 tokio::select! {
@@ -105,7 +107,7 @@ fn open_host(
                             _ => true,
                         };
                         if forward {
-                            let _ = out.send(Message::Routed { session: session.clone(), inner: Box::new(msg) });
+                            let _ = out.send(routed(&session, msg));
                         }
                     }
                     msg = rx.recv() => match msg {
@@ -117,17 +119,137 @@ fn open_host(
             Ok::<_, anyhow::Error>(())
         };
         if let Err(e) = run.await {
-            let _ = out.send(Message::Routed {
-                session: session.clone(),
-                inner: Box::new(Message::Error(format!("{e:#}"))),
-            });
+            let _ = out.send(routed(&session, Message::Error(format!("{e:#}"))));
         }
     });
     Conn { tx, task }
 }
 
-fn list_key(list: &[SessionMeta]) -> String {
-    serde_json::to_string(list).unwrap_or_default()
+/// One client's relay to the sessions of this machine.
+struct LocalRelay {
+    out: UnboundedSender<Message>,
+    monitors: HashMap<String, Conn>,
+    /// Hosts whose monitor connection ended recently (e.g. incompatible version); retried later.
+    backoff: HashMap<String, tokio::time::Instant>,
+    subs: HashMap<String, Conn>,
+    sessions: Vec<SessionMeta>,
+    last_key: String,
+}
+
+impl LocalRelay {
+    fn new(out: UnboundedSender<Message>) -> Self {
+        Self {
+            out,
+            monitors: HashMap::new(),
+            backoff: HashMap::new(),
+            subs: HashMap::new(),
+            sessions: Vec::new(),
+            last_key: String::new(),
+        }
+    }
+
+    fn send_list(&self) {
+        let list = SessionList { machine: LOCAL_MACHINE.to_owned(), sessions: self.sessions.clone() };
+        let _ = self.out.send(Message::SessionList(list));
+    }
+
+    /// Rescans sessions, reports list changes, and keeps one monitor per running host.
+    fn refresh(&mut self) {
+        self.sessions = session::list().unwrap_or_default();
+        let key = serde_json::to_string(&self.sessions).unwrap_or_default();
+        if key != self.last_key {
+            self.last_key = key;
+            self.send_list();
+        }
+        let now = tokio::time::Instant::now();
+        let (sessions, backoff) = (&self.sessions, &mut self.backoff);
+        self.monitors.retain(|id, c| {
+            let keep = !c.task.is_finished() && sessions.iter().any(|m| &m.id == id);
+            if !keep {
+                backoff.insert(id.clone(), now + Duration::from_secs(30));
+            }
+            keep
+        });
+        self.backoff.retain(|_, until| *until > now);
+        for m in self.sessions.iter().filter(|m| m.status == SessionStatus::Running) {
+            if !self.monitors.contains_key(&m.id) && !self.backoff.contains_key(&m.id) {
+                self.monitors.insert(m.id.clone(), open_host(m, ClientKind::Monitor, 0, 0, self.out.clone()));
+            }
+        }
+        self.subs.retain(|_, c| !c.task.is_finished());
+    }
+
+    fn handle(&mut self, msg: Message) {
+        match msg {
+            Message::ListSessions => {
+                self.sessions = session::list().unwrap_or_default();
+                self.send_list();
+            }
+            Message::Subscribe(Subscribe { session, kind, cols, rows, .. }) => {
+                if self.sessions.iter().all(|m| m.id != session) {
+                    self.sessions = session::list().unwrap_or_default();
+                }
+                match self.sessions.iter().find(|m| m.id == session) {
+                    Some(meta) => {
+                        let kind = if kind == ClientKind::Event { ClientKind::Hub } else { kind };
+                        self.subs.insert(session.clone(), open_host(meta, kind, cols, rows, self.out.clone()));
+                    }
+                    None => {
+                        let _ = self.out.send(routed(&session, Message::Error("unknown session".into())));
+                    }
+                }
+            }
+            Message::Unsubscribe(r) => {
+                self.subs.remove(&r.session);
+            }
+            Message::Launch(req) => {
+                let reply = match crate::launch::launch_detached(&req) {
+                    Ok(session) => Message::Launched(Launched { id: req.id, machine: LOCAL_MACHINE.to_owned(), session }),
+                    Err(e) => Message::RequestFailed(RequestFailed { id: req.id, error: format!("launch failed: {e:#}") }),
+                };
+                let _ = self.out.send(reply);
+            }
+            Message::ListDir(req) => {
+                let reply = match crate::config::list_dir(&req.path) {
+                    Ok(l) => Message::DirList(DirList { id: req.id, ..l }),
+                    Err(e) => Message::RequestFailed(RequestFailed { id: req.id, error: format!("{e:#}") }),
+                };
+                let _ = self.out.send(reply);
+            }
+            Message::Routed { session, inner, .. } => {
+                // Approvals go through the monitor so they work without a subscription;
+                // so does input for sessions that have no open tile (Queen).
+                let target = match *inner {
+                    Message::Approve(_) => self.monitors.get(&session),
+                    Message::Input(_) => self.subs.get(&session).or_else(|| self.monitors.get(&session)),
+                    _ => self.subs.get(&session),
+                };
+                if let Some(c) = target {
+                    let _ = c.tx.send(*inner);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Machine id a client request is addressed to.
+fn target_machine(msg: &Message) -> Option<&str> {
+    match msg {
+        Message::Subscribe(s) => Some(&s.machine),
+        Message::Unsubscribe(r) => Some(&r.machine),
+        Message::Routed { machine, .. } => Some(machine),
+        Message::Launch(l) => Some(&l.machine),
+        Message::ListDir(l) => Some(&l.machine),
+        _ => None,
+    }
+}
+
+fn local_info() -> MachineInfo {
+    let label = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| LOCAL_MACHINE.to_owned());
+    MachineInfo { id: LOCAL_MACHINE.to_owned(), label, online: true, error: None }
 }
 
 async fn serve(stream: ipc::BoxStream) -> Result<()> {
@@ -136,11 +258,8 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
         Some(Message::Hello(h)) => h,
         _ => bail!("expected hello"),
     };
-    if hello.protocol_version != PROTOCOL_VERSION {
-        let msg = format!(
-            "protocol mismatch: daemon {PROTOCOL_VERSION}, client {}",
-            hello.protocol_version
-        );
+    if hello.protocol_version != DAEMON_PROTOCOL_VERSION {
+        let msg = format!("protocol mismatch: daemon {DAEMON_PROTOCOL_VERSION}, client {}", hello.protocol_version);
         write_message(&mut wr, &Message::Error(msg.clone())).await?;
         bail!(msg);
     }
@@ -154,39 +273,41 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
         }
     });
 
+    // Remote machines, one relay task per machine for this client.
+    let entries: Vec<MachineEntry> = if hello.federate {
+        machine::load().unwrap_or_default().into_iter().filter(|m| m.ssh.is_some()).collect()
+    } else {
+        Vec::new()
+    };
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<MachineInfo>();
+    let mut machines: Vec<MachineInfo> = vec![local_info()];
+    let mut remotes: HashMap<String, Conn> = HashMap::new();
+    for e in entries {
+        machines.push(MachineInfo { id: e.id.clone(), label: e.label.clone(), online: false, error: None });
+        let (tx, rx) = mpsc::unbounded_channel();
+        let id = e.id.clone();
+        let task = tokio::spawn(remote::run(e, rx, out.clone(), status_tx.clone()));
+        remotes.insert(id, Conn { tx, task });
+    }
+    if hello.federate {
+        let _ = out.send(Message::MachineList(machines.clone()));
+    }
+
+    let mut local = LocalRelay::new(out.clone());
     let mut msgs = spawn_reader(rd);
-    let mut monitors: HashMap<String, Conn> = HashMap::new();
-    // Hosts whose monitor connection ended recently (e.g. incompatible version); retried later.
-    let mut backoff: HashMap<String, tokio::time::Instant> = HashMap::new();
-    let mut subs: HashMap<String, Conn> = HashMap::new();
-    let mut sessions: Vec<SessionMeta> = Vec::new();
-    let mut last_key = String::new();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
 
     let result = loop {
         tokio::select! {
-            _ = tick.tick() => {
-                sessions = session::list().unwrap_or_default();
-                let key = list_key(&sessions);
-                if key != last_key {
-                    last_key = key;
-                    let _ = out.send(Message::SessionList(sessions.clone()));
-                }
-                let now = tokio::time::Instant::now();
-                monitors.retain(|id, c| {
-                    let keep = !c.task.is_finished() && sessions.iter().any(|m| &m.id == id);
-                    if !keep {
-                        backoff.insert(id.clone(), now + Duration::from_secs(30));
-                    }
-                    keep
-                });
-                backoff.retain(|_, until| *until > now);
-                for m in sessions.iter().filter(|m| m.status == SessionStatus::Running) {
-                    if !monitors.contains_key(&m.id) && !backoff.contains_key(&m.id) {
-                        monitors.insert(m.id.clone(), open_host(m, ClientKind::Monitor, 0, 0, out.clone()));
+            _ = tick.tick() => local.refresh(),
+            info = status_rx.recv() => {
+                let Some(info) = info else { continue };
+                if let Some(m) = machines.iter_mut().find(|m| m.id == info.id) {
+                    if *m != info {
+                        *m = info;
+                        let _ = out.send(Message::MachineList(machines.clone()));
                     }
                 }
-                subs.retain(|_, c| !c.task.is_finished());
             }
             msg = msgs.recv() => {
                 let msg = match msg {
@@ -194,64 +315,35 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                     None => break Ok(()),
                     Some(Err(e)) => break Err(e),
                 };
-                match msg {
-                    Message::ListSessions => {
-                        sessions = session::list().unwrap_or_default();
-                        let _ = out.send(Message::SessionList(sessions.clone()));
-                    }
-                    Message::Subscribe(Subscribe { session, kind, cols, rows }) => {
-                        if sessions.iter().all(|m| m.id != session) {
-                            sessions = session::list().unwrap_or_default();
-                        }
-                        match sessions.iter().find(|m| m.id == session) {
-                            Some(meta) => {
-                                let kind = if kind == ClientKind::Event { ClientKind::Hub } else { kind };
-                                subs.insert(session.clone(), open_host(meta, kind, cols, rows, out.clone()));
-                            }
-                            None => {
-                                let _ = out.send(Message::Routed {
-                                    session,
-                                    inner: Box::new(Message::Error("unknown session".into())),
-                                });
+                match target_machine(&msg) {
+                    None | Some(LOCAL_MACHINE) => {
+                        if matches!(msg, Message::ListSessions) {
+                            for r in remotes.values() {
+                                let _ = r.tx.send(Message::ListSessions);
                             }
                         }
+                        local.handle(msg);
                     }
-                    Message::Unsubscribe(session) => {
-                        subs.remove(&session);
-                    }
-                    Message::Launch(req) => {
-                        let reply = match crate::launch::launch_detached(&req) {
-                            Ok(id) => Message::Launched(id),
-                            Err(e) => Message::Error(format!("launch failed: {e:#}")),
-                        };
-                        let _ = out.send(reply);
-                    }
-                    Message::ListDir(path) => {
-                        let reply = match crate::config::list_dir(&path) {
-                            Ok(l) => Message::DirList(l),
-                            Err(e) => Message::Error(format!("{e:#}")),
-                        };
-                        let _ = out.send(reply);
-                    }
-                    Message::Routed { session, inner } => {
-                        // Approvals go through the monitor so they work without a subscription;
-                        // so does input for sessions that have no open tile (Queen).
-                        let target = match *inner {
-                            Message::Approve(_) => monitors.get(&session),
-                            Message::Input(_) => subs.get(&session).or_else(|| monitors.get(&session)),
-                            _ => subs.get(&session),
-                        };
-                        if let Some(c) = target {
-                            let _ = c.tx.send(*inner);
+                    Some(id) => match remotes.get(id) {
+                        Some(r) => {
+                            let _ = r.tx.send(msg);
                         }
-                    }
-                    _ => {}
+                        None => {
+                            let error = format!("unknown machine '{id}'");
+                            let reply = match msg {
+                                Message::Launch(l) => Message::RequestFailed(RequestFailed { id: l.id, error }),
+                                Message::ListDir(l) => Message::RequestFailed(RequestFailed { id: l.id, error }),
+                                _ => continue,
+                            };
+                            let _ = out.send(reply);
+                        }
+                    },
                 }
             }
         }
     };
-    drop(monitors);
-    drop(subs);
+    drop(local);
+    drop(remotes);
     writer.abort();
     result
 }

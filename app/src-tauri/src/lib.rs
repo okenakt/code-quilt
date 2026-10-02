@@ -3,7 +3,8 @@
 mod hub;
 mod queen;
 
-use hub::{Hub, MachineInfo};
+use cq_proto::MachineInfo;
+use hub::Hub;
 use queen::Queen;
 use std::sync::Arc;
 use tauri::{Manager, State};
@@ -25,8 +26,8 @@ fn replay(hub: State<'_, HubState>) -> hub::Replay {
 }
 
 #[tauri::command]
-fn list_sessions(hub: State<'_, HubState>, machine: String) -> Result<(), String> {
-    hub.request(&machine, cq_proto::Message::ListSessions).map_err(err)
+fn list_sessions(hub: State<'_, HubState>) -> Result<(), String> {
+    hub.list_sessions().map_err(err)
 }
 
 #[tauri::command]
@@ -84,9 +85,10 @@ async fn launch(
     resume: Option<String>,
     args: Vec<String>,
 ) -> Result<String, String> {
-    let req = cq_proto::Launch { agent: "claude".into(), cwd, args, resume, cols: 120, rows: 36 };
-    match hub.call(&machine, cq_proto::Message::Launch(req)).await.map_err(err)? {
-        cq_proto::Message::Launched(id) => Ok(id),
+    let id = hub.next_id();
+    let req = cq_proto::Launch { id, machine, agent: "claude".into(), cwd, args, resume, cols: 120, rows: 36 };
+    match hub.call(id, cq_proto::Message::Launch(req)).await.map_err(err)? {
+        cq_proto::Message::Launched(l) => Ok(l.session),
         other => Err(format!("unexpected reply {other:?}")),
     }
 }
@@ -97,7 +99,8 @@ async fn list_dir(
     machine: String,
     path: String,
 ) -> Result<cq_proto::DirList, String> {
-    match hub.call(&machine, cq_proto::Message::ListDir(path)).await.map_err(err)? {
+    let id = hub.next_id();
+    match hub.call(id, cq_proto::Message::ListDir(cq_proto::ListDir { id, machine, path })).await.map_err(err)? {
         cq_proto::Message::DirList(l) => Ok(l),
         other => Err(format!("unexpected reply {other:?}")),
     }

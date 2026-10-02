@@ -19,7 +19,8 @@ fn file() -> Result<std::path::PathBuf> {
     Ok(paths::root()?.join("machines.json"))
 }
 
-fn load() -> Result<Vec<MachineEntry>> {
+/// Loads the registered machines.
+pub fn load() -> Result<Vec<MachineEntry>> {
     match std::fs::read(file()?) {
         Ok(d) => Ok(serde_json::from_slice(&d).context("invalid machines.json")?),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),

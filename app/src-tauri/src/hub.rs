@@ -1,49 +1,29 @@
-//! Connections from the dashboard to each machine's daemon, relayed to the frontend as events.
+//! Connection from the dashboard to the local daemon, which relays every machine. Messages are
+//! forwarded to the frontend as events; a small cache lets a reloaded frontend rebuild its state.
 
 use anyhow::{Context, Result, bail};
 use base64::Engine;
 use cq_proto::local::{self, BoxStream};
-use cq_proto::{ClientKind, Hello, Message, PROTOCOL_VERSION, Subscribe, spawn_reader, write_message};
-use serde::{Deserialize, Serialize};
+use cq_proto::{
+    AgentEvent, ClientKind, DAEMON_PROTOCOL_VERSION, Hello, MachineInfo, Message, SessionMeta, SessionRef,
+    Subscribe, spawn_reader, write_message,
+};
+use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
-use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
-/// Id of the machine the dashboard runs on.
-pub const LOCAL: &str = "local";
-
-/// A machine entry from `~/.codequilt/machines.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MachineConfig {
-    pub id: String,
-    pub label: String,
-    /// Host alias passed to `ssh`; `None` for the local machine.
-    #[serde(default)]
-    pub ssh: Option<String>,
-    /// Path of `cq` on the remote machine (default: `cq` on PATH).
-    #[serde(default)]
-    pub cq_path: Option<String>,
-}
-
-/// Machine state reported to the frontend.
-#[derive(Debug, Clone, Serialize)]
-pub struct MachineInfo {
-    pub id: String,
-    pub label: String,
-    pub online: bool,
-    pub error: Option<String>,
-}
+/// Events kept per session for frontend reloads.
+const CACHE_EVENTS: usize = 300;
 
 #[derive(Clone, Serialize)]
 struct SessionsPayload<'a> {
     machine: &'a str,
-    sessions: &'a [cq_proto::SessionMeta],
+    sessions: &'a [SessionMeta],
 }
 
 #[derive(Clone, Serialize)]
@@ -61,32 +41,19 @@ struct DataPayload<'a> {
 struct EventPayload<'a> {
     machine: &'a str,
     session: &'a str,
-    event: &'a cq_proto::AgentEvent,
+    event: &'a AgentEvent,
 }
-
-type Pending = Arc<Mutex<VecDeque<oneshot::Sender<Result<Message, String>>>>>;
-
-struct Machine {
-    /// Waiters for daemon replies to Launch / ListDir, answered in order.
-    pending: Pending,
-    info: Arc<Mutex<MachineInfo>>,
-    tx: UnboundedSender<Message>,
-    /// Active subscriptions (session -> size), re-established after reconnects.
-    subs: Arc<Mutex<HashMap<String, (u16, u16)>>>,
-}
-
-/// Events kept per session for frontend reloads.
-const CACHE_EVENTS: usize = 300;
 
 /// What the backend has received so far, so a reloaded frontend can rebuild its state.
 #[derive(Default)]
 struct Cache {
-    sessions: HashMap<String, Vec<cq_proto::SessionMeta>>,
-    events: HashMap<(String, String), VecDeque<cq_proto::AgentEvent>>,
+    machines: Vec<MachineInfo>,
+    sessions: HashMap<String, Vec<SessionMeta>>,
+    events: HashMap<(String, String), VecDeque<AgentEvent>>,
 }
 
 /// Kind of state event that only matters in its latest form.
-fn latest_slot(ev: &cq_proto::AgentEvent) -> Option<&str> {
+fn latest_slot(ev: &AgentEvent) -> Option<&str> {
     match ev.source.as_str() {
         "statusline" => Some("statusline"),
         "cq" => ev.payload.get("type").and_then(|t| t.as_str()).filter(|t| matches!(*t, "account" | "tokens")),
@@ -97,14 +64,14 @@ fn latest_slot(ev: &cq_proto::AgentEvent) -> Option<&str> {
 #[derive(Serialize)]
 pub struct ReplaySessions {
     machine: String,
-    sessions: Vec<cq_proto::SessionMeta>,
+    sessions: Vec<SessionMeta>,
 }
 
 #[derive(Serialize)]
 pub struct ReplayEvent {
     machine: String,
     session: String,
-    event: cq_proto::AgentEvent,
+    event: AgentEvent,
 }
 
 /// Cached sessions and events for a frontend that (re)starts after the backend connected.
@@ -114,87 +81,80 @@ pub struct Replay {
     events: Vec<ReplayEvent>,
 }
 
-/// Owns one connection task per machine.
+type Pending = Mutex<HashMap<u64, oneshot::Sender<Result<Message, String>>>>;
+
+/// The dashboard's single connection to the local daemon.
 pub struct Hub {
     app: AppHandle,
-    machines: Mutex<HashMap<String, Machine>>,
+    tx: UnboundedSender<Message>,
+    online: Mutex<(bool, Option<String>)>,
+    /// Active subscriptions with their sizes, re-established after reconnects.
+    subs: Mutex<HashMap<SessionRef, (u16, u16)>>,
+    pending: Pending,
+    next_id: AtomicU64,
     cache: Mutex<Cache>,
 }
 
 impl Hub {
-    /// Creates the hub and connects to the local machine and every configured remote.
+    /// Creates the hub and keeps it connected to the local daemon.
     pub fn start(app: AppHandle) -> Arc<Self> {
+        let (tx, rx) = mpsc::unbounded_channel();
         let hub = Arc::new(Self {
             app,
-            machines: Mutex::new(HashMap::new()),
+            tx,
+            online: Mutex::new((false, None)),
+            subs: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
+            next_id: AtomicU64::new(1),
             cache: Mutex::new(Cache::default()),
         });
-        let mut configs = vec![MachineConfig {
-            id: LOCAL.into(),
-            label: "local".into(),
-            ssh: None,
-            cq_path: None,
-        }];
-        configs.extend(load_machine_configs());
-        for cfg in configs {
-            hub.add_machine(cfg);
-        }
+        let h = hub.clone();
+        tauri::async_runtime::spawn(async move { h.connection_loop(rx).await });
         hub
     }
 
-    fn add_machine(self: &Arc<Self>, cfg: MachineConfig) {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let info = Arc::new(Mutex::new(MachineInfo {
-            id: cfg.id.clone(),
-            label: cfg.label.clone(),
-            online: false,
-            error: None,
-        }));
-        let subs = Arc::new(Mutex::new(HashMap::new()));
-        let pending: Pending = Arc::default();
-        self.machines
-            .lock()
-            .unwrap()
-            .insert(cfg.id.clone(), Machine { info: info.clone(), tx, subs: subs.clone(), pending: pending.clone() });
-        let hub = self.clone();
-        tauri::async_runtime::spawn(async move { hub.machine_loop(cfg, info, subs, pending, rx).await });
-    }
-
-    /// Returns all machines and their connection state.
+    /// Returns all machines and their reachability. While the daemon itself is unreachable this
+    /// reports a single offline local machine.
     pub fn machines(&self) -> Vec<MachineInfo> {
-        let mut v: Vec<_> =
-            self.machines.lock().unwrap().values().map(|m| m.info.lock().unwrap().clone()).collect();
-        v.sort_by(|a, b| (a.id != LOCAL, &a.label).cmp(&(b.id != LOCAL, &b.label)));
-        v
+        let (online, error) = self.online.lock().unwrap().clone();
+        let cached = self.cache.lock().unwrap().machines.clone();
+        if online && !cached.is_empty() {
+            return cached;
+        }
+        vec![MachineInfo { id: cq_proto::LOCAL_MACHINE.into(), label: "local".into(), online: false, error }]
     }
 
-    fn send(&self, machine: &str, msg: Message) -> Result<()> {
-        let machines = self.machines.lock().unwrap();
-        let m = machines.get(machine).context("unknown machine")?;
-        m.tx.send(msg).ok().context("machine connection closed")
+    fn send(&self, msg: Message) -> Result<()> {
+        self.tx.send(msg).ok().context("daemon connection closed")
     }
 
     fn routed(&self, machine: &str, session: &str, inner: Message) -> Result<()> {
-        self.send(machine, Message::Routed { session: session.into(), inner: Box::new(inner) })
+        self.send(Message::Routed { machine: machine.into(), session: session.into(), inner: Box::new(inner) })
+    }
+
+    /// Asks the daemon to resend all session lists.
+    pub fn list_sessions(&self) -> Result<()> {
+        self.send(Message::ListSessions)
     }
 
     /// Opens a terminal relay for a session.
     pub fn subscribe(&self, machine: &str, session: &str, cols: u16, rows: u16) -> Result<()> {
-        if let Some(m) = self.machines.lock().unwrap().get(machine) {
-            m.subs.lock().unwrap().insert(session.into(), (cols, rows));
-        }
-        self.send(
-            machine,
-            Message::Subscribe(Subscribe { session: session.into(), kind: ClientKind::Hub, cols, rows }),
-        )
+        let r = SessionRef { machine: machine.into(), session: session.into() };
+        self.subs.lock().unwrap().insert(r, (cols, rows));
+        self.send(Message::Subscribe(Subscribe {
+            machine: machine.into(),
+            session: session.into(),
+            kind: ClientKind::Hub,
+            cols,
+            rows,
+        }))
     }
 
     /// Closes a terminal relay.
     pub fn unsubscribe(&self, machine: &str, session: &str) -> Result<()> {
-        if let Some(m) = self.machines.lock().unwrap().get(machine) {
-            m.subs.lock().unwrap().remove(session);
-        }
-        self.send(machine, Message::Unsubscribe(session.into()))
+        let r = SessionRef { machine: machine.into(), session: session.into() };
+        self.subs.lock().unwrap().remove(&r);
+        self.send(Message::Unsubscribe(r))
     }
 
     /// Sends terminal input.
@@ -204,10 +164,9 @@ impl Hub {
 
     /// Reports a tile resize.
     pub fn resize(&self, machine: &str, session: &str, cols: u16, rows: u16) -> Result<()> {
-        if let Some(m) = self.machines.lock().unwrap().get(machine) {
-            if let Some(s) = m.subs.lock().unwrap().get_mut(session) {
-                *s = (cols, rows);
-            }
+        let r = SessionRef { machine: machine.into(), session: session.into() };
+        if let Some(s) = self.subs.lock().unwrap().get_mut(&r) {
+            *s = (cols, rows);
         }
         self.routed(machine, session, Message::Resize(cq_proto::Size { cols, rows }))
     }
@@ -217,106 +176,26 @@ impl Hub {
         self.routed(machine, session, Message::Approve(cq_proto::Approve { option }))
     }
 
-    /// Sends an arbitrary daemon request.
-    pub fn request(&self, machine: &str, msg: Message) -> Result<()> {
-        self.send(machine, msg)
+    /// Allocates a request id.
+    pub fn next_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Sends a request that the daemon answers with exactly one reply (or an error).
-    pub async fn call(&self, machine: &str, msg: Message) -> Result<Message> {
+    /// Sends a request carrying `id` and waits for its reply.
+    pub async fn call(&self, id: u64, msg: Message) -> Result<Message> {
         let (tx, rx) = oneshot::channel();
-        {
-            let machines = self.machines.lock().unwrap();
-            let m = machines.get(machine).context("unknown machine")?;
-            m.pending.lock().unwrap().push_back(tx);
-            m.tx.send(msg).ok().context("machine connection closed")?;
+        self.pending.lock().unwrap().insert(id, tx);
+        if let Err(e) = self.send(msg) {
+            self.pending.lock().unwrap().remove(&id);
+            return Err(e);
         }
-        match tokio::time::timeout(Duration::from_secs(15), rx).await {
+        let r = tokio::time::timeout(Duration::from_secs(20), rx).await;
+        self.pending.lock().unwrap().remove(&id);
+        match r {
             Ok(Ok(Ok(m))) => Ok(m),
             Ok(Ok(Err(e))) => bail!(e),
             Ok(Err(_)) => bail!("connection lost"),
             Err(_) => bail!("timed out"),
-        }
-    }
-
-    fn set_status(&self, info: &Mutex<MachineInfo>, online: bool, error: Option<String>) {
-        {
-            let mut i = info.lock().unwrap();
-            if i.online == online && i.error == error {
-                return;
-            }
-            i.online = online;
-            i.error = error;
-        }
-        let _ = self.app.emit("machines", self.machines());
-    }
-
-    async fn machine_loop(
-        self: Arc<Self>,
-        cfg: MachineConfig,
-        info: Arc<Mutex<MachineInfo>>,
-        subs: Arc<Mutex<HashMap<String, (u16, u16)>>>,
-        pending: Pending,
-        mut rx: UnboundedReceiver<Message>,
-    ) {
-        loop {
-            let err = match open_transport(&cfg).await {
-                Ok(stream) => {
-                    // Hosts replay their history to the new connection; drop the stale copy.
-                    self.cache.lock().unwrap().events.retain(|(m, _), _| m != &cfg.id);
-                    self.set_status(&info, true, None);
-                    let r = self.run_connection(&cfg.id, stream, &subs, &pending, &mut rx).await;
-                    // Requests in flight will never be answered on this connection.
-                    pending.lock().unwrap().clear();
-                    match r {
-                        Ok(()) => "disconnected".to_owned(),
-                        Err(e) => format!("{e:#}"),
-                    }
-                }
-                Err(e) => format!("{e:#}"),
-            };
-            self.set_status(&info, false, Some(err));
-            // Drop commands issued while offline; subscriptions are replayed on reconnect.
-            let retry = tokio::time::sleep(Duration::from_secs(3));
-            tokio::pin!(retry);
-            loop {
-                tokio::select! {
-                    _ = &mut retry => break,
-                    m = rx.recv() => if m.is_none() { return },
-                }
-            }
-        }
-    }
-
-    async fn run_connection(
-        &self,
-        machine: &str,
-        stream: BoxStream,
-        subs: &Mutex<HashMap<String, (u16, u16)>>,
-        pending: &Pending,
-        rx: &mut UnboundedReceiver<Message>,
-    ) -> Result<()> {
-        let (rd, mut wr) = tokio::io::split(stream);
-        let hello = Hello { protocol_version: PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0 };
-        write_message(&mut wr, &Message::Hello(hello)).await?;
-        write_message(&mut wr, &Message::ListSessions).await?;
-        let resubscribe: Vec<_> = subs.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
-        for (session, (cols, rows)) in resubscribe {
-            let sub = Subscribe { session, kind: ClientKind::Hub, cols, rows };
-            write_message(&mut wr, &Message::Subscribe(sub)).await?;
-        }
-        let mut msgs = spawn_reader(rd);
-        loop {
-            tokio::select! {
-                msg = msgs.recv() => {
-                    let Some(msg) = msg else { return Ok(()) };
-                    self.dispatch(machine, msg?, pending)?;
-                }
-                cmd = rx.recv() => match cmd {
-                    Some(m) => write_message(&mut wr, &m).await?,
-                    None => return Ok(()),
-                },
-            }
         }
     }
 
@@ -339,7 +218,93 @@ impl Hub {
         }
     }
 
-    fn cache_event(&self, machine: &str, session: &str, ev: &cq_proto::AgentEvent) {
+    fn set_online(&self, online: bool, error: Option<String>) {
+        *self.online.lock().unwrap() = (online, error);
+        let _ = self.app.emit("machines", self.machines());
+    }
+
+    async fn connection_loop(self: Arc<Self>, mut rx: UnboundedReceiver<Message>) {
+        loop {
+            let err = match open_daemon().await {
+                Ok(stream) => {
+                    // Hosts replay their history to the new connection; drop the stale copy.
+                    self.cache.lock().unwrap().events.clear();
+                    match self.run_connection(stream, &mut rx).await {
+                        Ok(()) => "disconnected".to_owned(),
+                        Err(e) => format!("{e:#}"),
+                    }
+                }
+                Err(e) => format!("{e:#}"),
+            };
+            for (_, w) in self.pending.lock().unwrap().drain() {
+                let _ = w.send(Err("connection lost".into()));
+            }
+            self.set_online(false, Some(err));
+            // Drop commands issued while offline; subscriptions are replayed on reconnect.
+            let retry = tokio::time::sleep(Duration::from_secs(3));
+            tokio::pin!(retry);
+            loop {
+                tokio::select! {
+                    _ = &mut retry => break,
+                    m = rx.recv() => if m.is_none() { return },
+                }
+            }
+        }
+    }
+
+    async fn run_connection(&self, stream: BoxStream, rx: &mut UnboundedReceiver<Message>) -> Result<()> {
+        let (rd, mut wr) = tokio::io::split(stream);
+        let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: true };
+        write_message(&mut wr, &Message::Hello(hello)).await?;
+        write_message(&mut wr, &Message::ListSessions).await?;
+        let resubscribe: Vec<_> = self.subs.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();
+        for (r, (cols, rows)) in resubscribe {
+            let sub = Subscribe { machine: r.machine, session: r.session, kind: ClientKind::Hub, cols, rows };
+            write_message(&mut wr, &Message::Subscribe(sub)).await?;
+        }
+        let mut msgs = spawn_reader(rd);
+        loop {
+            tokio::select! {
+                msg = msgs.recv() => {
+                    let Some(msg) = msg else { return Ok(()) };
+                    self.dispatch(msg?)?;
+                }
+                cmd = rx.recv() => match cmd {
+                    Some(m) => write_message(&mut wr, &m).await?,
+                    None => return Ok(()),
+                },
+            }
+        }
+    }
+
+    fn reply(&self, id: u64, r: Result<Message, String>) {
+        if let Some(w) = self.pending.lock().unwrap().remove(&id) {
+            let _ = w.send(r);
+        }
+    }
+
+    fn dispatch(&self, msg: Message) -> Result<()> {
+        match msg {
+            Message::MachineList(list) => {
+                self.cache.lock().unwrap().machines = list;
+                self.set_online(true, None);
+            }
+            Message::SessionList(l) => {
+                self.cache.lock().unwrap().sessions.insert(l.machine.clone(), l.sessions.clone());
+                let _ = self.app.emit("sessions", SessionsPayload { machine: &l.machine, sessions: &l.sessions });
+            }
+            Message::Routed { machine, session, inner } => self.dispatch_session(&machine, &session, *inner),
+            Message::Launched(l) => self.reply(l.id, Ok(Message::Launched(l))),
+            Message::DirList(l) => self.reply(l.id, Ok(Message::DirList(l))),
+            Message::RequestFailed(f) => self.reply(f.id, Err(f.error)),
+            // An unsolicited error (e.g. protocol mismatch) ends the connection.
+            Message::Error(e) => bail!("daemon error: {e}"),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn cache_event(&self, machine: &str, session: &str, ev: &AgentEvent) {
         let mut cache = self.cache.lock().unwrap();
         let q = cache.events.entry((machine.to_owned(), session.to_owned())).or_default();
         if let Some(slot) = latest_slot(ev) {
@@ -349,32 +314,6 @@ impl Hub {
             q.pop_front();
         }
         q.push_back(ev.clone());
-    }
-
-    fn dispatch(&self, machine: &str, msg: Message, pending: &Pending) -> Result<()> {
-        match msg {
-            Message::SessionList(sessions) => {
-                self.cache.lock().unwrap().sessions.insert(machine.to_owned(), sessions.clone());
-                let _ = self.app.emit("sessions", SessionsPayload { machine, sessions: &sessions });
-            }
-            Message::Routed { session, inner } => self.dispatch_session(machine, &session, *inner),
-            Message::Launched(_) | Message::DirList(_) => {
-                if let Some(w) = pending.lock().unwrap().pop_front() {
-                    let _ = w.send(Ok(msg));
-                }
-            }
-            Message::Error(e) => match pending.lock().unwrap().pop_front() {
-                Some(w) => {
-                    let _ = w.send(Err(e));
-                }
-                // An unsolicited error (e.g. protocol mismatch) ends the connection.
-                None => bail!("daemon error: {e}"),
-            },
-            other => {
-                let _ = self.app.emit("daemon-message", format!("{other:?}"));
-            }
-        }
-        Ok(())
     }
 
     fn dispatch_session(&self, machine: &str, session: &str, msg: Message) {
@@ -396,16 +335,6 @@ impl Hub {
             _ => {}
         }
     }
-}
-
-fn load_machine_configs() -> Vec<MachineConfig> {
-    let Ok(root) = local::state_root() else { return Vec::new() };
-    let Ok(data) = std::fs::read(root.join("machines.json")) else { return Vec::new() };
-    serde_json::from_slice::<Vec<MachineConfig>>(&data)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|m| m.id != LOCAL && m.ssh.is_some())
-        .collect()
 }
 
 /// Locates the `cq` binary: `CQ_BIN`, next to this executable, or on PATH.
@@ -446,77 +375,11 @@ fn spawn_daemon() -> Result<()> {
     Ok(())
 }
 
-async fn open_transport(cfg: &MachineConfig) -> Result<BoxStream> {
-    match &cfg.ssh {
-        None => {
-            let endpoint = local::daemon_endpoint()?;
-            if let Ok(s) = local::connect(&endpoint, Duration::ZERO).await {
-                return Ok(s);
-            }
-            spawn_daemon()?;
-            local::connect(&endpoint, Duration::from_secs(5)).await
-        }
-        Some(host) => {
-            let cq = cfg.cq_path.as_deref().unwrap_or("cq");
-            // No port is opened on the remote side; the user's ssh key authentication applies.
-            let args = ["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", host, cq, "bridge"];
-            open_ssh(args.into_iter()).await
-        }
+async fn open_daemon() -> Result<BoxStream> {
+    let endpoint = local::daemon_endpoint()?;
+    if let Ok(s) = local::connect(&endpoint, Duration::ZERO).await {
+        return Ok(s);
     }
-}
-
-/// Child process stdio presented as one stream; the child is killed when dropped.
-struct ChildStream {
-    io: tokio::io::Join<tokio::process::ChildStdout, tokio::process::ChildStdin>,
-    _child: tokio::process::Child,
-}
-
-impl AsyncRead for ChildStream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.io).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for ChildStream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.io).poll_write(cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.io).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.io).poll_shutdown(cx)
-    }
-}
-
-/// Runs `ssh ... cq bridge` and uses its stdio as the daemon connection.
-async fn open_ssh<'a>(args: impl Iterator<Item = &'a str>) -> Result<BoxStream> {
-    let mut cmd = tokio::process::Command::new("ssh");
-    cmd.args(args)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    let mut child = cmd.spawn().context("spawn ssh")?;
-    let stdout = child.stdout.take().context("child stdout")?;
-    let stdin = child.stdin.take().context("child stdin")?;
-    Ok(Box::new(ChildStream { io: tokio::io::join(stdout, stdin), _child: child }))
+    spawn_daemon()?;
+    local::connect(&endpoint, Duration::from_secs(5)).await
 }

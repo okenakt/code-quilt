@@ -55,7 +55,7 @@ pub fn list_dir(path: &str) -> Result<cq_proto::DirList> {
     let roots: Vec<String> =
         allowed_roots().iter().map(|r| display_path(r).to_string_lossy().into_owned()).collect();
     if path.is_empty() {
-        return Ok(cq_proto::DirList { path: String::new(), parent: None, entries: roots.clone(), roots });
+        return Ok(cq_proto::DirList { id: 0, path: String::new(), parent: None, entries: roots.clone(), roots });
     }
     let dir = check_allowed(path)?;
     let mut entries: Vec<String> = std::fs::read_dir(&dir)?
@@ -70,5 +70,5 @@ pub fn list_dir(path: &str) -> Result<cq_proto::DirList> {
         .parent()
         .filter(|p| check_allowed(&p.to_string_lossy()).is_ok())
         .map(|p| p.to_string_lossy().into_owned());
-    Ok(cq_proto::DirList { path: dir.to_string_lossy().into_owned(), parent, entries, roots })
+    Ok(cq_proto::DirList { id: 0, path: dir.to_string_lossy().into_owned(), parent, entries, roots })
 }

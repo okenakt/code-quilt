@@ -73,7 +73,7 @@ export const App = () => {
       replay.events
         .sort((a, b) => a.event.received_at_ms - b.event.received_at_ms)
         .forEach((r) => onAgentEvent(r.machine, r.session, r.event));
-      ms.forEach((m) => void refreshSessions(m.id).catch(() => undefined));
+      void refreshSessions().catch(() => undefined);
     });
     return () => {
       cancelled = true;
