@@ -126,17 +126,21 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 
 **経緯**：portable-ptyはConPTYを `PSEUDOCONSOLE_INHERIT_CURSOR` 付きで作るため、起動時のCPRに誰も答えないと出力が止まる。ハブから端末なしで起動したセッションでは答える端末がいない。他の問い合わせ（DA、kittyの `?u`、OSC 11など）は接続中の端末が答えるため、複数端末の同時接続時に応答が重複しうる（既知の制約）。
 
-### 16.4 入力：VT素通しを既定、Shift+EnterはCSI u
+### 16.4 入力：VT入力モード＋Shift+EnterのCSI u変換
 
-**結論**：attachはコンソールをVT入力モードにしてReadConsoleWで読み、そのまま流す（`CQ_INPUT_MODE=win32` でwin32-input-modeに切り替え可）。xterm.jsのタイルではShift+Enterを `ESC[13;2u` として送る。
+**結論**：attachはコンソールをVT入力モードにし、`ReadConsoleInputW` で読む。VTに変換済みの文字はそのまま流し、Shift/Ctrl/Altの状態を自前で追跡して、Shiftだけが押されたEnter（ブラケットペースト外）を `ESC[13;2u` に置き換える。xterm.jsのタイルでも同じシーケンスを送る。
 
-**経緯**：M0で、WezTerm経由のVTモードでShift+Enter・ブラケットペースト・Esc・日本語IMEが通ることを確認した。win32-input-modeで送ったShift+Enterは通常のEnterとして扱われた。表示崩れはコンソール出力モードで `ENABLE_WRAP_AT_EOL_OUTPUT` を落としていたことが原因で、修正済み。PowerShell（conhost / Windows Terminal）での確認は未実施。
+**経緯**：
+- WezTermはclaudeがkittyキーボードを有効にするとShift+Enterを自分でCSI uにするため素通しで通ったが、Windows Terminal / conhostではVT変換でShiftが失われ `\r` になる。素のclaudeもPowerShellではShift+Enterで改行できない。
+- win32-input-modeで再エンコードする案も試したが、claudeはShift付きEnterを改行として扱わず、ペーストがキーイベント列になってブラケットペーストが失われたため削除した。
+- VT入力モードでも `ReadConsoleInputW` なら修飾キー自体のレコードが届くことを確認し、この方式にした。cq越しのclaudeは素のclaudeよりShift+Enterが効く。
+- 表示崩れはコンソール出力モードで `ENABLE_WRAP_AT_EOL_OUTPUT` を落としていたことが原因で、修正済み。
 
-### 16.5 デタッチキー：Ctrl+\（仮）
+### 16.5 デタッチキー：Ctrl+\
 
-**結論**：0x1c（Ctrl+\）でデタッチする。
+**結論**：Ctrl+\でデタッチする。`0x1c` に加え、modifyOtherKeys形式の `ESC[27;5;92~` とkitty形式の `ESC[92;5u` も検出する。
 
-**経緯**：JIS配列ではCtrl+\が0x1cにならない可能性がある。`CQ_TRACE=1` で入力バイト列を `~/.codequilt/logs/input-trace.log` に記録できるので、実機で確認して必要なら変える。
+**経緯**：claudeがmodifyOtherKeysを有効にするため、端末はCtrl+\を `0x1c` ではなく `ESC[27;5;92~` で送っていた（`CQ_TRACE=1` の入力トレースで判明）。
 
 ### 16.6 セッション一覧：SQLiteは後回し
 
@@ -174,11 +178,11 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 
 **経緯**：design.mdでは `~/.claude` 配下としていたが、既定の場所はホーム直下だった。
 
-### 16.12 マシンの接続方法：sshに加えて任意コマンド
+### 16.12 マシンの接続方法：sshのみ
 
-**結論**：`~/.codequilt/machines.json` の各エントリで `ssh`（`ssh -T -o BatchMode=yes <host> cq bridge`）か、`command`（例 `["wsl", "cq", "bridge"]`）を指定できる。`cq machine add` は `~/.ssh/config` のホストを候補に出す。
+**結論**：`~/.codequilt/machines.json` の各エントリは `ssh`（`ssh -T -o BatchMode=yes <host> cq bridge`）だけを持つ。`cq machine add` は `~/.ssh/config` のホストを候補に出す。
 
-**経緯**：WSLやコンテナも同じ仕組みで扱える。ローカルで `cq bridge` を起動するループバック構成で、sshと同じstdio経路を検証した（実際のsshは未検証）。
+**経緯**：一時的に任意コマンドで接続する口を設けたが、最小構成を保つため削除した。WSLは「仮想のリモートLinux」としてsshで扱い、CodeQuiltにWSLの知識は持たせない。
 
 ### 16.13 新規起動の許可ルート（仮）
 
