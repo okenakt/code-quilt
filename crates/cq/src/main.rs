@@ -86,6 +86,9 @@ enum Cmd {
         /// Limit to sessions with a tag or on a machine: `tag:NAME` or `machine:ID` (repeatable).
         #[arg(long)]
         scope: Vec<String>,
+        /// Also act as a Claude Code channel that orchestrators can push messages into.
+        #[arg(long)]
+        channel: bool,
     },
     /// Run the machine daemon that relays sessions to dashboards.
     Daemon,
@@ -239,8 +242,8 @@ async fn run(cmd: Cmd) -> Result<i32> {
             cli::usage(local, json).await?;
             Ok(0)
         }
-        Cmd::Mcp { scope } => {
-            mcp::run(mcp::Scope::parse(&scope)?).await?;
+        Cmd::Mcp { scope, channel } => {
+            mcp::run(mcp::Scope::parse(&scope)?, channel).await?;
             Ok(0)
         }
         Cmd::Daemon => {

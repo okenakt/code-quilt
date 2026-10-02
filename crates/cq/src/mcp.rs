@@ -158,6 +158,8 @@ struct Server {
     model: Arc<Mutex<Model>>,
     tx: mpsc::UnboundedSender<Message>,
     scope: Scope,
+    /// Declare the Claude Code channel capability.
+    channel: bool,
     /// The session this server runs inside (the orchestrator itself), if any.
     own: Option<String>,
 }
@@ -305,8 +307,18 @@ fn tools() -> Value {
     ])
 }
 
-/// Keeps the model in sync with the daemon and forwards outgoing messages.
-async fn daemon_loop(model: Arc<Mutex<Model>>, mut rx: mpsc::UnboundedReceiver<Message>) {
+/// Name of the desktop command that delivers channel messages to the session `id`.
+pub fn channel_command(id: &str) -> String {
+    format!("channel:{id}")
+}
+
+/// Keeps the model in sync with the daemon and forwards outgoing messages. With `channel`, also
+/// registers the session's channel command and turns its invocations into channel notifications.
+async fn daemon_loop(
+    model: Arc<Mutex<Model>>,
+    mut rx: mpsc::UnboundedReceiver<Message>,
+    channel: Option<(String, mpsc::UnboundedSender<Value>)>,
+) {
     loop {
         let run = async {
             let stream = daemon::connect().await?;
@@ -314,6 +326,10 @@ async fn daemon_loop(model: Arc<Mutex<Model>>, mut rx: mpsc::UnboundedReceiver<M
             let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: true };
             write_message(&mut wr, &Message::Hello(hello)).await?;
             write_message(&mut wr, &Message::ListSessions).await?;
+            if let Some((name, _)) = &channel {
+                let cmd = cq_proto::CommandInfo { name: name.clone(), title: "Deliver a channel message".into(), hold: false };
+                write_message(&mut wr, &Message::RegisterCommand(cmd)).await?;
+            }
             let mut msgs = spawn_reader(rd);
             loop {
                 tokio::select! {
@@ -326,6 +342,19 @@ async fn daemon_loop(model: Arc<Mutex<Model>>, mut rx: mpsc::UnboundedReceiver<M
                             Message::Routed { machine, session, inner } => {
                                 if let Message::Event(ev) = *inner {
                                     m.apply_event(&machine, &session, ev);
+                                }
+                            }
+                            Message::InvokeCommand(inv) => {
+                                if let Some((name, out)) = &channel {
+                                    if &inv.name == name {
+                                        let content = inv.args.get("content").and_then(Value::as_str).unwrap_or_default();
+                                        let meta = inv.args.get("meta").cloned().unwrap_or(json!({}));
+                                        let _ = out.send(json!({
+                                            "jsonrpc": "2.0",
+                                            "method": "notifications/claude/channel",
+                                            "params": { "content": content, "meta": meta },
+                                        }));
+                                    }
                                 }
                             }
                             Message::Error(e) => bail!("daemon: {e}"),
@@ -348,28 +377,42 @@ async fn daemon_loop(model: Arc<Mutex<Model>>, mut rx: mpsc::UnboundedReceiver<M
     }
 }
 
-/// Runs the MCP server on stdin/stdout.
-pub async fn run(scope: Scope) -> Result<()> {
+/// Runs the MCP server on stdin/stdout. With `channel`, the server is also a Claude Code channel:
+/// invoking the desktop command [`channel_command`] for this session pushes a message into it.
+pub async fn run(scope: Scope, channel: bool) -> Result<()> {
+    let own = std::env::var("CQ_SESSION_ID").ok();
+    if channel && own.is_none() {
+        bail!("--channel needs to run inside a CodeQuilt session (CQ_SESSION_ID is not set)");
+    }
+    // One writer owns stdout so replies and notifications never interleave.
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
+    tokio::spawn(async move {
+        let mut stdout = tokio::io::stdout();
+        while let Some(v) = out_rx.recv().await {
+            if stdout.write_all(format!("{v}\n").as_bytes()).await.is_err() || stdout.flush().await.is_err() {
+                break;
+            }
+        }
+    });
+
     let model = Arc::new(Mutex::new(Model::default()));
     let (tx, rx) = mpsc::unbounded_channel();
-    tokio::spawn(daemon_loop(model.clone(), rx));
-    let server = Arc::new(Server { model, tx, scope, own: std::env::var("CQ_SESSION_ID").ok() });
+    let channel_cfg = if channel { own.as_deref().map(|id| (channel_command(id), out_tx.clone())) } else { None };
+    tokio::spawn(daemon_loop(model.clone(), rx, channel_cfg));
+    let server = Arc::new(Server { model, tx, scope, channel, own });
 
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
-    let stdout = Arc::new(tokio::sync::Mutex::new(tokio::io::stdout()));
     while let Some(line) = lines.next_line().await? {
         let Ok(req) = serde_json::from_str::<Value>(&line) else { continue };
         let server = server.clone();
-        let stdout = stdout.clone();
+        let out = out_tx.clone();
         tokio::spawn(async move {
             let Some(id) = req.get("id").cloned() else { return }; // notification
             let reply = match handle(&server, &req).await {
                 Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
                 Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32603, "message": format!("{e:#}") } }),
             };
-            let mut out = stdout.lock().await;
-            let _ = out.write_all(format!("{reply}\n").as_bytes()).await;
-            let _ = out.flush().await;
+            let _ = out.send(reply);
         });
     }
     Ok(())
@@ -380,9 +423,13 @@ async fn handle(server: &Server, req: &Value) -> Result<Value> {
     match req.get("method").and_then(Value::as_str).unwrap_or_default() {
         "initialize" => {
             let version = params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18");
+            let mut capabilities = json!({ "tools": {} });
+            if server.channel {
+                capabilities["experimental"] = json!({ "claude/channel": {} });
+            }
             Ok(json!({
                 "protocolVersion": version,
-                "capabilities": { "tools": {} },
+                "capabilities": capabilities,
                 "serverInfo": { "name": "codequilt", "version": env!("CARGO_PKG_VERSION") },
                 "instructions": "Tools to see and drive the other coding agent sessions managed by CodeQuilt."
             }))

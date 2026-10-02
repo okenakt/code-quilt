@@ -263,3 +263,9 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 **結論**：MCPサーバーはSDK（rmcp）を使わず、stdioの改行区切りJSON-RPCで `initialize` / `tools/list` / `tools/call` だけを自前で実装した。ツールは `list_sessions`、`get_turns`、`send`、`approve` の4つ。サーバーはcqdに `federate` で接続し、イベントから各セッションの状態と直近20ターンを組み立てる。宛先は名前・`machine:id`・id前方一致で指定でき、`--scope tag:NAME` / `machine:ID` で範囲を絞る。自分が動いているセッション（`CQ_SESSION_ID`）は対象外。
 
 **経緯**：必要なメソッドが少なく、R5でChannelsの通知を足すときも同じサーバーを拡張するだけで済む。依存を増やさない方を選んだ。
+
+## 23. Channelsの試作結果
+
+- `cq mcp --channel` は capabilities に `experimental: {"claude/channel": {}}` を宣言し、デスクトップのコマンド `channel:<セッションID>` を登録する。そのコマンドが呼ばれると `notifications/claude/channel`（`content`、`meta`）を送り、Claudeには `<channel source="cq" ...>` として届く。
+- `--channels` で指定できるのは許可リストに載ったチャネルだけで、cqのような独自サーバーは `--dangerously-load-development-channels server:cq` が必要。この場合、起動のたびに「ローカル開発用として使う」の確認が表示される。`--mcp-config` で渡したサーバーについて「その名前のMCPサーバーがない」と起動時に表示されるが、配信には影響しない（Claude Code 2.1.287で確認）。
+- コマンドはデスクトップ単位の仕組みなので、この方式はQueenがローカルマシンで動く場合に限られる。
