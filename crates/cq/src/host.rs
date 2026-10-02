@@ -5,7 +5,7 @@ use crate::agent::{self, PermissionPrompt};
 use crate::{ipc, paths, session, usage};
 use anyhow::{Context, Result, bail};
 use cq_proto::{
-    AgentEvent, ClientKind, Exit, Hello, InputOwner, Message, PROTOCOL_VERSION, SessionMeta,
+    AgentEvent, ClientKind, Exit, Hello, Inject, InputOwner, Message, PROTOCOL_VERSION, SessionMeta, SetMeta,
     SessionStatus, Size, Welcome, read_message, write_message,
 };
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -21,6 +21,8 @@ pub struct HostArgs {
     pub agent: String,
     pub cwd: String,
     pub size: Size,
+    pub name: Option<String>,
+    pub tags: Vec<String>,
     pub command: Vec<String>,
 }
 
@@ -141,6 +143,12 @@ struct State {
     /// Set when output arrived since the last permission prompt scan.
     dirty: bool,
     prompt: Option<PermissionPrompt>,
+    /// The agent finished its turn (Stop / SessionStart) and has not received a prompt since.
+    agent_idle: bool,
+    /// Last time a client typed into the session.
+    last_input: std::time::Instant,
+    /// Text waiting for the session to become idle.
+    injections: VecDeque<Inject>,
 }
 
 impl State {
@@ -203,16 +211,66 @@ impl State {
         }
     }
 
-    fn approve(&mut self, option: u8) -> std::result::Result<(), String> {
+    fn approve(&mut self, option: u8, prompt_id: Option<&str>) -> std::result::Result<(), String> {
         // Answer only a prompt that is visible right now, so a stale dialog cannot approve a
         // different request.
         self.dirty = true;
         self.scan_prompt();
         let Some(p) = &self.prompt else { return Err("no permission prompt on screen".into()) };
+        if prompt_id.is_some_and(|id| id != p.id) {
+            return Err("the prompt on screen has changed".into());
+        }
         if !p.options.iter().any(|o| o.number == option) {
             return Err(format!("option {option} not offered"));
         }
         self.pty_tx.send(vec![b'0' + option]).map_err(|e| e.to_string())
+    }
+
+    fn set_meta(&mut self, m: SetMeta) {
+        if m.clear_name {
+            self.meta.name = None;
+        }
+        if let Some(name) = m.name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) {
+            self.meta.name = Some(name);
+        }
+        for t in m.add_tags {
+            if !self.meta.tags.contains(&t) {
+                self.meta.tags.push(t);
+            }
+        }
+        self.meta.tags.retain(|t| !m.remove_tags.contains(t));
+        let _ = session::save(&self.meta);
+        let payload = serde_json::json!({ "type": "meta", "name": self.meta.name, "tags": self.meta.tags });
+        self.publish(AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload });
+    }
+
+    /// Types the next queued injection when the agent is idle, no prompt or typed text is on
+    /// screen, and nobody has typed for a while.
+    fn try_inject(&mut self) {
+        let Some(next) = self.injections.front() else { return };
+        if !self.agent_idle || self.prompt.is_some() {
+            return;
+        }
+        if self.last_input.elapsed() < Duration::from_millis(next.quiet_ms) {
+            return;
+        }
+        let input_empty = match self.meta.agent.as_str() {
+            "claude" => agent::claude_input_empty(self.parser.screen()),
+            _ => Some(true),
+        };
+        if input_empty != Some(true) {
+            return;
+        }
+        let inj = self.injections.pop_front().expect("checked above");
+        let mut bytes = format!("\x1b[200~{}\x1b[201~", inj.text).into_bytes();
+        if inj.submit {
+            bytes.push(b'\r');
+            self.agent_idle = false;
+        }
+        let ok = self.pty_tx.send(bytes).is_ok();
+        self.last_input = std::time::Instant::now();
+        let payload = serde_json::json!({ "type": "inject_result", "id": inj.id, "ok": ok });
+        self.publish(AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload });
     }
 
     fn apply_size(&mut self, size: Size) {
@@ -290,6 +348,8 @@ pub async fn run(args: HostArgs) -> Result<()> {
         status: SessionStatus::Running,
         exit_code: None,
         agent_session_id: None,
+        name: args.name.clone(),
+        tags: args.tags.clone(),
     };
     session::save(&meta)?;
 
@@ -323,6 +383,9 @@ pub async fn run(args: HostArgs) -> Result<()> {
         transcript: usage::TranscriptTail::default(),
         dirty: false,
         prompt: None,
+        agent_idle: false,
+        last_input: std::time::Instant::now(),
+        injections: VecDeque::new(),
     }));
 
     {
@@ -330,7 +393,9 @@ pub async fn run(args: HostArgs) -> Result<()> {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_millis(400)).await;
-                state.lock().unwrap().scan_prompt();
+                let mut st = state.lock().unwrap();
+                st.scan_prompt();
+                st.try_inject();
             }
         });
     }
@@ -473,11 +538,18 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
                 // Monitors (e.g. Queen through the daemon) may type, but never take the input
                 // right or the PTY size from an attached terminal.
                 Message::Input(bytes) if monitor => {
+                    st.last_input = std::time::Instant::now();
                     let _ = st.pty_tx.send(bytes);
                 }
+                Message::Inject(inj) => {
+                    let payload = serde_json::json!({ "type": "inject_queued", "id": inj.id });
+                    st.injections.push_back(inj);
+                    st.publish(AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload });
+                }
+                Message::SetMeta(m) => st.set_meta(m),
                 Message::Resize(_) if monitor => {}
                 Message::Approve(a) => {
-                    let payload = match st.approve(a.option) {
+                    let payload = match st.approve(a.option, a.prompt_id.as_deref()) {
                         Ok(()) => serde_json::json!({
                             "type": "approval_result", "ok": true, "option": a.option,
                         }),
@@ -494,6 +566,7 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
                 Message::Input(bytes) => {
                     // Last writer wins the input right, and the PTY follows its size.
                     st.set_owner(Some(id));
+                    st.last_input = std::time::Instant::now();
                     let _ = st.pty_tx.send(bytes);
                 }
                 Message::Resize(size) => {
@@ -574,9 +647,13 @@ fn handle_event(state: &Shared, ev: AgentEvent) {
     if let Some(path) = ev.payload.get("transcript_path").and_then(|v| v.as_str()) {
         st.transcript.set_path(path.into());
     }
-    if ev.source == "hook"
-        && ev.payload.get("hook_event_name").and_then(|v| v.as_str()) == Some("SessionStart")
-    {
+    let hook = if ev.source == "hook" { ev.payload.get("hook_event_name").and_then(|v| v.as_str()) } else { None };
+    match hook {
+        Some("SessionStart" | "Stop") => st.agent_idle = true,
+        Some("UserPromptSubmit") => st.agent_idle = false,
+        _ => {}
+    }
+    if hook == Some("SessionStart") {
         st.account_recheck = true;
         if let Some(sid) = ev.payload.get("session_id").and_then(|v| v.as_str()) {
             st.meta.agent_session_id = Some(sid.to_owned());

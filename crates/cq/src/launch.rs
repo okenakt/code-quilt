@@ -63,12 +63,25 @@ pub fn spawn_detached(cmd: &mut Command, log: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Name and tags given to a session at start.
+#[derive(Default)]
+pub struct Labels {
+    pub name: Option<String>,
+    pub tags: Vec<String>,
+}
+
 /// Spawns `cq host` for a new session.
-pub fn spawn_host(id: &str, agent: &str, cwd: &str, size: Size, command: &[String]) -> Result<()> {
+pub fn spawn_host(id: &str, agent: &str, cwd: &str, size: Size, labels: &Labels, command: &[String]) -> Result<()> {
     let mut cmd = Command::new(std::env::current_exe()?);
     cmd.args(["host", "--id", id, "--agent", agent, "--cwd", cwd])
-        .args(["--cols", &size.cols.to_string(), "--rows", &size.rows.to_string(), "--"])
-        .args(command);
+        .args(["--cols", &size.cols.to_string(), "--rows", &size.rows.to_string()]);
+    if let Some(n) = &labels.name {
+        cmd.args(["--name", n]);
+    }
+    for t in &labels.tags {
+        cmd.args(["--tag", t]);
+    }
+    cmd.arg("--").args(command);
     spawn_detached(&mut cmd, &paths::root()?.join("logs").join(format!("{id}.log")))
 }
 
@@ -91,12 +104,13 @@ pub fn launch_detached(req: &cq_proto::Launch) -> Result<String> {
     command.extend(req.args.iter().cloned());
     let size = Size { cols: req.cols.max(20), rows: req.rows.max(5) };
     let id = session::new_id();
-    spawn_host(&id, &req.agent, &cwd.to_string_lossy(), size, &command)?;
+    let labels = Labels { name: req.name.clone(), tags: req.tags.clone() };
+    spawn_host(&id, &req.agent, &cwd.to_string_lossy(), size, &labels, &command)?;
     Ok(id)
 }
 
 /// Runs `cq claude [args...]` and returns the process exit code.
-pub async fn claude(args: Vec<String>) -> Result<i32> {
+pub async fn claude(labels: Labels, args: Vec<String>) -> Result<i32> {
     paths::ensure_dirs()?;
     let settings = write_claude_settings()?;
     let id = session::new_id();
@@ -107,7 +121,7 @@ pub async fn claude(args: Vec<String>) -> Result<i32> {
     ];
     command.extend(args);
     let cwd = std::env::current_dir()?.to_string_lossy().into_owned();
-    spawn_host(&id, "claude", &cwd, crate::term::size(), &command)?;
+    spawn_host(&id, "claude", &cwd, crate::term::size(), &labels, &command)?;
     let endpoint = paths::session_endpoint(&id)?;
     let outcome = attach::attach(&endpoint, Duration::from_secs(10))
         .await

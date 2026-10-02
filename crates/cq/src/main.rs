@@ -3,6 +3,7 @@
 
 mod agent;
 mod attach;
+mod cli;
 mod config;
 mod daemon;
 mod hook;
@@ -30,7 +31,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Run claude inside a detachable CodeQuilt session.
+    /// Run claude inside a detachable CodeQuilt session. `--cq-name NAME` and `--cq-tag TAG`
+    /// label the session; all other arguments go to claude.
     #[command(disable_help_flag = true)]
     Claude {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -40,6 +42,30 @@ enum Cmd {
     Attach { id: String },
     /// List sessions.
     Ls,
+    /// Name a running session (`[machine:]id`); `--clear` removes the name.
+    Rename {
+        target: String,
+        name: Option<String>,
+        #[arg(long)]
+        clear: bool,
+    },
+    /// Add (`+tag`) or remove (`-tag`) tags of a running session (`[machine:]id`).
+    Tag {
+        target: String,
+        #[arg(allow_hyphen_values = true, required = true)]
+        changes: Vec<String>,
+    },
+    /// Type text into a session once it is idle and nobody is typing.
+    Inject {
+        target: String,
+        text: String,
+        /// Press Enter after pasting.
+        #[arg(long)]
+        submit: bool,
+        /// Required quiet time of terminal input, in milliseconds.
+        #[arg(long, default_value_t = 3000)]
+        quiet_ms: u64,
+    },
     /// Manage remote machines shown in the dashboard.
     Machine {
         #[command(subcommand)]
@@ -62,6 +88,10 @@ enum Cmd {
         cols: u16,
         #[arg(long)]
         rows: u16,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long = "tag")]
+        tags: Vec<String>,
         #[arg(last = true, required = true)]
         command: Vec<String>,
     },
@@ -90,6 +120,21 @@ enum MachineCmd {
     Remove { id: String },
 }
 
+/// Takes `--cq-name NAME` and `--cq-tag TAG` out of the agent arguments.
+fn split_labels(args: Vec<String>) -> (launch::Labels, Vec<String>) {
+    let mut labels = launch::Labels::default();
+    let mut rest = Vec::new();
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--cq-name" => labels.name = it.next(),
+            "--cq-tag" => labels.tags.extend(it.next()),
+            _ => rest.push(a),
+        }
+    }
+    (labels, rest)
+}
+
 fn main() {
     let cli = Cli::parse();
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
@@ -108,7 +153,37 @@ fn main() {
 
 async fn run(cmd: Cmd) -> Result<i32> {
     match cmd {
-        Cmd::Claude { args } => launch::claude(args).await,
+        Cmd::Claude { args } => {
+            let (labels, args) = split_labels(args);
+            launch::claude(labels, args).await
+        }
+        Cmd::Rename { target, name, clear } => {
+            if name.is_none() && !clear {
+                anyhow::bail!("give a name or --clear");
+            }
+            let m = cq_proto::SetMeta { name, clear_name: clear, add_tags: vec![], remove_tags: vec![] };
+            let id = cli::session_op(&target, cq_proto::Message::SetMeta(m), "meta").await?;
+            println!("renamed {id}");
+            Ok(0)
+        }
+        Cmd::Tag { target, changes } => {
+            let mut m = cq_proto::SetMeta { name: None, clear_name: false, add_tags: vec![], remove_tags: vec![] };
+            for c in changes {
+                match c.strip_prefix('-') {
+                    Some(t) => m.remove_tags.push(t.to_owned()),
+                    None => m.add_tags.push(c.trim_start_matches('+').to_owned()),
+                }
+            }
+            let id = cli::session_op(&target, cq_proto::Message::SetMeta(m), "meta").await?;
+            println!("tagged {id}");
+            Ok(0)
+        }
+        Cmd::Inject { target, text, submit, quiet_ms } => {
+            let inj = cq_proto::Inject { id: session::now_ms(), text, submit, quiet_ms };
+            let id = cli::session_op(&target, cq_proto::Message::Inject(inj), "inject_queued").await?;
+            println!("queued for {id}; it is typed once the session is idle");
+            Ok(0)
+        }
         Cmd::Attach { id } => {
             let meta = session::resolve(&id)?;
             if meta.status != SessionStatus::Running {
@@ -118,18 +193,19 @@ async fn run(cmd: Cmd) -> Result<i32> {
             Ok(attach::report(&meta.id, outcome))
         }
         Cmd::Ls => {
-            println!("{:<12}  {:<7}  {:<8}  {:<36}  CWD", "ID", "AGENT", "STATUS", "AGENT SESSION");
+            println!("{:<12}  {:<16}  {:<7}  {:<8}  {:<16}  CWD", "ID", "NAME", "AGENT", "STATUS", "TAGS");
             for m in session::list()? {
                 let status = match m.status {
                     SessionStatus::Running => "running",
                     SessionStatus::Exited => "exited",
                 };
                 println!(
-                    "{:<12}  {:<7}  {:<8}  {:<36}  {}",
+                    "{:<12}  {:<16}  {:<7}  {:<8}  {:<16}  {}",
                     m.id,
+                    m.name.as_deref().unwrap_or("-"),
                     m.agent,
                     status,
-                    m.agent_session_id.as_deref().unwrap_or("-"),
+                    if m.tags.is_empty() { "-".to_owned() } else { m.tags.join(",") },
                     m.cwd
                 );
             }
@@ -151,8 +227,8 @@ async fn run(cmd: Cmd) -> Result<i32> {
             daemon::bridge().await?;
             Ok(0)
         }
-        Cmd::Host { id, agent, cwd, cols, rows, command } => {
-            host::run(host::HostArgs { id, agent, cwd, size: Size { cols, rows }, command })
+        Cmd::Host { id, agent, cwd, cols, rows, name, tags, command } => {
+            host::run(host::HostArgs { id, agent, cwd, size: Size { cols, rows }, name, tags, command })
                 .await?;
             Ok(0)
         }

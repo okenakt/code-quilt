@@ -179,6 +179,16 @@ impl LocalRelay {
         self.subs.retain(|_, c| !c.task.is_finished());
     }
 
+    /// Connection that should carry a session message. Control messages go through the monitor
+    /// so they work without a subscription; so does input for sessions without an open tile.
+    fn route(&self, session: &str, inner: &Message) -> Option<&Conn> {
+        match inner {
+            Message::Approve(_) | Message::SetMeta(_) | Message::Inject(_) => self.monitors.get(session),
+            Message::Input(_) => self.subs.get(session).or_else(|| self.monitors.get(session)),
+            _ => self.subs.get(session),
+        }
+    }
+
     fn handle(&mut self, msg: Message) {
         match msg {
             Message::ListSessions => {
@@ -217,14 +227,11 @@ impl LocalRelay {
                 let _ = self.out.send(reply);
             }
             Message::Routed { session, inner, .. } => {
-                // Approvals go through the monitor so they work without a subscription;
-                // so does input for sessions that have no open tile (Queen).
-                let target = match *inner {
-                    Message::Approve(_) => self.monitors.get(&session),
-                    Message::Input(_) => self.subs.get(&session).or_else(|| self.monitors.get(&session)),
-                    _ => self.subs.get(&session),
-                };
-                if let Some(c) = target {
+                if self.route(&session, &inner).is_none() {
+                    // The host may have started after the last scan.
+                    self.refresh();
+                }
+                if let Some(c) = self.route(&session, &inner) {
                     let _ = c.tx.send(*inner);
                 }
             }
@@ -243,6 +250,61 @@ fn target_machine(msg: &Message) -> Option<&str> {
         Message::ListDir(l) => Some(&l.machine),
         _ => None,
     }
+}
+
+/// State shared by all clients of this daemon: the desktop's focus and registered commands.
+#[derive(Default)]
+struct Desktop {
+    next_client: u64,
+    clients: HashMap<u64, UnboundedSender<Message>>,
+    focus: Option<cq_proto::SessionRef>,
+    commands: HashMap<String, (u64, cq_proto::CommandInfo)>,
+}
+
+impl Desktop {
+    fn broadcast(&self, msg: &Message) {
+        for tx in self.clients.values() {
+            let _ = tx.send(msg.clone());
+        }
+    }
+
+    fn command_list(&self) -> Message {
+        let mut list: Vec<_> = self.commands.values().map(|(_, c)| c.clone()).collect();
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        Message::CommandList(list)
+    }
+}
+
+fn desktop() -> &'static std::sync::Mutex<Desktop> {
+    static DESKTOP: std::sync::OnceLock<std::sync::Mutex<Desktop>> = std::sync::OnceLock::new();
+    DESKTOP.get_or_init(Default::default)
+}
+
+/// Handles desktop-level messages; returns the message back if it is not one.
+fn handle_desktop(client: u64, msg: Message) -> Option<Message> {
+    let mut d = desktop().lock().unwrap();
+    match msg {
+        Message::SetFocus(f) => {
+            if d.focus != f {
+                d.focus = f.clone();
+                d.broadcast(&Message::Focus(f));
+            }
+        }
+        Message::RegisterCommand(c) => {
+            d.commands.insert(c.name.clone(), (client, c));
+            let list = d.command_list();
+            d.broadcast(&list);
+        }
+        Message::InvokeCommand(inv) => {
+            if let Some((owner, _)) = d.commands.get(&inv.name) {
+                if let Some(tx) = d.clients.get(owner) {
+                    let _ = tx.send(Message::InvokeCommand(inv));
+                }
+            }
+        }
+        other => return Some(other),
+    }
+    None
 }
 
 fn local_info() -> MachineInfo {
@@ -293,6 +355,16 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
         let _ = out.send(Message::MachineList(machines.clone()));
     }
 
+    let client_id = {
+        let mut d = desktop().lock().unwrap();
+        d.next_client += 1;
+        let id = d.next_client;
+        d.clients.insert(id, out.clone());
+        let _ = out.send(Message::Focus(d.focus.clone()));
+        let _ = out.send(d.command_list());
+        id
+    };
+
     let mut local = LocalRelay::new(out.clone());
     let mut msgs = spawn_reader(rd);
     let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -315,6 +387,7 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                     None => break Ok(()),
                     Some(Err(e)) => break Err(e),
                 };
+                let Some(msg) = handle_desktop(client_id, msg) else { continue };
                 match target_machine(&msg) {
                     None | Some(LOCAL_MACHINE) => {
                         if matches!(msg, Message::ListSessions) {
@@ -342,6 +415,16 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
             }
         }
     };
+    {
+        let mut d = desktop().lock().unwrap();
+        d.clients.remove(&client_id);
+        let before = d.commands.len();
+        d.commands.retain(|_, (owner, _)| *owner != client_id);
+        if d.commands.len() != before {
+            let list = d.command_list();
+            d.broadcast(&list);
+        }
+    }
     drop(local);
     drop(remotes);
     writer.abort();

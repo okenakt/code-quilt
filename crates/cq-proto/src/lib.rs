@@ -68,6 +68,12 @@ pub struct SessionMeta {
     pub exit_code: Option<u32>,
     /// Agent-side session id (Claude Code `session_id`), learned from the SessionStart hook.
     pub agent_session_id: Option<String>,
+    /// User-given name, used by clients to address the session (e.g. `@name`).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Free-form labels such as `queen` or `frontend`.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Lifecycle status of a session.
@@ -119,6 +125,68 @@ pub struct Exit {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Approve {
     pub option: u8,
+    /// Id of the prompt being answered; the host refuses the answer if a different prompt is
+    /// on screen by now.
+    #[serde(default)]
+    pub prompt_id: Option<String>,
+}
+
+/// Text to type into a session once it is idle and nobody is typing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Inject {
+    /// Client-chosen id echoed in the `inject_result` event.
+    pub id: u64,
+    pub text: String,
+    /// Press Enter after pasting.
+    #[serde(default)]
+    pub submit: bool,
+    /// How long terminal input must have been quiet before injecting.
+    #[serde(default = "default_quiet_ms")]
+    pub quiet_ms: u64,
+}
+
+fn default_quiet_ms() -> u64 {
+    3000
+}
+
+/// Change of a session's name and tags.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetMeta {
+    /// New name; `None` leaves it unchanged.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Remove the name.
+    #[serde(default)]
+    pub clear_name: bool,
+    #[serde(default)]
+    pub add_tags: Vec<String>,
+    #[serde(default)]
+    pub remove_tags: Vec<String>,
+}
+
+/// A command a client offers to others (e.g. `whisper.pushToTalk`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandInfo {
+    pub name: String,
+    pub title: String,
+    /// The command distinguishes press and release (push-to-talk).
+    #[serde(default)]
+    pub hold: bool,
+}
+
+/// Invocation of a registered command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvokeCommand {
+    pub name: String,
+    /// `invoke`, or `press` / `release` for hold commands.
+    #[serde(default = "default_phase")]
+    pub phase: String,
+    #[serde(default)]
+    pub args: serde_json::Value,
+}
+
+fn default_phase() -> String {
+    "invoke".into()
 }
 
 /// Request to open a relayed connection to a session through the daemon.
@@ -170,6 +238,10 @@ pub struct Launch {
     /// Agent session id to resume (`claude --resume <id>`).
     #[serde(default)]
     pub resume: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub cols: u16,
     pub rows: u16,
 }
@@ -248,6 +320,20 @@ pub enum Message {
     DirList(DirList),
     /// Daemon to client: an id-carrying request failed.
     RequestFailed(RequestFailed),
+    /// Client to host: type text once the session is idle.
+    Inject(Inject),
+    /// Client to host: change name and tags.
+    SetMeta(SetMeta),
+    /// Client to daemon: the session the user is typing into on this desktop.
+    SetFocus(Option<SessionRef>),
+    /// Daemon to client: current focus.
+    Focus(Option<SessionRef>),
+    /// Client to daemon: offer a command.
+    RegisterCommand(CommandInfo),
+    /// Daemon to client: all registered commands.
+    CommandList(Vec<CommandInfo>),
+    /// Client to daemon (and daemon to the registering client): run a command.
+    InvokeCommand(InvokeCommand),
 }
 
 mod kind {
@@ -272,6 +358,13 @@ mod kind {
     pub const DIR_LIST: u8 = 0x38;
     pub const MACHINE_LIST: u8 = 0x39;
     pub const REQUEST_FAILED: u8 = 0x3a;
+    pub const INJECT: u8 = 0x23;
+    pub const SET_META: u8 = 0x24;
+    pub const SET_FOCUS: u8 = 0x40;
+    pub const FOCUS: u8 = 0x41;
+    pub const REGISTER_COMMAND: u8 = 0x42;
+    pub const COMMAND_LIST: u8 = 0x43;
+    pub const INVOKE_COMMAND: u8 = 0x44;
     pub const ERROR: u8 = 0x7f;
 }
 
@@ -322,6 +415,13 @@ impl Message {
             Message::ListDir(v) => (kind::LIST_DIR, serde_json::to_vec(v)?),
             Message::DirList(v) => (kind::DIR_LIST, serde_json::to_vec(v)?),
             Message::RequestFailed(v) => (kind::REQUEST_FAILED, serde_json::to_vec(v)?),
+            Message::Inject(v) => (kind::INJECT, serde_json::to_vec(v)?),
+            Message::SetMeta(v) => (kind::SET_META, serde_json::to_vec(v)?),
+            Message::SetFocus(v) => (kind::SET_FOCUS, serde_json::to_vec(v)?),
+            Message::Focus(v) => (kind::FOCUS, serde_json::to_vec(v)?),
+            Message::RegisterCommand(v) => (kind::REGISTER_COMMAND, serde_json::to_vec(v)?),
+            Message::CommandList(v) => (kind::COMMAND_LIST, serde_json::to_vec(v)?),
+            Message::InvokeCommand(v) => (kind::INVOKE_COMMAND, serde_json::to_vec(v)?),
         })
     }
 
@@ -370,6 +470,13 @@ impl Message {
             kind::LIST_DIR => Message::ListDir(serde_json::from_slice(&payload)?),
             kind::DIR_LIST => Message::DirList(serde_json::from_slice(&payload)?),
             kind::REQUEST_FAILED => Message::RequestFailed(serde_json::from_slice(&payload)?),
+            kind::INJECT => Message::Inject(serde_json::from_slice(&payload)?),
+            kind::SET_META => Message::SetMeta(serde_json::from_slice(&payload)?),
+            kind::SET_FOCUS => Message::SetFocus(serde_json::from_slice(&payload)?),
+            kind::FOCUS => Message::Focus(serde_json::from_slice(&payload)?),
+            kind::REGISTER_COMMAND => Message::RegisterCommand(serde_json::from_slice(&payload)?),
+            kind::COMMAND_LIST => Message::CommandList(serde_json::from_slice(&payload)?),
+            kind::INVOKE_COMMAND => Message::InvokeCommand(serde_json::from_slice(&payload)?),
             other => bail!("unknown message kind 0x{other:02x}"),
         })
     }

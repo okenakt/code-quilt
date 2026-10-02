@@ -13,9 +13,61 @@ pub struct PromptOption {
 /// A permission prompt currently visible on screen.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PermissionPrompt {
+    /// Stable id derived from text and options, used to match answers to this exact prompt.
+    pub id: String,
     /// Prompt text as displayed (tool, command, question), without the options.
     pub text: String,
     pub options: Vec<PromptOption>,
+}
+
+/// FNV-1a hash of the prompt content, as hex.
+fn prompt_id(text: &str, options: &[PromptOption]) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |b: &[u8]| {
+        for x in b {
+            h ^= u64::from(*x);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    feed(text.as_bytes());
+    for o in options {
+        feed(&[o.number]);
+        feed(o.label.as_bytes());
+    }
+    format!("{h:016x}")
+}
+
+/// Whether a color looks like placeholder or hint text (gray), rather than typed text.
+fn is_hint_color(c: vt100::Color) -> bool {
+    match c {
+        vt100::Color::Default => false,
+        vt100::Color::Idx(i) => i == 8 || (232..=250).contains(&i),
+        vt100::Color::Rgb(r, g, b) => {
+            let (lo, hi) = (r.min(g).min(b), r.max(g).max(b));
+            hi - lo <= 16 && hi <= 200
+        }
+    }
+}
+
+/// Whether Claude Code's input box is empty (only a dim placeholder after `❯`). Returns `None`
+/// when no input box is visible (e.g. while a permission prompt replaces it).
+pub fn claude_input_empty(screen: &vt100::Screen) -> Option<bool> {
+    let (rows, cols) = screen.size();
+    let text = |r: u16| screen.contents_between(r, 0, r, cols);
+    // The input box is the last `❯` line directly below a solid rule.
+    let row = (1..rows).rev().find(|&r| text(r).trim_start().starts_with('❯') && is_rule(&text(r - 1)))?;
+    let mut r = row;
+    while r < rows && !(r > row && is_rule(&text(r))) {
+        let start = if r == row { text(r).find('❯').map(|i| text(r)[..i].chars().count() as u16 + 1)? } else { 0 };
+        for c in start..cols {
+            let Some(cell) = screen.cell(r, c) else { continue };
+            if cell.has_contents() && !cell.contents().trim().is_empty() && !cell.dim() && !is_hint_color(cell.fgcolor()) {
+                return Some(false);
+            }
+        }
+        r += 1;
+    }
+    Some(true)
 }
 
 /// Parses a numbered option line such as `❯ 1. Yes` or `  2. No (esc)`.
@@ -69,7 +121,7 @@ pub fn find_claude_permission_prompt(screen: &str) -> Option<PermissionPrompt> {
         .join("\n")
         .trim()
         .to_owned();
-    Some(PermissionPrompt { text, options })
+    Some(PermissionPrompt { id: prompt_id(&text, &options), text, options })
 }
 
 #[cfg(test)]
@@ -127,6 +179,38 @@ mod tests {
         assert!(p.text.contains("powershell -NoProfile -Command 1+1"));
         assert_eq!(p.options.len(), 3);
         assert_eq!(p.options[2].label, "No");
+    }
+
+    fn screen_of(bytes: &str) -> vt100::Parser {
+        let mut p = vt100::Parser::new(10, 60, 0);
+        p.process(bytes.as_bytes());
+        p
+    }
+
+    #[test]
+    fn input_box_with_placeholder_is_empty() {
+        let rule = "─".repeat(50);
+        let p = screen_of(&format!("hello\r\n{rule}\r\n❯ \x1b[38;2;153;153;153mTry \"fix lint\"\x1b[0m\r\n{rule}\r\n  ? for shortcuts"));
+        assert_eq!(claude_input_empty(p.screen()), Some(true));
+        let p = screen_of(&format!("{rule}\r\n❯ \x1b[2mTry this\x1b[0m\r\n{rule}"));
+        assert_eq!(claude_input_empty(p.screen()), Some(true));
+    }
+
+    #[test]
+    fn input_box_with_text_is_not_empty() {
+        let rule = "─".repeat(50);
+        let p = screen_of(&format!("{rule}\r\n❯ fix the build\r\n{rule}"));
+        assert_eq!(claude_input_empty(p.screen()), Some(false));
+        let p = screen_of(&format!("{rule}\r\n❯ \r\n  second line\r\n{rule}"));
+        assert_eq!(claude_input_empty(p.screen()), Some(false));
+        assert_eq!(claude_input_empty(screen_of("no box here").screen()), None);
+    }
+
+    #[test]
+    fn prompt_id_tracks_content() {
+        let o = vec![PromptOption { number: 1, label: "Yes".into() }];
+        assert_eq!(prompt_id("a", &o), prompt_id("a", &o));
+        assert_ne!(prompt_id("a", &o), prompt_id("b", &o));
     }
 
     #[test]
