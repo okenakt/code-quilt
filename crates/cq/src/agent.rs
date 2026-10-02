@@ -59,6 +59,13 @@ pub fn claude_input_empty(screen: &vt100::Screen) -> Option<bool> {
     let text = |r: u16| screen.contents_between(r, 0, r, cols);
     // The input box is the last `❯` line directly below a solid rule.
     let row = (1..rows).rev().find(|&r| text(r).trim_start().starts_with('❯') && is_rule(&text(r - 1)))?;
+    // Without colors the placeholder looks like typed text; recognise Claude Code's own hint.
+    let first = text(row);
+    let after = first.trim_start().trim_start_matches('❯').trim();
+    let next_is_rule = row + 1 < rows && is_rule(&text(row + 1));
+    if next_is_rule && after.starts_with("Try \"") && after.ends_with('"') {
+        return Some(true);
+    }
     let mut r = row;
     while r < rows && !(r > row && is_rule(&text(r))) {
         let start = if r == row { text(r).find('❯').map(|i| text(r)[..i].chars().count() as u16 + 1)? } else { 0 };
@@ -71,6 +78,26 @@ pub fn claude_input_empty(screen: &vt100::Screen) -> Option<bool> {
         r += 1;
     }
     Some(true)
+}
+
+/// Developer aid: prints the cells after `❯` on each input-looking row with their attributes.
+pub fn debug_input_row(screen: &vt100::Screen) {
+    let (rows, cols) = screen.size();
+    for r in 0..rows {
+        let line = screen.contents_between(r, 0, r, cols);
+        if !line.trim_start().starts_with('❯') {
+            continue;
+        }
+        let above = if r > 0 { screen.contents_between(r - 1, 0, r - 1, cols) } else { String::new() };
+        println!("row {r}: rule above: {} | {}", is_rule(&above), line.trim_end());
+        for c in 0..cols.min(30) {
+            if let Some(cell) = screen.cell(r, c) {
+                if cell.has_contents() && !cell.contents().trim().is_empty() {
+                    println!("  col {c} {:?} fg={:?} dim={} inv={}", cell.contents(), cell.fgcolor(), cell.dim(), cell.inverse());
+                }
+            }
+        }
+    }
 }
 
 /// Parses a numbered option line such as `❯ 1. Yes`, `› 1. Update now` or `  2. No (esc)`.
@@ -237,6 +264,13 @@ mod tests {
         let p = screen_of(&format!("{rule}\r\n❯ \r\n  second line\r\n{rule}"));
         assert_eq!(claude_input_empty(p.screen()), Some(false));
         assert_eq!(claude_input_empty(screen_of("no box here").screen()), None);
+    }
+
+    #[test]
+    fn colorless_placeholder_is_empty() {
+        let rule = "─".repeat(50);
+        let p = screen_of(&format!("{rule}\r\n❯ Try \"how do I log an error?\"\r\n{rule}"));
+        assert_eq!(claude_input_empty(p.screen()), Some(true));
     }
 
     #[test]

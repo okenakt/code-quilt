@@ -123,6 +123,14 @@ enum Cmd {
     /// Agent hook endpoint (internal).
     #[command(hide = true)]
     Hook,
+    /// Developer aid: read raw terminal bytes on stdin and print what the screen adapters see.
+    #[command(hide = true)]
+    DebugScreen {
+        #[arg(long, default_value_t = 120)]
+        cols: u16,
+        #[arg(long, default_value_t = 36)]
+        rows: u16,
+    },
     /// Agent status line endpoint (internal).
     #[command(hide = true)]
     Statusline,
@@ -271,6 +279,16 @@ async fn run(cmd: Cmd) -> Result<i32> {
         Cmd::Host { id, agent, cwd, cols, rows, name, tags, command } => {
             host::run(host::HostArgs { id, agent, cwd, size: Size { cols, rows }, name, tags, command })
                 .await?;
+            Ok(0)
+        }
+        Cmd::DebugScreen { cols, rows } => {
+            let mut raw = Vec::new();
+            std::io::Read::read_to_end(&mut std::io::stdin(), &mut raw)?;
+            let mut p = vt100::Parser::new(rows, cols, 0);
+            p.process(&raw);
+            println!("input_empty: {:?}", agent::claude_input_empty(p.screen()));
+            println!("prompt: {:?}", agent::find_choice_prompt(&host::screen_lines(p.screen())));
+            agent::debug_input_row(p.screen());
             Ok(0)
         }
         Cmd::Hook => {

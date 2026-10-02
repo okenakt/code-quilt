@@ -398,6 +398,13 @@ pub async fn run(args: HostArgs) -> Result<()> {
     cmd.args(rest);
     cmd.cwd(&args.cwd);
     cmd.env("CQ_SESSION_ID", &args.id);
+    // A daemon started over ssh has no TERM; agents would then draw without colors.
+    if cfg!(unix) && std::env::var_os("TERM").is_none_or(|t| t == "dumb") {
+        cmd.env("TERM", "xterm-256color");
+        if std::env::var_os("COLORTERM").is_none() {
+            cmd.env("COLORTERM", "truecolor");
+        }
+    }
     // Markers of an enclosing Claude Code session (e.g. when cqd was started from one) would
     // make the agent believe it is a child session and, among other things, disable transcripts.
     for var in NESTED_SESSION_VARS {
@@ -761,7 +768,7 @@ fn handle_event(state: &Shared, ev: AgentEvent) {
 
 /// The visible screen as text, one line per row. Unlike `Screen::contents`, rows filled up to the
 /// last column are not joined with the next one (Codex pads highlighted rows to full width).
-fn screen_lines(screen: &vt100::Screen) -> String {
+pub fn screen_lines(screen: &vt100::Screen) -> String {
     let (_, cols) = screen.size();
     screen.rows(0, cols).map(|r| r.trim_end().to_owned()).collect::<Vec<_>>().join("\n")
 }
