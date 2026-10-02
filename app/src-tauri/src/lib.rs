@@ -86,6 +86,7 @@ fn set_focus(hub: State<'_, HubState>, machine: Option<String>, session: Option<
 async fn launch(
     hub: State<'_, HubState>,
     machine: String,
+    agent: String,
     cwd: String,
     resume: Option<String>,
     args: Vec<String>,
@@ -94,7 +95,7 @@ async fn launch(
     let req = cq_proto::Launch {
         id,
         machine,
-        agent: "claude".into(),
+        agent,
         cwd,
         args,
         resume,

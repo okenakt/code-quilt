@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
-import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, sessionKey } from "./api";
+import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, sessionKey, type Agent } from "./api";
 import { ApprovalDialog } from "./components/approval-dialog";
 import { NewSessionDialog } from "./components/new-session-dialog";
 import { SessionList } from "./components/session-list";
@@ -108,15 +108,15 @@ export const App = () => {
   }, []);
 
   const launch = useCallback(
-    async (machine: string, cwd: string, args: string[], resume: string | null = null) => {
-      const id = await launchSession(machine, cwd, args, resume);
+    async (machine: string, agent: Agent, cwd: string, args: string[], resume: string | null = null) => {
+      const id = await launchSession(machine, agent, cwd, args, resume);
       openById(machine, id);
     },
     [openById],
   );
 
   const resumeSession = useCallback(
-    (s: SessionState) => void launch(s.machine, s.meta.cwd, [], s.meta.agent_session_id).catch((e: unknown) => alert(String(e))),
+    (s: SessionState) => void launch(s.machine, s.meta.agent === "codex" ? "codex" : "claude", s.meta.cwd, [], s.meta.agent_session_id).catch((e: unknown) => alert(String(e))),
     [launch],
   );
 
@@ -278,7 +278,7 @@ export const App = () => {
         <NewSessionDialog
           machines={machines}
           initialMachine={newSessionFor}
-          onLaunch={(m, cwd, args) => launch(m, cwd, args)}
+          onLaunch={(m, agent, cwd, args) => launch(m, agent, cwd, args)}
           onClose={() => setNewSessionFor(null)}
         />
       )}

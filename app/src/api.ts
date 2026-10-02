@@ -48,9 +48,17 @@ export type DirList = { path: string; parent: string | null; entries: string[]; 
 /** Lists subdirectories on a machine (an empty path lists the allowed roots). */
 export const listDir = (machine: string, path: string): Promise<DirList> => invoke("list_dir", { machine, path });
 
+/** Agents CodeQuilt can host. */
+export type Agent = "claude" | "codex";
+
 /** Starts a session on a machine without a local terminal; resolves to its id. */
-export const launchSession = (machine: string, cwd: string, args: string[], resume: string | null): Promise<string> =>
-  invoke("launch", { machine, cwd, args, resume });
+export const launchSession = (
+  machine: string,
+  agent: Agent,
+  cwd: string,
+  args: string[],
+  resume: string | null,
+): Promise<string> => invoke("launch", { machine, agent, cwd, args, resume });
 
 type TerminalSink = (msg: SessionData) => void;
 

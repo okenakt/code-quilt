@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { listDir, type DirList } from "../api";
+import { listDir, type Agent, type DirList } from "../api";
 import type { MachineInfo } from "../types";
 
 type Props = {
   machines: MachineInfo[];
   initialMachine: string;
-  onLaunch: (machine: string, cwd: string, args: string[]) => Promise<void>;
+  onLaunch: (machine: string, agent: Agent, cwd: string, args: string[]) => Promise<void>;
   onClose: () => void;
 };
 
@@ -18,6 +18,7 @@ const join = (dir: string, name: string) => (/[\\/]$/.test(dir) ? dir + name : `
 export const NewSessionDialog = ({ machines, initialMachine, onLaunch, onClose }: Props) => {
   const online = machines.filter((m) => m.online);
   const [machine, setMachine] = useState(initialMachine);
+  const [agent, setAgent] = useState<Agent>("claude");
   const [list, setList] = useState<DirList | null>(null);
   const [args, setArgs] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +36,7 @@ export const NewSessionDialog = ({ machines, initialMachine, onLaunch, onClose }
     setBusy(true);
     setError(null);
     try {
-      await onLaunch(machine, list.path, splitArgs(args));
+      await onLaunch(machine, agent, list.path, splitArgs(args));
       onClose();
     } catch (e) {
       setError(String(e));
@@ -61,6 +62,13 @@ export const NewSessionDialog = ({ machines, initialMachine, onLaunch, onClose }
                 {m.label}
               </option>
             ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>agent</span>
+          <select value={agent} onChange={(e) => setAgent(e.target.value === "codex" ? "codex" : "claude")}>
+            <option value="claude">Claude Code</option>
+            <option value="codex">Codex</option>
           </select>
         </label>
         <div className="field">
@@ -92,7 +100,7 @@ export const NewSessionDialog = ({ machines, initialMachine, onLaunch, onClose }
         <footer className="modal-actions">
           <button onClick={onClose}>Cancel</button>
           <button className="primary" disabled={!list?.path || busy} onClick={() => void start()}>
-            Start claude here
+            Start {agent} here
           </button>
         </footer>
       </div>
