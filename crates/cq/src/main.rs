@@ -43,6 +43,15 @@ enum Cmd {
     Attach { id: String },
     /// List sessions.
     Ls,
+    /// Show rate limits per account and tokens per running session (all machines).
+    Usage {
+        /// Only this machine (no ssh to remote machines).
+        #[arg(long)]
+        local: bool,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
     /// Name a running session (`[machine:]id`); `--clear` removes the name.
     Rename {
         target: String,
@@ -224,6 +233,10 @@ async fn run(cmd: Cmd) -> Result<i32> {
                 MachineCmd::Add { host, label, cq_path } => machine::add(host, label, cq_path)?,
                 MachineCmd::Remove { id } => machine::remove(&id)?,
             }
+            Ok(0)
+        }
+        Cmd::Usage { local, json } => {
+            cli::usage(local, json).await?;
             Ok(0)
         }
         Cmd::Mcp { scope } => {

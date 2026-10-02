@@ -8,6 +8,188 @@ use cq_proto::{
 };
 use std::time::Duration;
 
+#[derive(Default)]
+struct UsageSession {
+    machine: String,
+    meta: Option<cq_proto::SessionMeta>,
+    status: Option<(u64, serde_json::Value)>,
+    account: Option<serde_json::Value>,
+    tokens: Option<serde_json::Value>,
+}
+
+fn fmt_k(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1e6)
+    } else if n >= 1000 {
+        format!("{:.1}k", n as f64 / 1e3)
+    } else {
+        n.to_string()
+    }
+}
+
+fn fmt_until(resets_at: Option<u64>, now_s: u64) -> String {
+    let Some(t) = resets_at else { return "-".into() };
+    let m = t.saturating_sub(now_s) / 60;
+    if m >= 1440 {
+        format!("{}d{}h", m / 1440, (m % 1440) / 60)
+    } else if m >= 60 {
+        format!("{}h{}m", m / 60, m % 60)
+    } else {
+        format!("{m}m")
+    }
+}
+
+/// `cq usage`: rate limits per account and tokens per session, collected through the daemon.
+pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
+    use serde_json::{Value, json};
+    use std::collections::{BTreeMap, HashMap};
+
+    let stream = daemon::connect().await?;
+    let (rd, mut wr) = tokio::io::split(stream);
+    let mut msgs = spawn_reader(rd);
+    let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: !local_only };
+    write_message(&mut wr, &Message::Hello(hello)).await?;
+    write_message(&mut wr, &Message::ListSessions).await?;
+
+    let mut sessions: HashMap<(String, String), UsageSession> = HashMap::new();
+    let mut machines: Vec<cq_proto::MachineInfo> = Vec::new();
+    let mut listed: Vec<String> = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    // Hosts replay their latest status on connect; stop once every reachable machine has
+    // reported and nothing new arrived for a moment.
+    loop {
+        let all_listed = if local_only {
+            listed.iter().any(|m| m == LOCAL_MACHINE)
+        } else {
+            !machines.is_empty()
+                && machines.iter().all(|m| listed.contains(&m.id) || (!m.online && m.error.is_some()))
+        };
+        let wait = if all_listed { Duration::from_millis(700) } else { Duration::from_millis(1500) };
+        let next = match tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + wait), msgs.recv()).await {
+            Ok(Some(m)) => m?,
+            Ok(None) => break,
+            Err(_) if all_listed || tokio::time::Instant::now() >= deadline => break,
+            Err(_) => continue,
+        };
+        match next {
+            Message::MachineList(l) => machines = l,
+            Message::SessionList(l) => {
+                if !listed.contains(&l.machine) {
+                    listed.push(l.machine.clone());
+                }
+                for meta in l.sessions {
+                    let e = sessions.entry((l.machine.clone(), meta.id.clone())).or_default();
+                    e.machine = l.machine.clone();
+                    e.meta = Some(meta);
+                }
+            }
+            Message::Routed { machine, session, inner } => {
+                let Message::Event(ev) = *inner else { continue };
+                let e = sessions.entry((machine.clone(), session)).or_default();
+                e.machine = machine;
+                match (ev.source.as_str(), ev.payload.get("type").and_then(Value::as_str)) {
+                    ("statusline", _) => e.status = Some((ev.received_at_ms, ev.payload)),
+                    ("cq", Some("account")) => e.account = ev.payload.get("account").cloned(),
+                    ("cq", Some("tokens")) => e.tokens = ev.payload.get("tokens").cloned(),
+                    _ => {}
+                }
+            }
+            Message::Error(e) => bail!("daemon: {e}"),
+            _ => {}
+        }
+    }
+
+    // Latest rate limit reading per account.
+    let mut accounts: BTreeMap<String, (String, u64, Value, Vec<String>)> = BTreeMap::new();
+    for s in sessions.values() {
+        let Some((at, status)) = &s.status else { continue };
+        let Some(limits) = status.get("rate_limits") else { continue };
+        let id = s.account.as_ref().and_then(|a| a.get("id")).and_then(Value::as_str).unwrap_or("unknown").to_owned();
+        let label = s.account.as_ref().and_then(|a| a.get("label")).and_then(Value::as_str).unwrap_or("unknown account").to_owned();
+        let entry = accounts.entry(format!("{}:{id}", s.meta.as_ref().map_or("claude", |m| &m.agent))).or_insert((label, 0, Value::Null, vec![]));
+        if !entry.3.contains(&s.machine) {
+            entry.3.push(s.machine.clone());
+        }
+        if *at > entry.1 {
+            entry.1 = *at;
+            entry.2 = limits.clone();
+        }
+    }
+    let mut running: Vec<&UsageSession> = sessions
+        .values()
+        .filter(|s| s.meta.as_ref().is_some_and(|m| m.status == SessionStatus::Running))
+        .collect();
+    running.sort_by_key(|s| (s.machine.clone(), s.meta.as_ref().map_or(0, |m| m.started_at_ms)));
+
+    if as_json {
+        let accounts: Vec<_> = accounts
+            .iter()
+            .map(|(k, (label, at, limits, ms))| json!({ "account": k, "label": label, "updated_ms": at, "rate_limits": limits, "machines": ms }))
+            .collect();
+        let sessions: Vec<_> = running
+            .iter()
+            .map(|s| {
+                let m = s.meta.as_ref().expect("filtered");
+                let st = s.status.as_ref().map(|(_, v)| v);
+                json!({
+                    "session": format!("{}:{}", s.machine, m.id),
+                    "name": m.name,
+                    "model": st.and_then(|v| v.pointer("/model/display_name")),
+                    "context_percent": st.and_then(|v| v.pointer("/context_window/used_percentage")),
+                    "cost_usd": st.and_then(|v| v.pointer("/cost/total_cost_usd")),
+                    "tokens": s.tokens,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&json!({ "accounts": accounts, "sessions": sessions }))?);
+        return Ok(());
+    }
+
+    let now_ms = crate::session::now_ms();
+    let now_s = now_ms / 1000;
+    println!("{:<32}  {:>5}  {:>7}  {:>5}  {:>7}  {:>9}  MACHINES", "ACCOUNT", "5H", "RESETS", "WEEK", "RESETS", "UPDATED");
+    if accounts.is_empty() {
+        println!("(no rate limit data yet; it arrives with the next status line update)");
+    }
+    for (label, at, limits, ms) in accounts.values() {
+        let pct = |p: &str| limits.pointer(p).and_then(Value::as_f64).map_or("?".to_owned(), |v| format!("{v:.0}%"));
+        let reset = |p: &str| fmt_until(limits.pointer(p).and_then(Value::as_u64), now_s);
+        let ago = format!("{}m ago", now_ms.saturating_sub(*at) / 60_000);
+        println!(
+            "{:<32}  {:>5}  {:>7}  {:>5}  {:>7}  {:>9}  {}",
+            label,
+            pct("/five_hour/used_percentage"),
+            reset("/five_hour/resets_at"),
+            pct("/seven_day/used_percentage"),
+            reset("/seven_day/resets_at"),
+            ago,
+            ms.join(", ")
+        );
+    }
+    println!();
+    println!("{:<24}  {:<16}  {:<12}  {:>4}  {:>8}  {:>8}  {:>8}  {:>8}", "SESSION", "NAME", "MODEL", "CTX", "IN", "OUT", "CACHE R", "CACHE W");
+    for s in running {
+        let m = s.meta.as_ref().expect("filtered");
+        let st = s.status.as_ref().map(|(_, v)| v);
+        let tok = |k: &str| s.tokens.as_ref().and_then(|t| t.pointer(&format!("/total/{k}"))).and_then(Value::as_u64).map_or("-".into(), fmt_k);
+        println!(
+            "{:<24}  {:<16}  {:<12}  {:>4}  {:>8}  {:>8}  {:>8}  {:>8}",
+            format!("{}:{}", s.machine, m.id),
+            m.name.as_deref().unwrap_or("-"),
+            st.and_then(|v| v.pointer("/model/display_name")).and_then(Value::as_str).unwrap_or("-"),
+            st.and_then(|v| v.pointer("/context_window/used_percentage")).and_then(Value::as_f64).map_or("-".into(), |v| format!("{v:.0}%")),
+            tok("input"),
+            tok("output"),
+            tok("cache_read"),
+            tok("cache_creation"),
+        );
+    }
+    for m in machines.iter().filter(|m| !m.online) {
+        println!("({} offline: {})", m.label, m.error.as_deref().unwrap_or("not connected"));
+    }
+    Ok(())
+}
+
 /// Splits `machine:id` (or a bare local id) into its parts.
 pub fn parse_target(target: &str) -> (String, String) {
     match target.split_once(':') {
