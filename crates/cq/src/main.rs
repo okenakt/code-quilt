@@ -140,6 +140,9 @@ enum MachineCmd {
         /// Path of `cq` on the remote machine (default: `cq` on PATH).
         #[arg(long)]
         cq_path: Option<String>,
+        /// Run `cq bridge` through a login shell (Linux/macOS remotes whose PATH is set in ~/.profile).
+        #[arg(long)]
+        login_shell: bool,
     },
     /// Unregister a machine.
     Remove { id: String },
@@ -244,7 +247,7 @@ async fn run(cmd: Cmd) -> Result<i32> {
         Cmd::Machine { action } => {
             match action {
                 MachineCmd::List => machine::list()?,
-                MachineCmd::Add { host, label, cq_path } => machine::add(host, label, cq_path)?,
+                MachineCmd::Add { host, label, cq_path, login_shell } => machine::add(host, label, cq_path, login_shell)?,
                 MachineCmd::Remove { id } => machine::remove(&id)?,
             }
             Ok(0)

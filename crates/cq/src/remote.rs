@@ -49,9 +49,16 @@ impl AsyncWrite for ChildStream {
 
 /// Runs `ssh <host> cq bridge`. No port is opened on the remote side and the user's ssh key
 /// authentication applies; `BatchMode` keeps ssh from ever prompting.
-fn open_ssh(host: &str, cq_path: &str) -> Result<BoxStream> {
+fn open_ssh(host: &str, cq_path: &str, login_shell: bool) -> Result<BoxStream> {
     let mut cmd = tokio::process::Command::new("ssh");
-    cmd.args(["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", host, cq_path, "bridge"])
+    cmd.args(["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", host]);
+    if login_shell {
+        // ssh joins the remote command into one string for the remote shell.
+        cmd.arg(format!("sh -lc 'exec \"{cq_path}\" bridge'"));
+    } else {
+        cmd.args([cq_path, "bridge"]);
+    }
+    cmd
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -117,7 +124,7 @@ pub async fn run(
     loop {
         let host = entry.ssh.clone().unwrap_or_default();
         let cq = entry.cq_path.clone().unwrap_or_else(|| "cq".into());
-        let err = match open_ssh(&host, &cq) {
+        let err = match open_ssh(&host, &cq, entry.login_shell) {
             Ok(stream) => match relay(&entry.id, stream, &mut subs, &mut rx, &out, &report).await {
                 Ok(()) => "disconnected".to_owned(),
                 Err(e) => format!("{e:#}"),

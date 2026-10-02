@@ -13,6 +13,10 @@ pub struct MachineEntry {
     pub ssh: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cq_path: Option<String>,
+    /// Start `cq bridge` through a login shell (`sh -lc`) so the remote PATH set up in
+    /// `~/.profile` (e.g. Volta, `~/.local/bin`) reaches the daemon and the agents it starts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub login_shell: bool,
 }
 
 fn file() -> Result<std::path::PathBuf> {
@@ -67,7 +71,7 @@ pub fn list() -> Result<()> {
 }
 
 /// Registers a machine. Without `host`, offers the hosts from `~/.ssh/config` to choose from.
-pub fn add(host: Option<String>, label: Option<String>, cq_path: Option<String>) -> Result<()> {
+pub fn add(host: Option<String>, label: Option<String>, cq_path: Option<String>, login_shell: bool) -> Result<()> {
     let host = match host {
         Some(h) => h,
         None => {
@@ -90,7 +94,7 @@ pub fn add(host: Option<String>, label: Option<String>, cq_path: Option<String>)
     if host == "local" || list.iter().any(|m| m.id == host) {
         bail!("machine '{host}' is already registered");
     }
-    list.push(MachineEntry { id: host.clone(), label: label.unwrap_or_else(|| host.clone()), ssh: Some(host.clone()), cq_path });
+    list.push(MachineEntry { id: host.clone(), label: label.unwrap_or_else(|| host.clone()), ssh: Some(host.clone()), cq_path, login_shell });
     save(&list)?;
     println!("added {host}; the dashboard connects with `ssh {host} cq bridge` (restart it to pick up changes)");
     Ok(())
