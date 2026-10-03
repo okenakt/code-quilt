@@ -77,6 +77,11 @@ fn approve(
 }
 
 #[tauri::command]
+fn terminate(hub: State<'_, HubState>, machine: String, session: String) -> Result<(), String> {
+    hub.terminate(&machine, &session).map_err(err)
+}
+
+#[tauri::command]
 fn set_focus(hub: State<'_, HubState>, machine: Option<String>, session: Option<String>) -> Result<(), String> {
     let focus = machine.zip(session).map(|(machine, session)| cq_proto::SessionRef { machine, session });
     hub.set_focus(focus).map_err(err)
@@ -162,6 +167,7 @@ pub fn run() {
             send_input,
             resize,
             approve,
+            terminate,
             set_focus,
             launch,
             list_dir

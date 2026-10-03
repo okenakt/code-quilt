@@ -668,3 +668,22 @@ kbd {
 .machine.pinned .machine-header {
   color: var(--accent);
 }
+
+.end-session {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 2px;
+  opacity: 0;
+}
+
+.session:hover .end-session {
+  opacity: 0.7;
+}
+
+.end-session:hover {
+  color: var(--danger);
+  opacity: 1;
+}

@@ -39,6 +39,9 @@ export const resize = (machine: string, session: string, cols: number, rows: num
 export const approve = (machine: string, session: string, option: number, promptId: string): Promise<void> =>
   invoke("approve", { machine, session, option, promptId });
 
+/** Asks a session to end: the agent exits as if the user quit it, or is killed after a grace period. */
+export const terminate = (machine: string, session: string): Promise<void> => invoke("terminate", { machine, session });
+
 /** Tells the daemon which session the user is typing into (or none). */
 export const setFocus = (machine: string | null, session: string | null): Promise<void> =>
   invoke("set_focus", { machine, session });

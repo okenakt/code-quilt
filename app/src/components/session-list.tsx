@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { terminate } from "../api";
 import { isPinned, togglePin } from "../pins";
 import { displayName } from "../store";
 import type { Activity, MachineInfo, SessionState } from "../types";
@@ -124,6 +125,20 @@ const SessionItem = ({ s, machine, active, pinned, showMachine, onOpen, onResume
           }}
         >
           📌
+        </button>
+      )}
+      {s.activity !== "exited" && (
+        <button
+          className="end-session"
+          title="end session (the agent exits; killed after 10s)"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (confirm(`End session "${displayName(s)}" (${s.meta.id.slice(0, 8)})?`)) {
+              terminate(s.machine, s.meta.id).catch((err: unknown) => alert(String(err)));
+            }
+          }}
+        >
+          ✕
         </button>
       )}
     </div>

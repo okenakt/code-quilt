@@ -176,6 +176,12 @@ impl Hub {
         self.routed(machine, session, Message::Approve(cq_proto::Approve { option, prompt_id }))
     }
 
+    /// Asks a session to end gracefully; the host kills it after the grace period.
+    pub fn terminate(&self, machine: &str, session: &str) -> Result<()> {
+        let t = cq_proto::Terminate { grace_ms: 10_000, force: false };
+        self.routed(machine, session, Message::Terminate(t))
+    }
+
     /// Tells the daemon which session the user is typing into.
     pub fn set_focus(&self, focus: Option<SessionRef>) -> Result<()> {
         self.send(Message::SetFocus(focus))
