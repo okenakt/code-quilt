@@ -43,6 +43,22 @@ enum Cmd {
         #[arg(default_value = "queen")]
         name: String,
     },
+    /// Print the commands this plugin provides (read by `cq plugin`).
+    #[command(hide = true)]
+    Manifest,
+}
+
+/// Commands for the palette and key bindings. `queen.start` runs `cq-queen start NAME --detach`.
+fn manifest() -> serde_json::Value {
+    serde_json::json!({
+        "name": "queen",
+        "commands": [{
+            "name": "queen.start",
+            "title": "Queen: Start",
+            "args": [{ "name": "name", "title": "Queen name", "default": "queen" }],
+            "run": { "exec": ["start", "${name}", "--detach"] },
+        }],
+    })
 }
 
 /// Writes the Queen's extra settings: a UserPromptSubmit hook that sends `@name text` directly.
@@ -184,6 +200,10 @@ async fn main() {
             println!("{}", p.display());
             0
         }),
+        Cmd::Manifest => {
+            println!("{}", manifest());
+            Ok(0)
+        }
     };
     match result {
         Ok(code) => std::process::exit(code),
