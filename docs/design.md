@@ -185,7 +185,7 @@ VS Codeの拡張と同じ考え方で、プラグインは提供するコマン�
 
 | 出どころ | 例 | 一覧（パレット）に出るか | 実行する場所 |
 | --- | --- | --- | --- |
-| UIの組み込み | `ui.palette`、`ui.nextTile`、`ui.closeTile`、`ui.approvals`、`ui.toggleUsage`、`session.end`、`session.pin` | 出る | UI内 |
+| UIの組み込み | `ui.palette`、`ui.nextTile` / `ui.prevTile`、`ui.closeTile`、`ui.splitRight` / `ui.splitDown`、`ui.approvals`、`ui.openSession`、`ui.toggleUsage`、`ui.newSession`、`session.end` / `session.pin` / `session.copyId`（フォーカス中のタイルが対象） | 出る | UI内 |
 | プラグインのmanifest | `queen.start`、`whisper.pushToTalk` | 出る | プラグインを導入したマシンのcqd経由 |
 | 実行時の登録のみ | `channel:<session-id>` | 出ない（プログラムからの呼び出し専用） | 登録したクライアント |
 
@@ -200,7 +200,7 @@ VS Codeの拡張と同じ考え方で、プラグインは提供するコマン�
   "name": "queen",
   "commands": [
     {
-      "id": "queen.start",
+      "name": "queen.start",
       "title": "Queen: Start",
       "run": { "exec": ["start", "${name}", "--detach"] },
       "args": [{ "name": "name", "title": "Queen name", "default": "queen" }],
@@ -233,7 +233,7 @@ sequenceDiagram
   D-->>U: CommandResult
 ```
 
-- **CLI**：`cq run ID [--arg 名前=値]…` でもmanifestのコマンドを実行できる。
+- **CLI**：`cq run 名前 [--arg 名前=値]…` でもmanifestのコマンドを実行できる。導入済みプラグインの確認は `cq plugin list`。
 - **範囲**：当面はUIを動かしているマシン（ローカルのcqd）に導入したプラグインのコマンドだけを扱う。リモートマシンのプラグインは扱わない。
 
 ### キーバインド
@@ -248,7 +248,7 @@ args = { name = "main" }
 
 [[binding]]
 key = "ctrl+shift+w"
-command = "-ui.closeTile"   # removes a default binding, as in VS Code
+command = "-ui.closeTile"   # removes the default binding of this key (all of its keys without `key`)
 ```
 
 - 優先順位はユーザー > プラグインの既定（manifestの `keybinding`）> 組み込みの既定。同じキーが重なったらユーザー設定を優先し、パレットに警告を出す。
@@ -285,8 +285,9 @@ font_size = 13
 
 ### プロトコルの変更
 
-- `CommandInfo` に `source`（`manifest` / `runtime`）、`args`、`keybinding`、`palette`（一覧に出すか）を足す。cqdは `~/.codequilt/plugins/*.json` を読み、実行時の登録と合わせて `CommandList` で配る。
-- `InvokeCommand` に `id`（結果の照合用）と `context` を足し、結果を `CommandResult { id, ok, message }` で返す。
+- `CommandInfo` に `palette`（一覧に出すか。実行時の登録だけのコマンドは出さない）、`plugin`、`args`、`keybinding` を足した。cqdは `~/.codequilt/plugins/*.json` を読み（数秒ごとに再読込）、実行時の登録と合わせて `CommandList` で配る。同じ名前なら処理役の登録があっても表示はmanifestのものを使う。
+- `InvokeCommand` に `id`（結果の照合用。無ければ結果を返さない。押下・解放はこれ）と `context`（省略時はデスクトップのフォーカス）を足し、結果を `CommandResult { id, ok, message }` で返す。exec は最大120秒待ち、activate は処理役の登録を最大10秒待つ。
+- フォーカスとコマンドはデスクトップ（UIのあるマシン）の状態なので、リモートのcqdから届いた `Focus` / `CommandList` などは中継しない。
 
 ## cq-queen（公式オーケストレーター）
 
