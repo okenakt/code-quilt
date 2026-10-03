@@ -45,7 +45,8 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Attach this terminal to a running session (id or unique prefix). Ctrl+\ detaches.
+    /// Attach this terminal to a running session (name, id, or unique id prefix). Ctrl+\ detaches.
+    #[command(visible_alias = "a")]
     Attach { id: String },
     /// List sessions.
     Ls,
@@ -58,14 +59,14 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Name a running session (`[machine:]id`); `--clear` removes the name.
+    /// Name a running session (`[machine:]name-or-id`); `--clear` removes the name.
     Rename {
         target: String,
         name: Option<String>,
         #[arg(long)]
         clear: bool,
     },
-    /// Add (`+tag`) or remove (`-tag`) tags of a running session (`[machine:]id`).
+    /// Add (`+tag`) or remove (`-tag`) tags of a running session (`[machine:]name-or-id`).
     Tag {
         target: String,
         #[arg(allow_hyphen_values = true, required = true)]
@@ -227,9 +228,6 @@ async fn run(cmd: Cmd) -> Result<i32> {
         }
         Cmd::Attach { id } => {
             let meta = session::resolve(&id)?;
-            if meta.status != SessionStatus::Running {
-                anyhow::bail!("session {} has exited", meta.id);
-            }
             let outcome = attach::attach(&meta.pipe, Duration::from_secs(2)).await?;
             Ok(attach::report(&meta.id, outcome))
         }

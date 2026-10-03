@@ -46,14 +46,36 @@ pub fn list() -> Result<Vec<SessionMeta>> {
     Ok(out)
 }
 
-/// Resolves a session by full id or unique prefix.
-pub fn resolve(prefix: &str) -> Result<SessionMeta> {
-    let matches: Vec<_> = list()?.into_iter().filter(|m| m.id.starts_with(prefix)).collect();
-    match matches.len() {
-        0 => anyhow::bail!("no session matches '{prefix}'"),
-        1 => Ok(matches.into_iter().next().unwrap()),
-        n => anyhow::bail!("'{prefix}' is ambiguous ({n} sessions)"),
+/// Picks the running session that `key` refers to: an exact name, then an exact id, then a
+/// unique id prefix. Same order as the MCP server uses.
+pub fn pick<'a>(sessions: &'a [SessionMeta], key: &str) -> Result<&'a SessionMeta> {
+    let running = || sessions.iter().filter(|m| m.status == SessionStatus::Running);
+    let rules: [&dyn Fn(&SessionMeta) -> bool; 3] = [
+        &|m| m.name.as_deref() == Some(key),
+        &|m| m.id == key,
+        &|m| m.id.starts_with(key),
+    ];
+    for rule in rules {
+        let hits: Vec<_> = running().filter(|m| rule(m)).collect();
+        match hits.as_slice() {
+            [] => continue,
+            [one] => return Ok(one),
+            many => {
+                let ids: Vec<_> = many.iter().map(|m| m.id.as_str()).collect();
+                anyhow::bail!("'{key}' is ambiguous: {}", ids.join(", "))
+            }
+        }
     }
+    if sessions.iter().any(|m| m.name.as_deref() == Some(key) || m.id.starts_with(key)) {
+        anyhow::bail!("session '{key}' has exited");
+    }
+    anyhow::bail!("no running session matches '{key}'")
+}
+
+/// Resolves a local running session by name, id, or unique id prefix.
+pub fn resolve(key: &str) -> Result<SessionMeta> {
+    let sessions = list()?;
+    pick(&sessions, key).cloned()
 }
 
 /// Returns whether a process with the given pid is alive.
@@ -79,4 +101,43 @@ pub fn pid_alive(pid: u32) -> bool {
 #[cfg(unix)]
 pub fn pid_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(id: &str, name: Option<&str>, running: bool) -> SessionMeta {
+        SessionMeta {
+            id: id.into(),
+            agent: "claude".into(),
+            cwd: String::new(),
+            pipe: String::new(),
+            host_pid: 0,
+            child_pid: None,
+            started_at_ms: 0,
+            status: if running { SessionStatus::Running } else { SessionStatus::Exited },
+            exit_code: None,
+            agent_session_id: None,
+            name: name.map(Into::into),
+            tags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn pick_prefers_name_then_id_then_prefix() {
+        let s = [meta("abc123", Some("ab"), true), meta("ab9999", None, true), meta("ff0000", Some("q"), true)];
+        assert_eq!(pick(&s, "ab").unwrap().id, "abc123");
+        assert_eq!(pick(&s, "ab9999").unwrap().id, "ab9999");
+        assert_eq!(pick(&s, "q").unwrap().id, "ff0000");
+        assert_eq!(pick(&s, "ff").unwrap().id, "ff0000");
+        assert!(pick(&s, "a").unwrap_err().to_string().contains("ambiguous"));
+    }
+
+    #[test]
+    fn pick_skips_exited_sessions() {
+        let s = [meta("abc123", Some("x"), false), meta("def456", Some("x"), true)];
+        assert_eq!(pick(&s, "x").unwrap().id, "def456");
+        assert!(pick(&s, "abc").unwrap_err().to_string().contains("exited"));
+    }
 }

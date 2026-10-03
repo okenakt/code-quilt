@@ -201,7 +201,7 @@ pub fn parse_target(target: &str) -> (String, String) {
 /// Sends a control message to a running session and waits until the host confirms it with a
 /// `cq` event of type `confirm`.
 pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<String> {
-    let (machine, prefix) = parse_target(target);
+    let (machine, key) = parse_target(target);
     let stream = daemon::connect().await?;
     let (rd, mut wr) = tokio::io::split(stream);
     let mut msgs = spawn_reader(rd);
@@ -222,16 +222,7 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
         while let Some(msg) = msgs.recv().await {
             match msg? {
                 Message::SessionList(l) if l.machine == machine && session.is_none() => {
-                    let hits: Vec<_> = l
-                        .sessions
-                        .iter()
-                        .filter(|s| s.status == SessionStatus::Running && s.id.starts_with(&prefix))
-                        .collect();
-                    let id = match hits.as_slice() {
-                        [one] => one.id.clone(),
-                        [] => bail!("no running session matches '{target}'"),
-                        _ => bail!("'{target}' is ambiguous ({} sessions)", hits.len()),
-                    };
+                    let id = crate::session::pick(&l.sessions, &key)?.id.clone();
                     let msg = Message::Routed {
                         machine: machine.clone(),
                         session: id.clone(),
