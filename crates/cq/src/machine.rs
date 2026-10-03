@@ -1,11 +1,11 @@
 //! `cq machine`: registry of remote machines the dashboard connects to via `ssh <host> cq bridge`.
 
-use crate::paths;
+use crate::config;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Write};
 
-/// One entry of `~/.codequilt/machines.json` (read by the dashboard backend).
+/// One `[[machines]]` entry of `~/.codequilt/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MachineEntry {
     pub id: String,
@@ -19,23 +19,17 @@ pub struct MachineEntry {
     pub login_shell: bool,
 }
 
-fn file() -> Result<std::path::PathBuf> {
-    Ok(paths::root()?.join("machines.json"))
-}
-
 /// Loads the registered machines.
-pub fn load() -> Result<Vec<MachineEntry>> {
-    match std::fs::read(file()?) {
-        Ok(d) => Ok(serde_json::from_slice(&d).context("invalid machines.json")?),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(e) => Err(e.into()),
-    }
+pub fn load() -> Vec<MachineEntry> {
+    config::load().machines
 }
 
-fn save(list: &[MachineEntry]) -> Result<()> {
-    std::fs::create_dir_all(paths::root()?)?;
-    std::fs::write(file()?, serde_json::to_vec_pretty(list)?)?;
-    Ok(())
+/// The `machines` array of the configuration document, created when missing.
+fn machines_table(doc: &mut toml_edit::DocumentMut) -> Result<&mut toml_edit::ArrayOfTables> {
+    doc.entry("machines")
+        .or_insert(toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()))
+        .as_array_of_tables_mut()
+        .context("`machines` in config.toml must be a list of [[machines]] tables")
 }
 
 /// Concrete host aliases from `~/.ssh/config` (wildcard patterns are skipped).
@@ -60,7 +54,7 @@ pub fn ssh_config_hosts() -> Vec<String> {
 
 /// Prints registered machines.
 pub fn list() -> Result<()> {
-    let list = load()?;
+    let list = load();
     if list.is_empty() {
         println!("no remote machines registered; add one with `cq machine add`");
     }
@@ -90,25 +84,38 @@ pub fn add(host: Option<String>, label: Option<String>, cq_path: Option<String>,
             candidates.get(n.wrapping_sub(1)).cloned().context("out of range")?
         }
     };
-    let mut list = load()?;
-    if host == "local" || list.iter().any(|m| m.id == host) {
+    if host == "local" || load().iter().any(|m| m.id == host) {
         bail!("machine '{host}' is already registered");
     }
-    list.push(MachineEntry { id: host.clone(), label: label.unwrap_or_else(|| host.clone()), ssh: Some(host.clone()), cq_path, login_shell });
-    save(&list)?;
+    config::edit(|doc| {
+        let mut t = toml_edit::Table::new();
+        t["id"] = toml_edit::value(host.as_str());
+        t["label"] = toml_edit::value(label.unwrap_or_else(|| host.clone()));
+        t["ssh"] = toml_edit::value(host.as_str());
+        if let Some(p) = cq_path {
+            t["cq_path"] = toml_edit::value(p);
+        }
+        if login_shell {
+            t["login_shell"] = toml_edit::value(true);
+        }
+        machines_table(doc)?.push(t);
+        Ok(())
+    })?;
     println!("added {host}; the dashboard connects with `ssh {host} cq bridge` (restart it to pick up changes)");
     Ok(())
 }
 
 /// Unregisters a machine.
 pub fn remove(id: &str) -> Result<()> {
-    let mut list = load()?;
-    let before = list.len();
-    list.retain(|m| m.id != id);
-    if list.len() == before {
-        bail!("no machine '{id}'");
-    }
-    save(&list)?;
+    config::edit(|doc| {
+        let machines = machines_table(doc)?;
+        let before = machines.len();
+        machines.retain(|t| t.get("id").and_then(|v| v.as_str()) != Some(id));
+        if machines.len() == before {
+            bail!("no machine '{id}'");
+        }
+        Ok(())
+    })?;
     println!("removed {id}");
     Ok(())
 }

@@ -339,7 +339,7 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
 
     // Remote machines, one relay task per machine for this client.
     let entries: Vec<MachineEntry> = if hello.federate {
-        machine::load().unwrap_or_default().into_iter().filter(|m| m.ssh.is_some()).collect()
+        machine::load().into_iter().filter(|m| m.ssh.is_some()).collect()
     } else {
         Vec::new()
     };
