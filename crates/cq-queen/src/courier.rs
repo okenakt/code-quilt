@@ -174,7 +174,7 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                             eprintln!("another courier is already serving queen '{name}'");
                             return Ok(());
                         }
-                        let cmd = CommandInfo { name: me.clone(), title: format!("Courier of queen {name}"), hold: false };
+                        let cmd = CommandInfo { name: me.clone(), title: format!("Courier of queen {name}"), ..Default::default() };
                         write_message(&mut wr, &Message::RegisterCommand(cmd)).await?;
                         registered = true;
                     }
@@ -250,6 +250,8 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                             name: channel,
                             phase: "invoke".into(),
                             args: json!({ "content": content, "meta": { "kind": "update", "items": pending.len().to_string() } }),
+                            id: None,
+                            context: None,
                         })
                     }
                     Delivery::Pty => {

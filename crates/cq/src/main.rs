@@ -96,6 +96,19 @@ enum Cmd {
         #[arg(long, default_value_t = 10)]
         grace: u64,
     },
+    /// Run a command declared by a plugin (as the command palette does).
+    Run {
+        /// Command name, e.g. `queen.start`.
+        name: String,
+        /// Command argument as NAME=VALUE (repeatable).
+        #[arg(long = "arg", value_name = "NAME=VALUE")]
+        args: Vec<String>,
+    },
+    /// Manage plugins and the commands they provide.
+    Plugin {
+        #[command(subcommand)]
+        action: PluginCmd,
+    },
     /// Manage remote machines shown in the dashboard.
     Machine {
         #[command(subcommand)]
@@ -151,6 +164,18 @@ enum Cmd {
     /// Any other name runs the plugin `cq-NAME` (e.g. `cq queen` runs cq-queen).
     #[command(external_subcommand)]
     External(Vec<OsString>),
+}
+
+#[derive(Subcommand)]
+enum PluginCmd {
+    /// List installed plugins and their commands (those next to cq are installed with it).
+    List,
+    /// Install `cq-NAME` from PATH and record the commands it declares.
+    Add { name: String },
+    /// Uninstall a plugin.
+    Remove { name: String },
+    /// Re-read the manifests of all installed plugins.
+    Refresh,
 }
 
 #[derive(Subcommand)]
@@ -273,6 +298,16 @@ async fn run(cmd: Cmd) -> Result<i32> {
                     if m.tags.is_empty() { "-".to_owned() } else { m.tags.join(",") },
                     m.cwd
                 );
+            }
+            Ok(0)
+        }
+        Cmd::Run { name, args } => cli::run_command(&name, &args).await,
+        Cmd::Plugin { action } => {
+            match action {
+                PluginCmd::List => plugin::list()?,
+                PluginCmd::Add { name } => plugin::add(&name)?,
+                PluginCmd::Remove { name } => plugin::remove(&name)?,
+                PluginCmd::Refresh => plugin::refresh()?,
             }
             Ok(0)
         }

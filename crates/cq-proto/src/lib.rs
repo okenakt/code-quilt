@@ -179,17 +179,41 @@ pub struct SetMeta {
     pub remove_tags: Vec<String>,
 }
 
-/// A command a client offers to others (e.g. `whisper.pushToTalk`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A command: declared in a plugin manifest, or registered at run time by a client that
+/// handles it (e.g. `whisper.pushToTalk`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandInfo {
     pub name: String,
     pub title: String,
     /// The command distinguishes press and release (push-to-talk).
     #[serde(default)]
     pub hold: bool,
+    /// Shown in the command palette and bindable to keys. Commands only registered at run time
+    /// (e.g. `channel:<session>`) are for programs and stay hidden.
+    #[serde(default)]
+    pub palette: bool,
+    /// Plugin that declares the command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
+    /// Arguments the palette asks for before invoking.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<CommandArg>,
+    /// Default key binding suggested by the plugin (e.g. `ctrl+shift+q`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keybinding: Option<String>,
 }
 
-/// Invocation of a registered command.
+/// An argument of a command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandArg {
+    pub name: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+}
+
+/// Invocation of a command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvokeCommand {
     pub name: String,
@@ -198,6 +222,21 @@ pub struct InvokeCommand {
     pub phase: String,
     #[serde(default)]
     pub args: serde_json::Value,
+    /// Caller-chosen id echoed in the `CommandResult`; none means no result is wanted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
+    /// The session the user is working in when invoking (the desktop focus).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<SessionRef>,
+}
+
+/// Outcome of an invocation that carried an id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandResult {
+    pub id: u64,
+    pub ok: bool,
+    #[serde(default)]
+    pub message: String,
 }
 
 fn default_phase() -> String {
@@ -354,6 +393,8 @@ pub enum Message {
     CommandList(Vec<CommandInfo>),
     /// Client to daemon (and daemon to the registering client): run a command.
     InvokeCommand(InvokeCommand),
+    /// Daemon to the invoking client: outcome of an invocation with an id.
+    CommandResult(CommandResult),
 }
 
 mod kind {
@@ -386,6 +427,7 @@ mod kind {
     pub const REGISTER_COMMAND: u8 = 0x42;
     pub const COMMAND_LIST: u8 = 0x43;
     pub const INVOKE_COMMAND: u8 = 0x44;
+    pub const COMMAND_RESULT: u8 = 0x45;
     pub const ERROR: u8 = 0x7f;
 }
 
@@ -444,6 +486,7 @@ impl Message {
             Message::RegisterCommand(v) => (kind::REGISTER_COMMAND, serde_json::to_vec(v)?),
             Message::CommandList(v) => (kind::COMMAND_LIST, serde_json::to_vec(v)?),
             Message::InvokeCommand(v) => (kind::INVOKE_COMMAND, serde_json::to_vec(v)?),
+            Message::CommandResult(v) => (kind::COMMAND_RESULT, serde_json::to_vec(v)?),
         })
     }
 
@@ -500,6 +543,7 @@ impl Message {
             kind::REGISTER_COMMAND => Message::RegisterCommand(serde_json::from_slice(&payload)?),
             kind::COMMAND_LIST => Message::CommandList(serde_json::from_slice(&payload)?),
             kind::INVOKE_COMMAND => Message::InvokeCommand(serde_json::from_slice(&payload)?),
+            kind::COMMAND_RESULT => Message::CommandResult(serde_json::from_slice(&payload)?),
             other => bail!("unknown message kind 0x{other:02x}"),
         })
     }

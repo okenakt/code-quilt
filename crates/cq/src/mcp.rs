@@ -217,7 +217,7 @@ async fn daemon_loop(
             write_message(&mut wr, &Message::Hello(hello)).await?;
             write_message(&mut wr, &Message::ListSessions).await?;
             if let Some((name, _)) = &channel {
-                let cmd = cq_proto::CommandInfo { name: name.clone(), title: "Deliver a channel message".into(), hold: false };
+                let cmd = cq_proto::CommandInfo { name: name.clone(), title: "Deliver a channel message".into(), ..Default::default() };
                 write_message(&mut wr, &Message::RegisterCommand(cmd)).await?;
             }
             let mut msgs = spawn_reader(rd);

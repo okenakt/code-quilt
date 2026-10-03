@@ -7,10 +7,10 @@
 //! client) simply reconnects and receives the replay.
 
 use crate::machine::{self, MachineEntry};
-use crate::{ipc, paths, remote, session};
+use crate::{ipc, paths, plugin, remote, session};
 use anyhow::{Context, Result, bail};
 use cq_proto::{
-    ClientKind, DirList, Hello, DAEMON_PROTOCOL_VERSION, LOCAL_MACHINE, Launched, MachineInfo, Message, PROTOCOL_VERSION,
+    ClientKind, CommandInfo, CommandResult, DirList, Hello, InvokeCommand, DAEMON_PROTOCOL_VERSION, LOCAL_MACHINE, Launched, MachineInfo, Message, PROTOCOL_VERSION,
     RequestFailed, SessionList, SessionMeta, SessionStatus, Subscribe, read_message, spawn_reader,
     write_message,
 };
@@ -32,6 +32,7 @@ pub async fn run() -> Result<()> {
             return Err(e);
         }
     };
+    tokio::spawn(maintain_desktop());
     loop {
         let stream = listener.accept().await?;
         tokio::spawn(async move {
@@ -254,13 +255,28 @@ fn target_machine(msg: &Message) -> Option<&str> {
     }
 }
 
-/// State shared by all clients of this daemon: the desktop's focus and registered commands.
+/// How long an `activate` command waits for its plugin to register a handler.
+const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long an `exec` command may run before the caller is told it timed out.
+const EXEC_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// An invocation waiting for its plugin to start and register.
+struct Pending {
+    client: u64,
+    inv: InvokeCommand,
+    since: std::time::Instant,
+}
+
+/// State shared by all clients of this daemon: the desktop's focus, the commands registered by
+/// running clients, and the commands declared by installed plugins.
 #[derive(Default)]
 struct Desktop {
     next_client: u64,
     clients: HashMap<u64, UnboundedSender<Message>>,
     focus: Option<cq_proto::SessionRef>,
-    commands: HashMap<String, (u64, cq_proto::CommandInfo)>,
+    commands: HashMap<String, (u64, CommandInfo)>,
+    plugins: Vec<(String, plugin::Installed)>,
+    pending: Vec<Pending>,
 }
 
 impl Desktop {
@@ -270,16 +286,158 @@ impl Desktop {
         }
     }
 
+    /// Manifest commands first (they carry titles and arguments), then commands that exist only
+    /// because a running client registered them.
     fn command_list(&self) -> Message {
-        let mut list: Vec<_> = self.commands.values().map(|(_, c)| c.clone()).collect();
+        let mut list: Vec<CommandInfo> = Vec::new();
+        for (name, p) in &self.plugins {
+            list.extend(p.manifest.commands.iter().map(|c| c.info(name)));
+        }
+        for (_, c) in self.commands.values() {
+            if !list.iter().any(|l| l.name == c.name) {
+                list.push(c.clone());
+            }
+        }
         list.sort_by(|a, b| a.name.cmp(&b.name));
         Message::CommandList(list)
     }
+
+    fn manifest_command(&self, name: &str) -> Option<(&plugin::Installed, &plugin::ManifestCommand)> {
+        self.plugins.iter().find_map(|(_, p)| p.manifest.commands.iter().find(|c| c.name == name).map(|c| (p, c)))
+    }
+
+    fn reply(&self, client: u64, id: Option<u64>, ok: bool, message: impl Into<String>) {
+        if let (Some(id), Some(tx)) = (id, self.clients.get(&client)) {
+            let _ = tx.send(Message::CommandResult(CommandResult { id, ok, message: message.into() }));
+        }
+    }
+
+    /// Hands an invocation to the client that registered the command.
+    fn deliver(&self, client: u64, owner: u64, inv: InvokeCommand) {
+        let id = inv.id;
+        match self.clients.get(&owner) {
+            Some(tx) => {
+                let _ = tx.send(Message::InvokeCommand(inv));
+                self.reply(client, id, true, "delivered");
+            }
+            None => self.reply(client, id, false, "the handler is gone"),
+        }
+    }
+
+    fn invoke(&mut self, client: u64, mut inv: InvokeCommand) {
+        if inv.context.is_none() {
+            inv.context = self.focus.clone();
+        }
+        if let Some((owner, _)) = self.commands.get(&inv.name) {
+            let owner = *owner;
+            return self.deliver(client, owner, inv);
+        }
+        let Some((p, cmd)) = self.manifest_command(&inv.name) else {
+            return self.reply(client, inv.id, false, format!("unknown command '{}'", inv.name));
+        };
+        let (path, run, declared) = (p.path.clone(), cmd.run.clone(), cmd.args.clone());
+        let template = match &run {
+            plugin::Run::Exec(t) | plugin::Run::Activate(t) => t,
+        };
+        let args = match plugin::expand_args(template, &declared, &inv.args, inv.context.as_ref()) {
+            Ok(a) => a,
+            Err(e) => return self.reply(client, inv.id, false, format!("{e:#}")),
+        };
+        match run {
+            plugin::Run::Exec(_) => {
+                let Some(tx) = self.clients.get(&client).cloned() else { return };
+                tokio::spawn(exec_command(path, args, inv.id, tx));
+            }
+            plugin::Run::Activate(_) => {
+                let starting = self.pending.iter().any(|p| p.inv.name == inv.name);
+                if !starting && let Err(e) = start_plugin(&path, &args) {
+                    return self.reply(client, inv.id, false, format!("{e:#}"));
+                }
+                self.pending.push(Pending { client, inv, since: std::time::Instant::now() });
+            }
+        }
+    }
+
+    /// Delivers invocations that were waiting for `name` to be registered by `owner`.
+    fn flush_pending(&mut self, name: &str, owner: u64) {
+        let (ready, waiting): (Vec<_>, Vec<_>) = self.pending.drain(..).partition(|p| p.inv.name == name);
+        self.pending = waiting;
+        for p in ready {
+            self.deliver(p.client, owner, p.inv);
+        }
+    }
+
+    /// Gives up on activations whose plugin did not register in time.
+    fn expire_pending(&mut self) {
+        let (expired, waiting): (Vec<_>, Vec<_>) =
+            self.pending.drain(..).partition(|p| p.since.elapsed() > ACTIVATE_TIMEOUT);
+        self.pending = waiting;
+        for p in expired {
+            self.reply(p.client, p.inv.id, false, format!("{} did not start in time", p.inv.name));
+        }
+    }
+
+}
+
+/// Runs an `exec` command and reports its outcome to the caller.
+async fn exec_command(path: std::path::PathBuf, args: Vec<String>, id: Option<u64>, tx: UnboundedSender<Message>) {
+    let (program, prefix) = crate::host::with_batch_wrapper(&path);
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(prefix).args(&args).stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        // The daemon has no console; without this every command would open a console window.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let outcome = match tokio::time::timeout(EXEC_TIMEOUT, cmd.output()).await {
+        Err(_) => (false, format!("still running after {}s", EXEC_TIMEOUT.as_secs())),
+        Ok(Err(e)) => (false, format!("run {}: {e}", path.display())),
+        Ok(Ok(out)) => {
+            let text = if out.status.success() { &out.stdout } else { &out.stderr };
+            let text = String::from_utf8_lossy(text).trim().to_owned();
+            let tail: String = text.chars().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect();
+            (out.status.success(), tail)
+        }
+    };
+    if let Some(id) = id {
+        let _ = tx.send(Message::CommandResult(CommandResult { id, ok: outcome.0, message: outcome.1 }));
+    }
+}
+
+/// Starts a plugin process for an `activate` command, detached like a session host.
+fn start_plugin(path: &std::path::Path, args: &[String]) -> Result<()> {
+    let (program, prefix) = crate::host::with_batch_wrapper(path);
+    let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let log = paths::root()?.join("logs").join(format!("{name}.log"));
+    crate::launch::spawn_detached(std::process::Command::new(program).args(prefix).args(args), &log)
 }
 
 fn desktop() -> &'static std::sync::Mutex<Desktop> {
     static DESKTOP: std::sync::OnceLock<std::sync::Mutex<Desktop>> = std::sync::OnceLock::new();
     DESKTOP.get_or_init(Default::default)
+}
+
+/// Keeps the plugin commands current and expires activations that never registered.
+async fn maintain_desktop() {
+    let _ = tokio::task::spawn_blocking(plugin::sync_bundled).await;
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    let mut n = 0u32;
+    loop {
+        tick.tick().await;
+        let plugins = if n.is_multiple_of(3) { Some(tokio::task::spawn_blocking(plugin::installed).await.unwrap_or_default()) } else { None };
+        n = n.wrapping_add(1);
+        let mut d = desktop().lock().unwrap();
+        if let Some(plugins) = plugins {
+            let sig = |ps: &[(String, plugin::Installed)]| serde_json::to_string(ps).unwrap_or_default();
+            if sig(&plugins) != sig(&d.plugins) {
+                d.plugins = plugins;
+                let list = d.command_list();
+                d.broadcast(&list);
+            }
+        }
+        d.expire_pending();
+    }
 }
 
 /// Handles desktop-level messages; returns the message back if it is not one.
@@ -293,17 +451,13 @@ fn handle_desktop(client: u64, msg: Message) -> Option<Message> {
             }
         }
         Message::RegisterCommand(c) => {
-            d.commands.insert(c.name.clone(), (client, c));
+            let name = c.name.clone();
+            d.commands.insert(name.clone(), (client, c));
             let list = d.command_list();
             d.broadcast(&list);
+            d.flush_pending(&name, client);
         }
-        Message::InvokeCommand(inv) => {
-            if let Some((owner, _)) = d.commands.get(&inv.name) {
-                if let Some(tx) = d.clients.get(owner) {
-                    let _ = tx.send(Message::InvokeCommand(inv));
-                }
-            }
-        }
+        Message::InvokeCommand(inv) => d.invoke(client, inv),
         other => return Some(other),
     }
     None

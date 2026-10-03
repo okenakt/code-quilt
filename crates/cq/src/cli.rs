@@ -269,3 +269,41 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
     };
     tokio::time::timeout(limit, run).await.context("timed out waiting for the session")?
 }
+
+/// `cq run NAME --arg k=v…`: invokes a command through the daemon and prints its outcome.
+pub async fn run_command(name: &str, args: &[String]) -> Result<i32> {
+    let mut map = serde_json::Map::new();
+    for a in args {
+        let (k, v) = a.split_once('=').with_context(|| format!("expected NAME=VALUE, got '{a}'"))?;
+        map.insert(k.to_owned(), serde_json::Value::String(v.to_owned()));
+    }
+    let stream = daemon::connect().await?;
+    let (rd, mut wr) = tokio::io::split(stream);
+    let mut msgs = spawn_reader(rd);
+    let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: false };
+    write_message(&mut wr, &Message::Hello(hello)).await?;
+    let inv = cq_proto::InvokeCommand {
+        name: name.to_owned(),
+        phase: "invoke".into(),
+        args: serde_json::Value::Object(map),
+        id: Some(1),
+        context: None,
+    };
+    write_message(&mut wr, &Message::InvokeCommand(inv)).await?;
+    let wait = async {
+        while let Some(msg) = msgs.recv().await {
+            match msg? {
+                Message::CommandResult(r) if r.id == 1 => return Ok(r),
+                Message::Error(e) => bail!("daemon: {e}"),
+                _ => {}
+            }
+        }
+        bail!("daemon connection closed")
+    };
+    // Exec commands may run for up to two minutes in the daemon.
+    let r = tokio::time::timeout(Duration::from_secs(130), wait).await.context("no result from the daemon")??;
+    if !r.message.is_empty() {
+        if r.ok { println!("{}", r.message) } else { eprintln!("{}", r.message) }
+    }
+    Ok(if r.ok { 0 } else { 1 })
+}
