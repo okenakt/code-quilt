@@ -162,7 +162,7 @@ PermissionRequest hookでハブの回答を待つと、その間ローカルのT
 - 本体はクライアントの存在を知らない。クライアント同士も直接やり取りしない。協調が必要な情報（セッション名、タグ、フォーカス）は本体の状態として持つ。
 - 当面はユーザーが各クライアントを起動する（`cq queen start` など）。自動起動や管理の仕組みは必要になってから足す。
 - **外部サブコマンド**：`cq NAME 引数…` は組み込みのサブコマンドでなければ `cq-NAME 引数…` を実行する（gitやcargoと同じ）。探す順はcq本体と同じディレクトリ、次に `PATH`。本体はクライアントの名前を持たない。
-- **エイリアス**：`~/.codequilt/config.json` の `aliases`（例 `{"qs": "queen start main"}`）で、サブコマンドの位置の語を置き換える。既定は `q = queen` だけで、ユーザーの定義が優先する。組み込みのサブコマンドとその別名（`a = attach`）は上書きできない。
+- **エイリアス**：`~/.codequilt/config.toml` の `[aliases]`（例 `qs = "queen start main"`）で、サブコマンドの位置の語を置き換える。既定は `q = queen` だけで、ユーザーの定義が優先する。組み込みのサブコマンドとその別名（`a = attach`）は上書きできない。
 
 ### 本体がクライアントに提供するもの
 
@@ -172,10 +172,121 @@ PermissionRequest hookでハブの回答を待つと、その間ローカルのT
 | イベント | hooks（SessionStart / UserPromptSubmit / Stop / Notification）、承認プロンプトの出現と解消、statusLine、トークン集計、アカウント |
 | 操作 | 入力（ブラケットペースト）、承認（プロンプトIDを照合して回答）、アイドル時の注入（対象がアイドルで、ユーザー入力が一定時間ないときだけ入れる）、終了（エージェントに終了させ、猶予後に強制終了） |
 | フォーカス | UIが「いま入力先にしているセッション」を本体に知らせる。cq-whisperはそこへ送る |
-| コマンド | クライアントが名前付きのコマンド（例 `whisper.pushToTalk`、押下と解放を区別できる）を本体に登録し、UIが一覧からボタンやキーに割り当てて呼ぶ。本体は呼び出しを登録元に中継するだけで、UIは登録元を知らない |
+| コマンド | プラグインがmanifestで宣言したコマンド（例 `queen.start`、`whisper.pushToTalk`）をパレットやキーから呼ぶ。プラグインが動いていなければcqdが起動する。動いているクライアントは処理役として登録する。詳細は「コマンド・キーバインド・UI設定」 |
 | MCP | `cq mcp`：セッション一覧、ターン内容の取得、送信、承認をツールとして公開。Claude CodeとCodexの両方から使える |
 
 承認の回答は、報告と回答の間に別のプロンプトへ変わっていても誤って承認しないよう、プロンプト本文から作ったIDを本体が照合する。
+
+## コマンド・キーバインド・UI設定
+
+VS Codeの拡張と同じ考え方で、プラグインは提供するコマンドをmanifestで宣言する。導入済みのプラグインのコマンドは、プラグインが動いていなくてもコマンドパレットに出て、キーにも割り当てられる。UIの組み込み操作も同じ「コマンド」として扱い、すべての操作にユーザーが自由にキーを割り当てられるようにする。
+
+### コマンドの種類
+
+| 出どころ | 例 | 一覧（パレット）に出るか | 実行する場所 |
+| --- | --- | --- | --- |
+| UIの組み込み | `ui.palette`、`ui.nextTile`、`ui.closeTile`、`ui.approvals`、`ui.toggleUsage`、`session.end`、`session.pin` | 出る | UI内 |
+| プラグインのmanifest | `queen.start`、`whisper.pushToTalk` | 出る | プラグインを導入したマシンのcqd経由 |
+| 実行時の登録のみ | `channel:<session-id>` | 出ない（プログラムからの呼び出し専用） | 登録したクライアント |
+
+### プラグインの導入とmanifest
+
+- cq本体と同じディレクトリにある `cq-*` は、一緒に導入された公式プラグインとして自動で導入済みとみなす。
+- `PATH` 上など、それ以外のプラグインは `cq plugin add NAME` で導入する。`cq-NAME manifest` の出力（JSON）を `~/.codequilt/plugins/NAME.json` に保存する。`cq plugin list` / `remove` / `refresh` で管理する。明示的に導入したものと本体の隣にあるもの以外は実行しないので、UIを開いただけで未知のバイナリが動くことはない。
+- manifestの例（cq-queen）：
+
+```json
+{
+  "name": "queen",
+  "commands": [
+    {
+      "id": "queen.start",
+      "title": "Queen: Start",
+      "run": { "exec": ["start", "${name}", "--detach"] },
+      "args": [{ "name": "name", "title": "Queen name", "default": "queen" }],
+      "keybinding": null
+    }
+  ]
+}
+```
+
+- **実行方式**（コマンドごとにプラグインが選ぶ。利用者からは区別されない）
+  - `exec`：呼ばれるたびに `cq-NAME 引数…` を切り離して起動し、終わるのを待って結果（終了コードと標準エラーの末尾）を呼び出し元に返す。Queenの起動など。
+  - `activate`：常駐するプロセスに処理させる。そのコマンドの処理役（`RegisterCommand`）がいればそこへ中継し、いなければ `cq-NAME <activate引数>` を起動して登録を待ち（最大10秒）、届いた呼び出しを渡す。音声入力のプッシュトゥトークなど遅延を抑えたいもの。
+- **引数**：`args` を宣言したコマンドは、パレットから実行するとUIが入力を求める（既定値つき）。キーバインドでは `args` を固定で渡せる。
+- **コンテキスト**：呼び出しには、そのときフォーカスしているセッション（machineとsession）を添える。
+
+```mermaid
+sequenceDiagram
+  participant U as UI（パレット・キー）/ cq run
+  participant D as cqd
+  participant P as cq-NAME
+  U->>D: InvokeCommand(id, args, context)
+  alt exec
+    D->>P: cq-NAME 引数…（切り離して起動）
+    P-->>D: 終了コード・標準エラー
+  else activate（処理役がいない）
+    D->>P: cq-NAME <activate引数>
+    P->>D: RegisterCommand(id)
+    D->>P: InvokeCommand
+  end
+  D-->>U: CommandResult
+```
+
+- **CLI**：`cq run ID [--arg 名前=値]…` でもmanifestのコマンドを実行できる。
+- **範囲**：当面はUIを動かしているマシン（ローカルのcqd）に導入したプラグインのコマンドだけを扱う。リモートマシンのプラグインは扱わない。
+
+### キーバインド
+
+- `~/.codequilt/keybindings.toml`（UIを動かすマシン側）に書く。ファイルを監視して即座に反映する。
+
+```toml
+[[binding]]
+key = "ctrl+shift+q"
+command = "queen.start"
+args = { name = "main" }
+
+[[binding]]
+key = "ctrl+shift+w"
+command = "-ui.closeTile"   # removes a default binding, as in VS Code
+```
+
+- 優先順位はユーザー > プラグインの既定（manifestの `keybinding`）> 組み込みの既定。同じキーが重なったらユーザー設定を優先し、パレットに警告を出す。
+- キーバインドはターミナル（xterm）への入力より先に処理する。Ctrl+CやCtrl+Rなどを割り当てるとエージェントに届かなくなるため、組み込みとプラグインの既定はCtrl+Shift系に限る。
+- 押下と解放を区別するコマンド（`hold`）は、キーを押している間だけ有効になる。
+- VS Codeの `when` 句（条件付きのバインド）は当面入れない。`cq attach` のデタッチキーは対象外。
+- 現在の `shortcuts.ts` の固定ショートカットは、組み込みコマンドと既定のバインドに置き換える。パレットは既定でCtrl+Shift+P。
+
+### 設定ファイル
+
+人が編集する設定はすべてTOMLにする（コメントが書け、`toml_edit` でコメントや並びを保ったままプログラムから書き換えられる）。
+
+| ファイル | 内容 | 読む側 |
+| --- | --- | --- |
+| `~/.codequilt/config.toml` | `allowed_roots`、`[aliases]`、`[[machines]]` | cq / cqd |
+| `~/.codequilt/ui.toml` | UIの設定（フォントなど） | UI |
+| `~/.codequilt/keybindings.toml` | キーバインド | UI |
+| `~/.codequilt/queens/NAME.toml` | Queenごとの設定 | cq-queen |
+
+プログラムが生成する状態（`sessions/*.json`、`plugins/*.json`）や、Claude Code・MCPがJSONを求めるファイル（`claude.json`、`settings/*.json`、`*.mcp.json`）はJSONのまま。旧形式の `config.json` / `machines.json` は、最初に読むときに `config.toml` へ変換し、元のファイルは `.bak` として残す。
+
+### UI設定
+
+- `~/.codequilt/ui.toml`（UIを動かすマシン側）。VS Codeと同じく、設定とキーバインドは別ファイルにする。
+
+```toml
+[terminal]
+font_family = ["HackGen Console NF"]   # tried first
+font_size = 13
+```
+
+- `font_family` の後ろに組み込みのフォールバック（`Cascadia Mono`、`BIZ UDGothic`、`Consolas`、`DejaVu Sans Mono`、`Noto Sans Mono CJK JP`、`monospace`）を連結する。指定したフォントが無くても表示は崩れない。
+- 設定は監視して即座に反映する。設定画面は必要になってから検討する。
+
+### プロトコルの変更
+
+- `CommandInfo` に `source`（`manifest` / `runtime`）、`args`、`keybinding`、`palette`（一覧に出すか）を足す。cqdは `~/.codequilt/plugins/*.json` を読み、実行時の登録と合わせて `CommandList` で配る。
+- `InvokeCommand` に `id`（結果の照合用）と `context` を足し、結果を `CommandResult { id, ok, message }` で返す。
 
 ## cq-queen（公式オーケストレーター）
 
