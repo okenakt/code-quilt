@@ -1,8 +1,9 @@
 //! CodeQuilt dashboard backend: Tauri commands over per-machine daemon connections.
 
 mod hub;
+mod settings;
 
-use cq_proto::MachineInfo;
+use cq_proto::{CommandInfo, MachineInfo};
 use hub::Hub;
 use std::sync::Arc;
 use tauri::{Manager, State};
@@ -82,6 +83,26 @@ fn terminate(hub: State<'_, HubState>, machine: String, session: String) -> Resu
 }
 
 #[tauri::command]
+fn commands(hub: State<'_, HubState>) -> Vec<CommandInfo> {
+    hub.commands()
+}
+
+#[tauri::command]
+async fn invoke_command(
+    hub: State<'_, HubState>,
+    name: String,
+    args: serde_json::Value,
+    phase: String,
+) -> Result<String, String> {
+    hub.invoke_command(name, args, phase).await.map_err(err)
+}
+
+#[tauri::command]
+fn ui_config() -> settings::UiConfig {
+    settings::load()
+}
+
+#[tauri::command]
 fn set_focus(hub: State<'_, HubState>, machine: Option<String>, session: Option<String>) -> Result<(), String> {
     let focus = machine.zip(session).map(|(machine, session)| cq_proto::SessionRef { machine, session });
     hub.set_focus(focus).map_err(err)
@@ -155,6 +176,7 @@ pub fn run() {
         .setup(|app| {
             let hub = Hub::start(app.handle().clone());
             app.manage(hub);
+            settings::watch(app.handle().clone());
             create_main_window(app)?;
             Ok(())
         })
@@ -170,7 +192,10 @@ pub fn run() {
             terminate,
             set_focus,
             launch,
-            list_dir
+            list_dir,
+            commands,
+            invoke_command,
+            ui_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running CodeQuilt");

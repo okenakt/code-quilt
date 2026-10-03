@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use base64::Engine;
 use cq_proto::local::{self, BoxStream};
 use cq_proto::{
-    AgentEvent, ClientKind, DAEMON_PROTOCOL_VERSION, Hello, MachineInfo, Message, SessionMeta, SessionRef,
+    AgentEvent, ClientKind, CommandInfo, DAEMON_PROTOCOL_VERSION, InvokeCommand, Hello, MachineInfo, Message, SessionMeta, SessionRef,
     Subscribe, spawn_reader, write_message,
 };
 use serde::Serialize;
@@ -50,6 +50,7 @@ struct Cache {
     machines: Vec<MachineInfo>,
     sessions: HashMap<String, Vec<SessionMeta>>,
     events: HashMap<(String, String), VecDeque<AgentEvent>>,
+    commands: Vec<CommandInfo>,
 }
 
 /// Kind of state event that only matters in its latest form.
@@ -176,6 +177,27 @@ impl Hub {
         self.routed(machine, session, Message::Approve(cq_proto::Approve { option, prompt_id }))
     }
 
+    /// Commands known to the daemon (plugin manifests and running clients).
+    pub fn commands(&self) -> Vec<CommandInfo> {
+        self.cache.lock().unwrap().commands.clone()
+    }
+
+    /// Runs a command through the daemon. Plain invocations wait for the outcome (plugins may
+    /// run for up to two minutes); press and release of hold commands are sent without waiting.
+    pub async fn invoke_command(&self, name: String, args: serde_json::Value, phase: String) -> Result<String> {
+        let wait = phase == "invoke";
+        let id = wait.then(|| self.next_id());
+        let inv = InvokeCommand { name, phase, args, id, context: None };
+        let Some(id) = id else {
+            self.send(Message::InvokeCommand(inv))?;
+            return Ok(String::new());
+        };
+        match self.call_within(id, Message::InvokeCommand(inv), Duration::from_secs(130)).await? {
+            Message::CommandResult(r) => Ok(r.message),
+            _ => Ok(String::new()),
+        }
+    }
+
     /// Asks a session to end gracefully; the host kills it after the grace period.
     pub fn terminate(&self, machine: &str, session: &str) -> Result<()> {
         let t = cq_proto::Terminate { grace_ms: 10_000, force: false };
@@ -194,13 +216,17 @@ impl Hub {
 
     /// Sends a request carrying `id` and waits for its reply.
     pub async fn call(&self, id: u64, msg: Message) -> Result<Message> {
+        self.call_within(id, msg, Duration::from_secs(20)).await
+    }
+
+    async fn call_within(&self, id: u64, msg: Message, limit: Duration) -> Result<Message> {
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);
         if let Err(e) = self.send(msg) {
             self.pending.lock().unwrap().remove(&id);
             return Err(e);
         }
-        let r = tokio::time::timeout(Duration::from_secs(20), rx).await;
+        let r = tokio::time::timeout(limit, rx).await;
         self.pending.lock().unwrap().remove(&id);
         match r {
             Ok(Ok(Ok(m))) => Ok(m),
@@ -312,7 +338,12 @@ impl Hub {
                 let _ = self.app.emit("focus", f);
             }
             Message::CommandList(list) => {
+                self.cache.lock().unwrap().commands = list.clone();
                 let _ = self.app.emit("commands", list);
+            }
+            Message::CommandResult(r) => {
+                let id = r.id;
+                self.reply(id, if r.ok { Ok(Message::CommandResult(r)) } else { Err(r.message) });
             }
             // An unsolicited error (e.g. protocol mismatch) ends the connection.
             Message::Error(e) => bail!("daemon error: {e}"),

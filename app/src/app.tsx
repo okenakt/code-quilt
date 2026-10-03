@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
-import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, sessionKey, type Agent } from "./api";
+import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, sessionKey, terminate, type Agent } from "./api";
 import { ApprovalDialog } from "./components/approval-dialog";
 import { NewSessionDialog } from "./components/new-session-dialog";
 import { SessionList } from "./components/session-list";
 import { TerminalPanel } from "./components/terminal-panel";
 import { UsagePanel } from "./components/usage-panel";
 import { notify } from "./notify";
-import { SHORTCUT_HELP, matchShortcut, type ShortcutAction } from "./shortcuts";
-import { isPinned, usePins } from "./pins";
+import { BUILTIN_COMMANDS, BUILTIN_KEYS } from "./builtins";
+import { invokePluginCommand, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
+import { CommandPalette } from "./components/command-palette";
+import { chordOfEvent, formatChord } from "./keys";
+import { isPinned, togglePin, usePins } from "./pins";
 import { applyEvent, displayName, markExited, onSignal, setMachines, setSessions, tileTitle, useStore } from "./store";
 import type { SessionState } from "./types";
 
@@ -50,6 +53,16 @@ export const App = () => {
   const [approvalFocus, setApprovalFocus] = useState(0);
   const [newSessionFor, setNewSessionFor] = useState<string | null>(null);
   const [usageOpen, setUsageOpen] = useState(loadUsageOpen);
+  const toggleUsage = useCallback(() => {
+    setUsageOpen((open) => {
+      try {
+        localStorage.setItem(USAGE_OPEN_KEY, open ? "0" : "1");
+      } catch {
+        // Remembering the toggle is a convenience only.
+      }
+      return !open;
+    });
+  }, []);
   const sessionsRef = useRef<SessionState[]>(sessions);
   sessionsRef.current = sessions;
   const activeKeyRef = useRef(activeKey);
@@ -167,63 +180,163 @@ export const App = () => {
     }
   }, [sessions]);
 
-  const runShortcut = useCallback(
-    (a: ShortcutAction) => {
+  const { plugins, pluginKeys, config } = useCommandState();
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let cancelled = false;
+    void startCommandSync().then((o) => (cancelled ? o() : (off = o)));
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
+
+  const allCommands = useMemo(() => [...BUILTIN_COMMANDS, ...plugins], [plugins]);
+  const keymap = useMemo(
+    () => resolveKeymap(BUILTIN_KEYS, pluginKeys, config.keybindings, new Set(allCommands.map((c) => c.name))),
+    [pluginKeys, config.keybindings, allCommands],
+  );
+  setActiveChords(keymap.byChord.keys());
+  const warnings = [...config.errors, ...keymap.warnings];
+
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((ok: boolean, text: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ ok, text });
+    toastTimer.current = setTimeout(() => setToast(null), ok ? 4000 : 8000);
+  }, []);
+
+  /** The session of the active tile, which session commands act on. */
+  const focusedSession = (): SessionState | null => {
+    const id = apiRef.current?.activePanel?.id;
+    return sessionsRef.current.find((s) => s.key === id) ?? null;
+  };
+
+  const runCommand = useCallback(
+    (name: string, args: Record<string, string>) => {
       const api = apiRef.current;
-      if (!api) return;
-      const panels = api.panels;
-      const idx = panels.findIndex((p) => p.id === api.activePanel?.id);
-      switch (a.type) {
-        case "next-panel":
-        case "prev-panel": {
+      const panels = api?.panels ?? [];
+      const idx = panels.findIndex((p) => p.id === api?.activePanel?.id);
+      switch (name) {
+        case "ui.palette":
+          setPaletteOpen(true);
+          return;
+        case "ui.nextTile":
+        case "ui.prevTile": {
           if (panels.length === 0) return;
-          const step = a.type === "next-panel" ? 1 : -1;
+          const step = name === "ui.nextTile" ? 1 : -1;
           panels[(idx + step + panels.length) % panels.length].api.setActive();
-          break;
+          return;
         }
-        case "close-panel":
-          api.activePanel?.api.close();
-          break;
-        case "split-right":
-        case "split-down": {
-          const active = api.activePanel;
-          const live = sessionsRef.current.filter((s) => s.activity !== "exited" && !api.getPanel(s.key));
+        case "ui.closeTile":
+          api?.activePanel?.api.close();
+          return;
+        case "ui.splitRight":
+        case "ui.splitDown": {
+          const active = api?.activePanel;
+          const live = sessionsRef.current.filter((s) => s.activity !== "exited" && !api?.getPanel(s.key));
           const target = live[0];
-          if (!target || !active) return;
+          if (!api || !target || !active) return;
           api.addPanel({
             id: target.key,
             component: "terminal",
             title: tileTitle(target),
             params: { machine: target.machine, session: target.meta.id },
-            position: { referencePanel: active.id, direction: a.type === "split-right" ? "right" : "below" },
+            position: { referencePanel: active.id, direction: name === "ui.splitRight" ? "right" : "below" },
           });
-          break;
+          return;
         }
-        case "open-nth": {
+        case "ui.openSession": {
           const live = sessionsRef.current.filter((s) => s.activity !== "exited");
-          const s = live[a.index];
+          const s = live[Number(args.index) - 1];
           if (s) openSession(s);
-          break;
+          return;
         }
-        case "focus-approval":
+        case "ui.approvals":
           setApprovalFocus((n) => n + 1);
-          break;
+          return;
+        case "ui.toggleUsage":
+          toggleUsage();
+          return;
+        case "ui.newSession":
+          setNewSessionFor(args.machine || "local");
+          return;
+        case "session.end":
+        case "session.pin":
+        case "session.copyId": {
+          const s = focusedSession();
+          if (!s) return showToast(false, "No session tile is focused");
+          if (name === "session.pin") return togglePin(s.key);
+          if (name === "session.copyId") {
+            void navigator.clipboard.writeText(s.meta.id).then(() => showToast(true, `Copied ${s.meta.id}`));
+            return;
+          }
+          if (confirm(`End session "${displayName(s)}" (${s.meta.id.slice(0, 8)})?`)) {
+            terminate(s.machine, s.meta.id).catch((e: unknown) => showToast(false, String(e)));
+          }
+          return;
+        }
       }
+      invokePluginCommand(name, args)
+        .then((msg) => showToast(true, msg && msg !== "delivered" ? msg : `${name}: done`))
+        .catch((e: unknown) => showToast(false, `${name}: ${String(e)}`));
     },
-    [openSession],
+    [openSession, showToast, toggleUsage],
   );
 
+  // Keys bound to commands are handled here, before the terminal sees them. Hold commands
+  // (push-to-talk) get press on key down and release on key up.
+  const held = useRef(new Map<string, string>());
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const a = matchShortcut(e);
-      if (!a) return;
+      if (e.type === "keyup") {
+        const command = held.current.get(e.code);
+        if (command) {
+          held.current.delete(e.code);
+          void invokePluginCommand(command, {}, "release").catch(() => undefined);
+        }
+        return;
+      }
+      if (e.isComposing) return;
+      const chord = chordOfEvent(e);
+      const b = chord ? keymap.byChord.get(chord) : undefined;
+      if (!b) return;
       e.preventDefault();
       e.stopPropagation();
-      runShortcut(a);
+      const cmd = allCommands.find((c) => c.name === b.command);
+      if (cmd?.hold) {
+        if (!e.repeat) {
+          held.current.set(e.code, cmd.name);
+          void invokePluginCommand(cmd.name, b.args, "press").catch(() => undefined);
+        }
+        return;
+      }
+      if (!e.repeat) runCommand(b.command, b.args);
     };
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [runShortcut]);
+    window.addEventListener("keyup", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKey, true);
+    };
+  }, [keymap, allCommands, runCommand]);
+
+  /** Short key help for the sidebar footer, taken from the effective key map. */
+  const keyHelp: [string, string][] = [
+    ["ui.palette", "commands"],
+    ["ui.nextTile", "next tile"],
+    ["ui.prevTile", "previous tile"],
+    ["ui.splitRight", "split right"],
+    ["ui.splitDown", "split down"],
+    ["ui.closeTile", "close tile"],
+    ["ui.approvals", "approvals"],
+  ].flatMap(([command, label]) => {
+    const chord = keymap.byCommand.get(command)?.[0];
+    return chord ? [[formatChord(chord), label] as [string, string]] : [];
+  });
+  if (keymap.byChord.get("alt+1")?.command === "ui.openSession") keyHelp.unshift(["Alt+1…9", "open session"]);
 
   const onReady = (e: DockviewReadyEvent) => {
     apiRef.current = e.api;
@@ -257,15 +370,7 @@ export const App = () => {
         <button
           className={`usage-toggle ${usageOpen ? "on" : ""}`}
           title={usageOpen ? "hide usage" : "show usage"}
-          onClick={() => {
-            const next = !usageOpen;
-            setUsageOpen(next);
-            try {
-              localStorage.setItem(USAGE_OPEN_KEY, next ? "1" : "0");
-            } catch {
-              // Remembering the toggle is a convenience only.
-            }
-          }}
+          onClick={toggleUsage}
         >
           Usage
         </button>
@@ -281,7 +386,7 @@ export const App = () => {
           pins={pins}
         />
         <footer className="help">
-          {SHORTCUT_HELP.map(([k, v]) => (
+          {keyHelp.map(([k, v]) => (
             <div key={k}>
               <kbd>{k}</kbd> {v}
             </div>
@@ -300,6 +405,19 @@ export const App = () => {
       </main>
       {usageOpen && <UsagePanel sessions={sessions} machines={machines} />}
       <ApprovalDialog sessions={sessions} machines={machines} focusToken={approvalFocus} />
+      {paletteOpen && (
+        <CommandPalette
+          commands={allCommands.filter((c) => c.palette)}
+          keysOf={(name) => keymap.byCommand.get(name) ?? []}
+          warnings={warnings}
+          onRun={(c, args) => {
+            setPaletteOpen(false);
+            runCommand(c.name, args);
+          }}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
+      {toast && <div className={`toast ${toast.ok ? "ok" : "error"}`}>{toast.text}</div>}
       {newSessionFor && (
         <NewSessionDialog
           machines={machines}

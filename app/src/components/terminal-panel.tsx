@@ -5,7 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import { decodeBytes, registerTerminal, resize, sendInput, sessionKey, setFocus, subscribe, unsubscribe } from "../api";
-import { matchShortcut } from "../shortcuts";
+import { isAppChord, terminalFont, useCommandState } from "../commands";
 
 export type TerminalParams = { machine: string; session: string };
 
@@ -21,6 +21,10 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
   const { machine, session } = props.params;
   const hostRef = useRef<HTMLDivElement>(null);
   const panelApi = props.api;
+  const termRef = useRef<{ term: Terminal; fit: FitAddon } | null>(null);
+  const font = terminalFont(useCommandState().config);
+  const fontRef = useRef(font);
+  fontRef.current = font;
 
   useEffect(() => {
     const el = hostRef.current;
@@ -28,8 +32,8 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
     const term = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
-      fontFamily: '"Cascadia Mono", "BIZ UDGothic", Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace',
-      fontSize: 13,
+      fontFamily: fontRef.current.family,
+      fontSize: fontRef.current.size,
       scrollback: 5000,
       theme: THEME,
     });
@@ -39,10 +43,11 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
     term.unicode.activeVersion = "11";
     term.open(el);
     fit.fit();
+    termRef.current = { term, fit };
 
     const send = (data: string) => void sendInput(machine, session, data).catch(() => undefined);
     term.attachCustomKeyEventHandler((e) => {
-      if (matchShortcut(e)) return false;
+      if (isAppChord(e)) return false;
       // Shift+Enter inserts a newline in Claude Code; xterm would otherwise send a plain CR.
       if (e.type === "keydown" && e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.isComposing) {
         send("\x1b[13;2u");
@@ -100,9 +105,20 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
       ro.disconnect();
       off();
       void unsubscribe(machine, session).catch(() => undefined);
+      termRef.current = null;
       term.dispose();
     };
   }, [machine, session, panelApi]);
+
+  // Apply font changes from ui.toml without recreating the terminal.
+  useEffect(() => {
+    const t = termRef.current;
+    if (!t) return;
+    if (t.term.options.fontFamily === font.family && t.term.options.fontSize === font.size) return;
+    t.term.options.fontFamily = font.family;
+    t.term.options.fontSize = font.size;
+    t.fit.fit();
+  }, [font.family, font.size]);
 
   return <div className="terminal-host" ref={hostRef} />;
 };
