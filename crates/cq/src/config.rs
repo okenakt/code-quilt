@@ -10,6 +10,9 @@ struct Config {
     /// Directories under which the dashboard may start sessions. Defaults to the home directory.
     #[serde(default)]
     allowed_roots: Vec<String>,
+    /// Subcommand aliases (`"q": "queen"`); the value may hold several words.
+    #[serde(default)]
+    aliases: std::collections::HashMap<String, String>,
 }
 
 fn load() -> Config {
@@ -71,4 +74,11 @@ pub fn list_dir(path: &str) -> Result<cq_proto::DirList> {
         .filter(|p| check_allowed(&p.to_string_lossy()).is_ok())
         .map(|p| p.to_string_lossy().into_owned());
     Ok(cq_proto::DirList { id: 0, path: dir.to_string_lossy().into_owned(), parent, entries, roots })
+}
+
+/// Subcommand aliases: the built-in `q = queen` plus the user's own, which take precedence.
+pub fn aliases() -> std::collections::HashMap<String, String> {
+    let mut all = std::collections::HashMap::from([("q".to_owned(), "queen".to_owned())]);
+    all.extend(load().aliases);
+    all
 }

@@ -13,14 +13,16 @@ mod launch;
 mod machine;
 mod mcp;
 mod paths;
+mod plugin;
 mod remote;
 mod session;
 mod term;
 mod usage;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use cq_proto::{SessionStatus, Size};
+use std::ffi::OsString;
 use std::time::Duration;
 
 #[derive(Parser)]
@@ -146,6 +148,9 @@ enum Cmd {
     /// Agent status line endpoint (internal).
     #[command(hide = true)]
     Statusline,
+    /// Any other name runs the plugin `cq-NAME` (e.g. `cq queen` runs cq-queen).
+    #[command(external_subcommand)]
+    External(Vec<OsString>),
 }
 
 #[derive(Subcommand)]
@@ -185,7 +190,11 @@ fn split_labels(args: Vec<String>) -> (launch::Labels, Vec<String>) {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let builtin = Cli::command();
+    let args = plugin::expand_alias(std::env::args_os().collect(), |name| {
+        name == "help" || builtin.find_subcommand(name).is_some()
+    });
+    let cli = Cli::parse_from(args);
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
     let code = rt.block_on(async {
         match run(cli.command).await {
@@ -305,6 +314,10 @@ async fn run(cmd: Cmd) -> Result<i32> {
             println!("prompt: {:?}", agent::find_choice_prompt(&host::screen_lines(p.screen())));
             agent::debug_input_row(p.screen());
             Ok(0)
+        }
+        Cmd::External(mut args) => {
+            let name = args.remove(0);
+            plugin::run_external(&name.to_string_lossy(), &args)
         }
         Cmd::Hook => {
             hook::hook().await;

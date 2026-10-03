@@ -122,27 +122,21 @@ fn resolve_program(prog: &str) -> (String, Vec<String>) {
     if !cfg!(windows) || prog.contains(['/', '\\']) {
         return (prog.to_owned(), Vec::new());
     }
-    let exts: Vec<String> = std::env::var("PATHEXT")
-        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
-        .split(';')
-        .filter(|e| !e.is_empty())
-        .map(|e| e.to_ascii_lowercase())
-        .collect();
-    let paths = std::env::var_os("PATH").unwrap_or_default();
-    for dir in std::env::split_paths(&paths) {
-        for ext in &exts {
-            let candidate = dir.join(format!("{prog}{ext}"));
-            if candidate.is_file() {
-                let path = candidate.to_string_lossy().into_owned();
-                return if ext == ".cmd" || ext == ".bat" {
-                    ("cmd.exe".to_owned(), vec!["/c".to_owned(), path])
-                } else {
-                    (path, Vec::new())
-                };
-            }
-        }
+    match paths::find_program(prog, paths::path_dirs()) {
+        Some(p) => with_batch_wrapper(&p),
+        None => (prog.to_owned(), Vec::new()),
     }
-    (prog.to_owned(), Vec::new())
+}
+
+/// Runs `.cmd` / `.bat` files through `cmd.exe /c`; returns the program and leading arguments.
+pub fn with_batch_wrapper(p: &std::path::Path) -> (String, Vec<String>) {
+    let path = p.to_string_lossy().into_owned();
+    let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+    if matches!(ext.as_deref(), Some("cmd" | "bat")) {
+        ("cmd.exe".to_owned(), vec!["/c".to_owned(), path])
+    } else {
+        (path, Vec::new())
+    }
 }
 
 /// Number of recent agent events replayed to newly connected hubs and monitors.
