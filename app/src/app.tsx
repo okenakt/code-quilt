@@ -10,7 +10,7 @@ import { UsagePanel } from "./components/usage-panel";
 import { notify } from "./notify";
 import { SHORTCUT_HELP, matchShortcut, type ShortcutAction } from "./shortcuts";
 import { isPinned, usePins } from "./pins";
-import { applyEvent, displayName, markExited, onSignal, setMachines, setSessions, useStore } from "./store";
+import { applyEvent, displayName, markExited, onSignal, setMachines, setSessions, tileTitle, useStore } from "./store";
 import type { SessionState } from "./types";
 
 const LAYOUT_KEY = "cq.layout.v2";
@@ -104,7 +104,7 @@ export const App = () => {
     api.addPanel({
       id: s.key,
       component: "terminal",
-      title: displayName(s),
+      title: tileTitle(s),
       params: { machine: s.machine, session: s.meta.id },
     });
   }, []);
@@ -114,7 +114,7 @@ export const App = () => {
     const api = apiRef.current;
     const key = sessionKey(machine, id);
     if (!api || api.getPanel(key)) return;
-    api.addPanel({ id: key, component: "terminal", title: id, params: { machine, session: id } });
+    api.addPanel({ id: key, component: "terminal", title: id.slice(0, 8), params: { machine, session: id } });
   }, []);
 
   const launch = useCallback(
@@ -148,7 +148,7 @@ export const App = () => {
       api.addPanel({
         id: s.key,
         component: "terminal",
-        title: displayName(s),
+        title: tileTitle(s),
         params: { machine: s.machine, session: s.meta.id },
         position: pinnedPanel ? { referencePanel: pinnedPanel.id, direction: "within" } : { direction: "right" },
         initialWidth: 560,
@@ -163,7 +163,7 @@ export const App = () => {
     if (!api) return;
     for (const s of sessions) {
       const p = api.getPanel(s.key);
-      if (p && p.title !== displayName(s)) p.api.setTitle(displayName(s));
+      if (p && p.title !== tileTitle(s)) p.api.setTitle(tileTitle(s));
     }
   }, [sessions]);
 
@@ -193,7 +193,7 @@ export const App = () => {
           api.addPanel({
             id: target.key,
             component: "terminal",
-            title: displayName(target),
+            title: tileTitle(target),
             params: { machine: target.machine, session: target.meta.id },
             position: { referencePanel: active.id, direction: a.type === "split-right" ? "right" : "below" },
           });

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { isPinned, togglePin } from "../pins";
 import { displayName } from "../store";
 import type { Activity, MachineInfo, SessionState } from "../types";
@@ -78,6 +79,28 @@ type ItemProps = {
   onResume: (s: SessionState) => void;
 };
 
+/** Short session id; clicking copies the full id. */
+const SessionId = ({ id }: { id: string }) => {
+  const [copied, setCopied] = useState(false);
+  return (
+    <span
+      role="button"
+      tabIndex={-1}
+      className={`session-id ${copied ? "copied" : ""}`}
+      title={copied ? "copied" : `${id} (click to copy)`}
+      onClick={(e) => {
+        e.stopPropagation();
+        void navigator.clipboard.writeText(id).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        });
+      }}
+    >
+      {id.slice(0, 8)}
+    </span>
+  );
+};
+
 const SessionItem = ({ s, machine, active, pinned, showMachine, onOpen, onResume }: ItemProps) => (
   <div
     role="button"
@@ -89,6 +112,7 @@ const SessionItem = ({ s, machine, active, pinned, showMachine, onOpen, onResume
   >
     <div className="session-row">
       <span className="session-name">{displayName(s)}</span>
+      <SessionId id={s.meta.id} />
       <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>
       {s.activity !== "exited" && (
         <button

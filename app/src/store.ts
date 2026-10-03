@@ -68,6 +68,16 @@ export const displayName = (s: SessionState): string => {
   return `${base} #${s.meta.id.slice(0, 4)}`;
 };
 
+/** Short session id shown in the UI; long enough to type into `cq attach`. */
+export const shortId = (s: SessionState): string => s.meta.id.slice(0, 8);
+
+/** Tile title: the session name followed by its short id. */
+export const tileTitle = (s: SessionState): string => {
+  const named = s.meta.name ?? s.status?.sessionName;
+  const base = named ?? s.meta.cwd.split(/[\\/]/).filter(Boolean).pop() ?? s.meta.cwd;
+  return `${base} (${shortId(s)})`;
+};
+
 /** Replaces the machine list. */
 export const setMachines = (m: MachineInfo[]): void => {
   machines = m;

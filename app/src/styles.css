@@ -284,11 +284,30 @@ kbd {
 }
 
 .session-name {
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.session-id {
+  font-family: "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: copy;
+  flex-shrink: 0;
+}
+
+.session-id:hover {
+  color: var(--text);
+}
+
+.session-id.copied {
+  color: var(--idle);
+}
+
 
 .session-cwd,
 .session-usage {
