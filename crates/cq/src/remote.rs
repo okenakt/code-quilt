@@ -185,6 +185,11 @@ async fn relay(
                     online = true;
                     report(true, None);
                 }
+                // Focus and commands belong to the desktop the client sits at, not to the
+                // remote machine; relaying them would overwrite the local daemon's.
+                if matches!(msg, Message::Focus(_) | Message::CommandList(_) | Message::InvokeCommand(_) | Message::CommandResult(_)) {
+                    continue;
+                }
                 let _ = out.send(tag_incoming(id, msg));
             }
             cmd = rx.recv() => {
