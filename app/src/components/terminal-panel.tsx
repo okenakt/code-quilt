@@ -28,7 +28,7 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
     const term = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
-      fontFamily: '"Cascadia Mono", "BIZ UDGothic", Consolas, monospace',
+      fontFamily: '"Cascadia Mono", "BIZ UDGothic", Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace',
       fontSize: 13,
       scrollback: 5000,
       theme: THEME,
