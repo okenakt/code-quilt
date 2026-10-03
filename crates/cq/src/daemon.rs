@@ -183,7 +183,9 @@ impl LocalRelay {
     /// so they work without a subscription; so does input for sessions without an open tile.
     fn route(&self, session: &str, inner: &Message) -> Option<&Conn> {
         match inner {
-            Message::Approve(_) | Message::SetMeta(_) | Message::Inject(_) => self.monitors.get(session),
+            Message::Approve(_) | Message::SetMeta(_) | Message::Inject(_) | Message::Terminate(_) => {
+                self.monitors.get(session)
+            }
             Message::Input(_) => self.subs.get(session).or_else(|| self.monitors.get(session)),
             _ => self.subs.get(session),
         }

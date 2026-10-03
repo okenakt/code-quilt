@@ -198,9 +198,17 @@ pub fn parse_target(target: &str) -> (String, String) {
     }
 }
 
+/// Waits for the session to exit instead of a confirmation event.
+pub const EXITED: &str = "<exit>";
+
 /// Sends a control message to a running session and waits until the host confirms it with a
-/// `cq` event of type `confirm`.
+/// `cq` event of type `confirm`, or until the session exits when `confirm` is [`EXITED`].
 pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<String> {
+    let limit = Duration::from_secs(20)
+        + match &inner {
+            Message::Terminate(t) => Duration::from_millis(t.grace_ms),
+            _ => Duration::ZERO,
+        };
     let (machine, key) = parse_target(target);
     let stream = daemon::connect().await?;
     let (rd, mut wr) = tokio::io::split(stream);
@@ -241,6 +249,9 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
                     }
                 }
                 Message::Routed { machine: m, session: s, inner } if m == machine && Some(&s) == session.as_ref() => {
+                    if confirm == EXITED && matches!(*inner, Message::Exit(_)) {
+                        return Ok(s);
+                    }
                     if let Message::Event(ev) = *inner {
                         let ty = ev.payload.get("type").and_then(|t| t.as_str());
                         // Replayed history may hold older confirmations; allow small clock skew.
@@ -256,5 +267,5 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
         }
         bail!("daemon connection closed")
     };
-    tokio::time::timeout(Duration::from_secs(20), run).await.context("timed out waiting for the session")?
+    tokio::time::timeout(limit, run).await.context("timed out waiting for the session")?
 }

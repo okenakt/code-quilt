@@ -6,9 +6,9 @@ use crate::{ipc, paths, session, usage};
 use anyhow::{Context, Result, bail};
 use cq_proto::{
     AgentEvent, ClientKind, Exit, Hello, Inject, InputOwner, Message, PROTOCOL_VERSION, SessionMeta, SetMeta,
-    SessionStatus, Size, Welcome, read_message, write_message,
+    SessionStatus, Size, Terminate, Welcome, read_message, write_message,
 };
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
@@ -183,6 +183,10 @@ struct State {
     injections: VecDeque<Inject>,
     /// Codex: an answered prompt that may still need Enter to confirm the selection.
     pending_confirm: Option<(String, std::time::Instant)>,
+    /// Kills the agent process; used when a graceful exit does not finish in time.
+    killer: Box<dyn ChildKiller + Send + Sync>,
+    /// A terminate request is in progress.
+    terminating: bool,
 }
 
 impl State {
@@ -412,6 +416,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
     }
     let mut child = pair.slave.spawn_command(cmd).with_context(|| format!("spawn {prog}"))?;
     drop(pair.slave);
+    let killer = child.clone_killer();
 
     let mut reader = pair.master.try_clone_reader()?;
     let mut writer = pair.master.take_writer()?;
@@ -468,6 +473,8 @@ pub async fn run(args: HostArgs) -> Result<()> {
         last_input: std::time::Instant::now(),
         injections: VecDeque::new(),
         pending_confirm: None,
+        killer,
+        terminating: false,
     }));
 
     {
@@ -630,6 +637,13 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
                     st.publish(AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload });
                 }
                 Message::SetMeta(m) => st.set_meta(m),
+                Message::Terminate(t) => {
+                    if !std::mem::replace(&mut st.terminating, true) {
+                        let payload = serde_json::json!({ "type": "terminating", "force": t.force });
+                        st.publish(cq_event(payload));
+                        tokio::spawn(terminate(state.clone(), t));
+                    }
+                }
                 Message::Resize(_) if monitor => {}
                 Message::Approve(a) => {
                     let payload = match st.approve(a.option, a.prompt_id.as_deref()) {
@@ -696,6 +710,49 @@ fn strip_cpr_requests(buf: &[u8]) -> Vec<u8> {
 
 fn cq_event(payload: serde_json::Value) -> AgentEvent {
     AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload }
+}
+
+/// Ends the agent the way a user would, so it can clean up (e.g. archive its Remote Control
+/// session), and kills it if it is still running when the grace period ends.
+///
+/// Steps: Esc closes a dialog or interrupts a turn; Ctrl+C clears typed text and, pressed again,
+/// quits both Claude Code and Codex; if that did not work, the exit command is typed.
+async fn terminate(state: Shared, t: Terminate) {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(t.grace_ms);
+    let agent = state.lock().unwrap().meta.agent.clone();
+    let exit_command: Option<&[u8]> = match agent.as_str() {
+        "claude" => Some(b"/exit"),
+        "codex" => Some(b"/quit"),
+        _ => None,
+    };
+    if !t.force {
+        if let Some(command) = exit_command {
+            let send = |bytes: &[u8]| {
+                let _ = state.lock().unwrap().pty_tx.send(bytes.to_vec());
+            };
+            let pause = |ms| tokio::time::sleep_until((tokio::time::Instant::now() + Duration::from_millis(ms)).min(deadline));
+            send(b"\x1b");
+            pause(800).await;
+            for _ in 0..3 {
+                send(b"\x03");
+                pause(300).await;
+            }
+            pause(2000).await;
+            // Still running: Ctrl+C may have only interrupted a turn. Type the exit command.
+            send(b"\x03");
+            pause(300).await;
+            send(command);
+            pause(400).await;
+            send(b"\r");
+        }
+        tokio::time::sleep_until(deadline).await;
+    }
+    // Reaching this point means the agent did not exit; the host would have ended otherwise.
+    let mut st = state.lock().unwrap();
+    st.publish(cq_event(serde_json::json!({ "type": "terminate_forced" })));
+    if let Err(e) = st.killer.kill() {
+        eprintln!("kill failed: {e}");
+    }
 }
 
 /// Publishes account changes and token totals (and, for Codex, its status) every two seconds.

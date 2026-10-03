@@ -83,6 +83,17 @@ enum Cmd {
         #[arg(long, default_value_t = 3000)]
         quiet_ms: u64,
     },
+    /// End a running session (`[machine:]name-or-id`): ask the agent to exit, kill it if it does
+    /// not exit within the grace period.
+    Kill {
+        target: String,
+        /// Kill right away without asking the agent to exit.
+        #[arg(long)]
+        force: bool,
+        /// Grace period in seconds before the agent is killed.
+        #[arg(long, default_value_t = 10)]
+        grace: u64,
+    },
     /// Manage remote machines shown in the dashboard.
     Machine {
         #[command(subcommand)]
@@ -224,6 +235,12 @@ async fn run(cmd: Cmd) -> Result<i32> {
             let inj = cq_proto::Inject { id: session::now_ms(), text, submit, quiet_ms };
             let id = cli::session_op(&target, cq_proto::Message::Inject(inj), "inject_queued").await?;
             println!("queued for {id}; it is typed once the session is idle");
+            Ok(0)
+        }
+        Cmd::Kill { target, force, grace } => {
+            let t = cq_proto::Terminate { grace_ms: grace * 1000, force };
+            let id = cli::session_op(&target, cq_proto::Message::Terminate(t), cli::EXITED).await?;
+            println!("session {id} ended");
             Ok(0)
         }
         Cmd::Attach { id } => {

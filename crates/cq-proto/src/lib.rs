@@ -149,6 +149,21 @@ fn default_quiet_ms() -> u64 {
     3000
 }
 
+/// Request to end a session: ask the agent to exit, then kill it after `grace_ms`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Terminate {
+    /// How long to wait for a graceful exit before killing the agent.
+    #[serde(default = "default_grace_ms")]
+    pub grace_ms: u64,
+    /// Kill right away without asking the agent to exit.
+    #[serde(default)]
+    pub force: bool,
+}
+
+fn default_grace_ms() -> u64 {
+    10_000
+}
+
 /// Change of a session's name and tags.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetMeta {
@@ -325,6 +340,8 @@ pub enum Message {
     RequestFailed(RequestFailed),
     /// Client to host: type text once the session is idle.
     Inject(Inject),
+    /// Client to host: end the session gracefully.
+    Terminate(Terminate),
     /// Client to host: change name and tags.
     SetMeta(SetMeta),
     /// Client to daemon: the session the user is typing into on this desktop.
@@ -363,6 +380,7 @@ mod kind {
     pub const REQUEST_FAILED: u8 = 0x3a;
     pub const INJECT: u8 = 0x23;
     pub const SET_META: u8 = 0x24;
+    pub const TERMINATE: u8 = 0x25;
     pub const SET_FOCUS: u8 = 0x40;
     pub const FOCUS: u8 = 0x41;
     pub const REGISTER_COMMAND: u8 = 0x42;
@@ -420,6 +438,7 @@ impl Message {
             Message::RequestFailed(v) => (kind::REQUEST_FAILED, serde_json::to_vec(v)?),
             Message::Inject(v) => (kind::INJECT, serde_json::to_vec(v)?),
             Message::SetMeta(v) => (kind::SET_META, serde_json::to_vec(v)?),
+            Message::Terminate(v) => (kind::TERMINATE, serde_json::to_vec(v)?),
             Message::SetFocus(v) => (kind::SET_FOCUS, serde_json::to_vec(v)?),
             Message::Focus(v) => (kind::FOCUS, serde_json::to_vec(v)?),
             Message::RegisterCommand(v) => (kind::REGISTER_COMMAND, serde_json::to_vec(v)?),
@@ -475,6 +494,7 @@ impl Message {
             kind::REQUEST_FAILED => Message::RequestFailed(serde_json::from_slice(&payload)?),
             kind::INJECT => Message::Inject(serde_json::from_slice(&payload)?),
             kind::SET_META => Message::SetMeta(serde_json::from_slice(&payload)?),
+            kind::TERMINATE => Message::Terminate(serde_json::from_slice(&payload)?),
             kind::SET_FOCUS => Message::SetFocus(serde_json::from_slice(&payload)?),
             kind::FOCUS => Message::Focus(serde_json::from_slice(&payload)?),
             kind::REGISTER_COMMAND => Message::RegisterCommand(serde_json::from_slice(&payload)?),
