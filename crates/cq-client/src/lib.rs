@@ -233,9 +233,19 @@ pub fn spawn_detached(cmd: &mut std::process::Command) -> Result<()> {
     {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
+        // Reap the child when it exits; a long-lived caller such as cqd would otherwise
+        // accumulate zombies.
+        let mut child = cmd.spawn().context("spawn detached process")?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(())
     }
-    cmd.spawn().context("spawn detached process")?;
-    Ok(())
+    #[cfg(not(unix))]
+    {
+        cmd.spawn().context("spawn detached process")?;
+        Ok(())
+    }
 }
 
 /// Connects to the local daemon, starting `cq daemon` if it is not running.

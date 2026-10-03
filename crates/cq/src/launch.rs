@@ -96,9 +96,19 @@ pub fn spawn_detached(cmd: &mut Command, log: &std::path::Path) -> Result<()> {
                 Ok(())
             });
         }
+        // Reap the child when it exits; cqd outlives its hosts and would otherwise keep them
+        // as zombies.
+        let mut child = cmd.spawn().context("spawn detached process")?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(())
     }
-    cmd.spawn().context("spawn detached process")?;
-    Ok(())
+    #[cfg(not(unix))]
+    {
+        cmd.spawn().context("spawn detached process")?;
+        Ok(())
+    }
 }
 
 /// Name and tags given to a session at start.
