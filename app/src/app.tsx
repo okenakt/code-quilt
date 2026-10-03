@@ -6,7 +6,7 @@ import { ApprovalDialog } from "./components/approval-dialog";
 import { NewSessionDialog } from "./components/new-session-dialog";
 import { SessionList } from "./components/session-list";
 import { TerminalPanel } from "./components/terminal-panel";
-import { UsageBar } from "./components/usage-bar";
+import { UsagePanel } from "./components/usage-panel";
 import { notify } from "./notify";
 import { SHORTCUT_HELP, matchShortcut, type ShortcutAction } from "./shortcuts";
 import { isPinned, usePins } from "./pins";
@@ -14,6 +14,15 @@ import { applyEvent, displayName, markExited, onSignal, setMachines, setSessions
 import type { SessionState } from "./types";
 
 const LAYOUT_KEY = "cq.layout.v2";
+const USAGE_OPEN_KEY = "cq.usage-open";
+
+const loadUsageOpen = (): boolean => {
+  try {
+    return localStorage.getItem(USAGE_OPEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
+};
 const components = { terminal: TerminalPanel };
 
 const loadLayout = (): unknown => {
@@ -40,6 +49,7 @@ export const App = () => {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [approvalFocus, setApprovalFocus] = useState(0);
   const [newSessionFor, setNewSessionFor] = useState<string | null>(null);
+  const [usageOpen, setUsageOpen] = useState(loadUsageOpen);
   const sessionsRef = useRef<SessionState[]>(sessions);
   sessionsRef.current = sessions;
   const activeKeyRef = useRef(activeKey);
@@ -233,17 +243,32 @@ export const App = () => {
   const pendingApprovals = sessions.filter((s) => s.prompt).length;
 
   return (
-    <div className="app">
+    <div className={`app ${usageOpen ? "with-usage" : ""}`}>
       <header className="topbar">
         <div className="brand">
           Code<span>Quilt</span>
         </div>
-        <UsageBar sessions={sessions} machines={machines} />
+        <div className="topbar-spacer" />
         {pendingApprovals > 0 && (
           <button className="approval-chip" onClick={() => setApprovalFocus((n) => n + 1)}>
             {pendingApprovals} approval{pendingApprovals > 1 ? "s" : ""}
           </button>
         )}
+        <button
+          className={`usage-toggle ${usageOpen ? "on" : ""}`}
+          title={usageOpen ? "hide usage" : "show usage"}
+          onClick={() => {
+            const next = !usageOpen;
+            setUsageOpen(next);
+            try {
+              localStorage.setItem(USAGE_OPEN_KEY, next ? "1" : "0");
+            } catch {
+              // Remembering the toggle is a convenience only.
+            }
+          }}
+        >
+          Usage
+        </button>
       </header>
       <aside className="sidebar">
         <SessionList
@@ -273,6 +298,7 @@ export const App = () => {
           <div className="tiles-empty">Select a session to open it as a tile.</div>
         )}
       </main>
+      {usageOpen && <UsagePanel sessions={sessions} machines={machines} />}
       <ApprovalDialog sessions={sessions} machines={machines} focusToken={approvalFocus} />
       {newSessionFor && (
         <NewSessionDialog
