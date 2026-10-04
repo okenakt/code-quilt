@@ -1,4 +1,7 @@
-//! CodeQuilt dashboard backend: Tauri commands over per-machine daemon connections.
+//! cq-board: the CodeQuilt dashboard. Tauri commands over one connection to the local daemon.
+
+// Prevents an additional console window on Windows in release builds.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod hub;
 mod settings;
@@ -168,9 +171,12 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Starts the Tauri application.
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+fn main() {
+    // Like every cq-* next to cq, the board is asked for its plugin manifest; it declares no commands.
+    if std::env::args().nth(1).as_deref() == Some("manifest") {
+        println!(r#"{{"name":"board","commands":[]}}"#);
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {

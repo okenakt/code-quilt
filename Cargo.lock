@@ -575,24 +575,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
-name = "codequilt-app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "cq-client",
- "cq-proto",
- "dirs",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-notification",
- "tokio",
- "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -695,6 +677,24 @@ dependencies = [
  "uuid",
  "vt100",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "cq-board"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "cq-client",
+ "cq-proto",
+ "dirs",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-notification",
+ "tokio",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]

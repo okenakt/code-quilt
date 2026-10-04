@@ -1,4 +1,4 @@
 /target
-/app/node_modules
-/app/dist
-/app/src-tauri/gen
+/board/node_modules
+/board/dist
+/board/src-tauri/gen

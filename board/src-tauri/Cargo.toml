@@ -1,12 +1,8 @@
 [package]
-name = "codequilt-app"
+name = "cq-board"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-
-[lib]
-name = "codequilt_app_lib"
-crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -46,7 +46,7 @@ CodeQuiltの本体は「エージェントのプロセスをラップし、全�
 ```mermaid
 flowchart TB
   subgraph Clients["クライアント（本体から見て対等）"]
-    UI["ダッシュボードUI<br/>Tauri＋React"]
+    UI["cq-board（ダッシュボード）<br/>Tauri＋React"]
     Queen["cq-queen<br/>公式オーケストレーター"]
     Whisper["cq-whisper<br/>音声入力"]
     CLI["cq CLI<br/>ls / attach / usage"]
@@ -71,7 +71,7 @@ flowchart TB
 | 本体 | cqd | マシンごとの発見・中継・起動。ローカルのcqdは登録済みのリモートcqdにもsshで接続し、全マシンを一つの口に集約する。状態は持たない |
 | 本体 | cq CLI / `cq mcp` | 人間向けのCLIと、エージェント向けのMCPサーバー。どちらもcqdのクライアント |
 | 契約 | cq-proto / cq-client | プロトコルの型と、Rust製クライアント用のSDK |
-| クライアント | ダッシュボードUI | 一覧・タイル・承認ダイアログ・OS通知・使用量表示。データは持たず本体の状態を表示する |
+| クライアント | cq-board（ダッシュボード、`board/`） | 一覧・タイル・承認ダイアログ・OS通知・使用量表示。データは持たず本体の状態を表示する。本体の隣に置く他の `cq-*` と同じく `cq board` で起動でき、起動時にcqdが無ければ立ち上げる |
 | クライアント | cq-queen | 公式オーケストレーター。Queen自体は普通のセッションで、常駐プロセスが他セッションの出来事をQueenに届ける |
 | クライアント | cq-whisper | 音声入力。文字起こしをフォーカス中のセッションに入れる |
 
