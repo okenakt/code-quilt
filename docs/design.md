@@ -96,6 +96,8 @@ flowchart TB
 
 - sessionsディレクトリを監視してセッションを発見し、pidの生存確認で死んだエントリを掃除する。
 - マシン内のcq-hostを束ね、クライアントには単一の経路で公開する。状態を持たない中継役なので、落ちても再起動するだけで済む。
+- クライアント（board、`cq` の各コマンド、cq-queen）は、接続するときにcqdが無ければ起動する。`cq daemon status` / `stop` / `restart [--machine ID]` とboardの `daemon.restart` で止めたり入れ替えたりできる（停止してもセッションは動き続け、次の接続で新しいcqdが立ち上がる。リモートはssh越しに止め、bridgeの再接続で立ち上がる）。
+- 起動を受けたら、cq-hostがセッションを登録してから `Launched` を返す。返事を受けた時点でそのセッションはどの一覧にも載っている。
 - ローカルのcqdは、登録済みのリモートマシンのcqdにもsshで接続し、全マシンのセッションをまとめて公開する（集約）。イベントの履歴は各cq-hostが持ち、再接続時に再送されるので、集約しても状態は持たない。
 
 ### クライアントとの接続
@@ -185,7 +187,7 @@ VS Codeの拡張と同じ考え方で、プラグインは提供するコマン�
 
 | 出どころ | 例 | 一覧（パレット）に出るか | 実行する場所 |
 | --- | --- | --- | --- |
-| UIの組み込み | `ui.palette`、`ui.nextTile` / `ui.prevTile`、`ui.closeTile`、`ui.splitRight` / `ui.splitDown`、`ui.approvals`、`ui.openSession`、`ui.toggleUsage`、`ui.newSession`、`session.end` / `session.pin` / `session.copyId`（フォーカス中のタイルが対象） | 出る | UI内 |
+| UIの組み込み | `ui.palette`、`ui.nextTile` / `ui.prevTile`、`ui.closeTile`、`ui.splitRight` / `ui.splitDown`、`ui.approvals`、`ui.openSession`、`ui.toggleUsage`、`ui.newSession`、`session.end` / `session.pin` / `session.copyId`（フォーカス中のタイルが対象）、`daemon.restart` | 出る | UI内 |
 | プラグインのmanifest | `queen.start`、`whisper.pushToTalk` | 出る | プラグインを導入したマシンのcqd経由 |
 | 実行時の登録のみ | `channel:<session-id>` | 出ない（プログラムからの呼び出し専用） | 登録したクライアント |
 
@@ -273,15 +275,23 @@ command = "-ui.closeTile"   # removes the default binding of this key (all of it
 ### UI設定
 
 - `~/.codequilt/ui.toml`（UIを動かすマシン側）。VS Codeと同じく、設定とキーバインドは別ファイルにする。
+- 無ければboardの起動時に既定の内容を書き出す。効いている設定はすべてファイルに見える（見えない既定値を持たない）。
 
 ```toml
+# Commands run in order when the board starts; failures are shown as notifications.
+[[on_start]]
+command = "queen.start"
+args = { name = "queen" }
+
 [terminal]
-font_family = ["HackGen Console NF"]   # tried first
+font_family = []   # tried before the built-in fallbacks
 font_size = 13
 ```
 
+- **`on_start`**：boardの起動時、設定を読み、ローカルのcqdにつながってから順に実行する。既定はQueenの起動（board を開くとQueenが仲介する、という想定の使い方）。`queen.start` は同名のQueenが動いていれば何もせず成功を返すので、boardを開き直しても重複しない。Queenを使わないなら行を消す。
+- **通知**：コマンドやhookが正常に終わらなかったときは、すべて右下の通知で知らせる（失敗は長めに残し、クリックで消える）。
 - `font_family` の後ろに組み込みのフォールバック（`Cascadia Mono`、`BIZ UDGothic`、`Consolas`、`DejaVu Sans Mono`、`Noto Sans Mono CJK JP`、`monospace`）を連結する。指定したフォントが無くても表示は崩れない。
-- 設定は監視して即座に反映する。設定画面は必要になってから検討する。
+- 設定は監視して即座に反映する（`on_start` は起動時だけ）。設定画面は必要になってから検討する。
 
 ### プロトコルの変更
 
