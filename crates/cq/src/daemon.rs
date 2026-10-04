@@ -8,7 +8,7 @@
 
 use crate::machine::{self, MachineEntry};
 use crate::{ipc, paths, plugin, remote, session};
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use cq_proto::{
     ClientKind, CommandInfo, CommandResult, DirList, Hello, InvokeCommand, DAEMON_PROTOCOL_VERSION, LOCAL_MACHINE, Launched, MachineInfo, Message, PROTOCOL_VERSION,
     RequestFailed, SessionList, SessionMeta, SessionStatus, Subscribe, read_message, spawn_reader,
@@ -43,21 +43,9 @@ pub async fn run() -> Result<()> {
     }
 }
 
-/// Connects to the local daemon, starting it if needed.
-pub async fn connect() -> Result<ipc::BoxStream> {
-    let endpoint = paths::daemon_endpoint()?;
-    if let Ok(s) = ipc::connect_now(&endpoint).await {
-        return Ok(s);
-    }
-    let exe = std::env::current_exe()?;
-    let log = paths::root()?.join("logs").join("daemon.log");
-    crate::launch::spawn_detached(std::process::Command::new(exe).arg("daemon"), &log)?;
-    ipc::connect(&endpoint, Duration::from_secs(5)).await.context("daemon did not start")
-}
-
 /// `cq bridge`: relays stdin/stdout to the local daemon (used as `ssh host cq bridge`).
 pub async fn bridge() -> Result<()> {
-    let stream = connect().await?;
+    let stream = cq_client::connect_daemon().await?;
     let (mut rd, mut wr) = tokio::io::split(stream);
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
@@ -409,8 +397,7 @@ async fn exec_command(path: std::path::PathBuf, args: Vec<String>, id: Option<u6
 fn start_plugin(path: &std::path::Path, args: &[String]) -> Result<()> {
     let (program, prefix) = crate::host::with_batch_wrapper(path);
     let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let log = paths::root()?.join("logs").join(format!("{name}.log"));
-    crate::launch::spawn_detached(std::process::Command::new(program).args(prefix).args(args), &log)
+    cq_client::spawn_detached(std::process::Command::new(program).args(prefix).args(args), &cq_client::log_file(&name)?)
 }
 
 fn desktop() -> &'static std::sync::Mutex<Desktop> {

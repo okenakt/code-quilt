@@ -1,7 +1,6 @@
 //! `cq mcp`: an MCP server (stdio, JSON-RPC 2.0) that lets an agent see and drive other
 //! sessions through the local daemon. Agent-agnostic: Claude Code and Codex both speak MCP.
 
-use crate::daemon;
 use anyhow::{Result, anyhow, bail};
 use cq_client::{Activity, MAX_TURNS, Model, Session};
 use cq_proto::{ClientKind, DAEMON_PROTOCOL_VERSION, Hello, LOCAL_MACHINE, Message, spawn_reader, write_message};
@@ -211,7 +210,7 @@ async fn daemon_loop(
 ) {
     loop {
         let run = async {
-            let stream = daemon::connect().await?;
+            let stream = cq_client::connect_daemon().await?;
             let (rd, mut wr) = tokio::io::split(stream);
             let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: true };
             write_message(&mut wr, &Message::Hello(hello)).await?;

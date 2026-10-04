@@ -120,13 +120,9 @@ fn queen_cwd(name: &str, cfg: &QueenConfig) -> Result<std::path::PathBuf> {
 }
 
 fn spawn_courier(name: &str) -> Result<()> {
-    let log = cq_proto::local::state_root()?.join("logs").join(format!("queen-{name}.log"));
-    if let Some(d) = log.parent() {
-        std::fs::create_dir_all(d)?;
-    }
     let mut cmd = std::process::Command::new(std::env::current_exe()?);
-    cmd.args(["run", name]).stderr(std::fs::File::create(log)?);
-    cq_client::spawn_detached(&mut cmd)
+    cmd.args(["run", name]);
+    cq_client::spawn_detached(&mut cmd, &cq_client::log_file(&format!("queen-{name}"))?)
 }
 
 /// Launches the Queen session through the daemon without a terminal.

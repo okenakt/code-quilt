@@ -4,7 +4,7 @@ use crate::{attach, paths, session};
 use anyhow::{Context, Result};
 use cq_proto::Size;
 use serde_json::json;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
 /// Writes `~/.codequilt/claude.json`, the settings injected via `--settings`.
@@ -64,53 +64,6 @@ fn session_settings(id: &str, extra: Option<&str>) -> Result<std::path::PathBuf>
     Ok(path)
 }
 
-/// Spawns a command detached from the current console and process tree, with stderr to `log`.
-pub fn spawn_detached(cmd: &mut Command, log: &std::path::Path) -> Result<()> {
-    if let Some(dir) = log.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(std::fs::File::create(log)?);
-
-    #[cfg(windows)]
-    {
-        cq_client::disinherit_std_handles();
-        use std::os::windows::process::CommandExt;
-        use windows_sys::Win32::System::Threading::{
-            CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
-        };
-        let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
-        // Break away from the terminal's job object so closing the terminal does not kill the
-        // process; fall back if the job forbids breakaway.
-        cmd.creation_flags(base | CREATE_BREAKAWAY_FROM_JOB);
-        if cmd.spawn().is_ok() {
-            return Ok(());
-        }
-        cmd.creation_flags(base);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-        // Reap the child when it exits; cqd outlives its hosts and would otherwise keep them
-        // as zombies.
-        let mut child = cmd.spawn().context("spawn detached process")?;
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        cmd.spawn().context("spawn detached process")?;
-        Ok(())
-    }
-}
-
 /// Name and tags given to a session at start.
 #[derive(Default)]
 pub struct Labels {
@@ -132,7 +85,7 @@ pub fn spawn_host(id: &str, agent: &str, cwd: &str, size: Size, labels: &Labels,
         cmd.args(["--tag", t]);
     }
     cmd.arg("--").args(command);
-    spawn_detached(&mut cmd, &paths::root()?.join("logs").join(format!("{id}.log")))
+    cq_client::spawn_detached(&mut cmd, &cq_client::log_file(id)?)
 }
 
 /// Starts a session without a local terminal (dashboard launch or resume). Returns the id.

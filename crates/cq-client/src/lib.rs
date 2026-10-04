@@ -212,9 +212,18 @@ pub fn disinherit_std_handles() {
     }
 }
 
-/// Starts a process detached from this console and process tree.
-pub fn spawn_detached(cmd: &mut std::process::Command) -> Result<()> {
-    cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null());
+/// Log file `~/.codequilt/logs/<name>.log`, with its directory created.
+pub fn log_file(name: &str) -> Result<PathBuf> {
+    let dir = local::state_root()?.join("logs");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join(format!("{name}.log")))
+}
+
+/// Starts a process detached from this console and process tree, with stderr going to `log`.
+pub fn spawn_detached(cmd: &mut std::process::Command, log: &std::path::Path) -> Result<()> {
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(log).with_context(|| format!("create {}", log.display()))?);
     #[cfg(windows)]
     {
         disinherit_std_handles();
@@ -223,27 +232,31 @@ pub fn spawn_detached(cmd: &mut std::process::Command) -> Result<()> {
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
         let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+        // Break away from the terminal's job so closing it does not kill the process; fall back
+        // if the job forbids breakaway.
         cmd.creation_flags(base | CREATE_BREAKAWAY_FROM_JOB);
         if cmd.spawn().is_ok() {
             return Ok(());
         }
         cmd.creation_flags(base);
+        cmd.spawn().context("spawn detached process")?;
+        Ok(())
     }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-        // Reap the child when it exits; a long-lived caller such as cqd would otherwise
-        // accumulate zombies.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        // Reap the child when it exits; a long-lived caller such as cqd would otherwise keep
+        // zombies.
         let mut child = cmd.spawn().context("spawn detached process")?;
         std::thread::spawn(move || {
             let _ = child.wait();
         });
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        cmd.spawn().context("spawn detached process")?;
         Ok(())
     }
 }
@@ -254,8 +267,6 @@ pub async fn connect_daemon() -> Result<BoxStream> {
     if let Ok(s) = local::connect(&endpoint, Duration::ZERO).await {
         return Ok(s);
     }
-    let mut cmd = std::process::Command::new(cq_binary());
-    cmd.arg("daemon").stderr(std::process::Stdio::null());
-    spawn_detached(&mut cmd)?;
+    spawn_detached(std::process::Command::new(cq_binary()).arg("daemon"), &log_file("daemon")?)?;
     local::connect(&endpoint, Duration::from_secs(5)).await
 }

@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result, bail};
 use base64::Engine;
-use cq_proto::local::{self, BoxStream};
+use cq_proto::local::BoxStream;
 use cq_proto::{
     AgentEvent, ClientKind, CommandInfo, DAEMON_PROTOCOL_VERSION, InvokeCommand, Hello, MachineInfo, Message, SessionMeta, SessionRef,
     Subscribe, spawn_reader, write_message,
@@ -262,7 +262,7 @@ impl Hub {
 
     async fn connection_loop(self: Arc<Self>, mut rx: UnboundedReceiver<Message>) {
         loop {
-            let err = match open_daemon().await {
+            let err = match cq_client::connect_daemon().await {
                 Ok(stream) => {
                     // Hosts replay their history to the new connection; drop the stale copy.
                     self.cache.lock().unwrap().events.clear();
@@ -385,49 +385,3 @@ impl Hub {
     }
 }
 
-/// Locates the `cq` binary: `CQ_BIN`, next to this executable, or on PATH.
-pub fn cq_binary() -> std::path::PathBuf {
-    if let Some(p) = std::env::var_os("CQ_BIN") {
-        return p.into();
-    }
-    let name = if cfg!(windows) { "cq.exe" } else { "cq" };
-    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) {
-        let p = dir.join(name);
-        if p.is_file() {
-            return p;
-        }
-    }
-    name.into()
-}
-
-fn spawn_daemon() -> Result<()> {
-    let mut cmd = std::process::Command::new(cq_binary());
-    cmd.arg("daemon")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-        let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
-        cmd.creation_flags(base | CREATE_BREAKAWAY_FROM_JOB);
-        if cmd.spawn().is_ok() {
-            return Ok(());
-        }
-        cmd.creation_flags(base);
-    }
-    cmd.spawn().context("start cq daemon")?;
-    Ok(())
-}
-
-async fn open_daemon() -> Result<BoxStream> {
-    let endpoint = local::daemon_endpoint()?;
-    if let Ok(s) = local::connect(&endpoint, Duration::ZERO).await {
-        return Ok(s);
-    }
-    spawn_daemon()?;
-    local::connect(&endpoint, Duration::from_secs(5)).await
-}

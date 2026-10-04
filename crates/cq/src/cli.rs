@@ -1,6 +1,5 @@
 //! CLI operations on sessions of any machine, performed through the local daemon.
 
-use crate::daemon;
 use anyhow::{Context, Result, bail};
 use cq_proto::{
     ClientKind, DAEMON_PROTOCOL_VERSION, Hello, LOCAL_MACHINE, Message, SessionStatus, spawn_reader,
@@ -44,7 +43,7 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
     use serde_json::{Value, json};
     use std::collections::{BTreeMap, HashMap};
 
-    let stream = daemon::connect().await?;
+    let stream = cq_client::connect_daemon().await?;
     let (rd, mut wr) = tokio::io::split(stream);
     let mut msgs = spawn_reader(rd);
     let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: !local_only };
@@ -210,7 +209,7 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
             _ => Duration::ZERO,
         };
     let (machine, key) = parse_target(target);
-    let stream = daemon::connect().await?;
+    let stream = cq_client::connect_daemon().await?;
     let (rd, mut wr) = tokio::io::split(stream);
     let mut msgs = spawn_reader(rd);
     let hello = Hello {
@@ -277,7 +276,7 @@ pub async fn run_command(name: &str, args: &[String]) -> Result<i32> {
         let (k, v) = a.split_once('=').with_context(|| format!("expected NAME=VALUE, got '{a}'"))?;
         map.insert(k.to_owned(), serde_json::Value::String(v.to_owned()));
     }
-    let stream = daemon::connect().await?;
+    let stream = cq_client::connect_daemon().await?;
     let (rd, mut wr) = tokio::io::split(stream);
     let mut msgs = spawn_reader(rd);
     let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: false };

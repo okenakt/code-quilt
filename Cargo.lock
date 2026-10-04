@@ -580,6 +580,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "cq-client",
  "cq-proto",
  "dirs",
  "serde",
@@ -702,6 +703,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cq-proto",
+ "libc",
  "serde_json",
  "tokio",
  "windows-sys 0.61.2",
