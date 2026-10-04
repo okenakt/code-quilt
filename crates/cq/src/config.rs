@@ -4,20 +4,20 @@
 use crate::machine::MachineEntry;
 use crate::paths;
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Config {
     /// Directories under which the dashboard may start sessions. Defaults to the home directory.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     allowed_roots: Vec<String>,
     /// Subcommand aliases (`q = "queen"`); the value may hold several words.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default)]
     aliases: HashMap<String, String>,
     /// Remote machines the daemon connects to.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub machines: Vec<MachineEntry>,
 }
 
@@ -41,7 +41,6 @@ pub fn edit(f: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>) -> Result
 }
 
 fn load_in(root: &Path) -> Result<Config> {
-    migrate_legacy(root)?;
     let path = root.join(FILE);
     match std::fs::read_to_string(&path) {
         Ok(text) => toml::from_str(&text).with_context(|| format!("invalid {}", path.display())),
@@ -51,7 +50,6 @@ fn load_in(root: &Path) -> Result<Config> {
 }
 
 fn edit_in(root: &Path, f: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>) -> Result<()> {
-    migrate_legacy(root)?;
     let path = root.join(FILE);
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -62,43 +60,6 @@ fn edit_in(root: &Path, f: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()
     f(&mut doc)?;
     std::fs::create_dir_all(root)?;
     std::fs::write(&path, doc.to_string())?;
-    Ok(())
-}
-
-/// Converts the former `config.json` and `machines.json` into `config.toml` once, keeping the
-/// old files as `.bak`.
-fn migrate_legacy(root: &Path) -> Result<()> {
-    #[derive(Default, Deserialize)]
-    struct Legacy {
-        #[serde(default)]
-        allowed_roots: Vec<String>,
-        #[serde(default)]
-        aliases: HashMap<String, String>,
-    }
-    let (old_config, old_machines) = (root.join("config.json"), root.join("machines.json"));
-    if root.join(FILE).exists() || !(old_config.exists() || old_machines.exists()) {
-        return Ok(());
-    }
-    let legacy: Legacy = match std::fs::read(&old_config) {
-        Ok(d) => serde_json::from_slice(&d).context("invalid config.json")?,
-        Err(_) => Legacy::default(),
-    };
-    let machines: Vec<MachineEntry> = match std::fs::read(&old_machines) {
-        Ok(d) => serde_json::from_slice(&d).context("invalid machines.json")?,
-        Err(_) => Vec::new(),
-    };
-    let config = Config { allowed_roots: legacy.allowed_roots, aliases: legacy.aliases, machines };
-    let text = format!(
-        "# CodeQuilt configuration (converted from config.json / machines.json).\n\n{}",
-        toml::to_string_pretty(&config)?
-    );
-    std::fs::write(root.join(FILE), text)?;
-    for old in [old_config, old_machines] {
-        if old.exists() {
-            std::fs::rename(&old, old.with_extension("json.bak"))?;
-        }
-    }
-    eprintln!("cq: moved the configuration to {}", root.join(FILE).display());
     Ok(())
 }
 
@@ -171,27 +132,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    #[test]
-    fn migrates_json_files_once() {
-        let root = temp_root("migrate");
-        std::fs::write(root.join("config.json"), r#"{"allowed_roots": ["C:\\work"], "aliases": {"qs": "queen start"}}"#).unwrap();
-        std::fs::write(
-            root.join("machines.json"),
-            r#"[{"id": "wsl", "label": "wsl", "ssh": "wsl", "login_shell": true}]"#,
-        )
-        .unwrap();
-        let c = load_in(&root).unwrap();
-        assert_eq!(c.allowed_roots, [r"C:\work"]);
-        assert_eq!(c.aliases["qs"], "queen start");
-        assert_eq!(c.machines[0].id, "wsl");
-        assert!(c.machines[0].login_shell);
-        assert!(root.join("config.json.bak").exists() && root.join("machines.json.bak").exists());
-        assert!(!root.join("config.json").exists());
-        // A second load reads the TOML file only.
-        assert_eq!(load_in(&root).unwrap().machines.len(), 1);
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

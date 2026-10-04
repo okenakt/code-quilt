@@ -268,7 +268,7 @@ command = "-ui.closeTile"   # removes the default binding of this key (all of it
 | `~/.codequilt/keybindings.toml` | キーバインド | UI |
 | `~/.codequilt/queens/NAME.toml` | Queenごとの設定 | cq-queen |
 
-プログラムが生成する状態（`sessions/*.json`、`plugins/*.json`）や、Claude Code・MCPがJSONを求めるファイル（`claude.json`、`settings/*.json`、`*.mcp.json`）はJSONのまま。旧形式の `config.json` / `machines.json` は、最初に読むときに `config.toml` へ変換し、元のファイルは `.bak` として残す。
+プログラムが生成する状態（`sessions/*.json`、`plugins/*.json`）や、Claude Code・MCPがJSONを求めるファイル（`claude.json`、`settings/*.json`、`*.mcp.json`）はJSONのまま。
 
 ### UI設定
 

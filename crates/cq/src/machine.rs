@@ -2,20 +2,20 @@
 
 use crate::config;
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::io::{BufRead, Write};
 
 /// One `[[machines]]` entry of `~/.codequilt/config.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct MachineEntry {
     pub id: String,
     pub label: String,
     pub ssh: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub cq_path: Option<String>,
     /// Start `cq bridge` through a login shell (`sh -lc`) so the remote PATH set up in
     /// `~/.profile` (e.g. Volta, `~/.local/bin`) reaches the daemon and the agents it starts.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
     pub login_shell: bool,
 }
 
