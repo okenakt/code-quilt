@@ -98,8 +98,11 @@ impl vt100::Callbacks for ExtraModes {
     }
 }
 
-/// Environment variables Claude Code sets for its own child processes.
-const NESTED_SESSION_VARS: &[&str] = &[
+/// Internal state of whatever started the daemon, which must not reach the agents: an enclosing
+/// Claude Code session (the agent would take itself for a child session and, among other
+/// things, disable transcripts), or a Volta-managed tool (with `_VOLTA_TOOL_RECURSION` set,
+/// Volta's shims skip their own lookup and the agents' hooks fail to find `node`).
+const LAUNCHER_VARS: &[&str] = &[
     "CLAUDECODE",
     "CLAUDE_CODE_CHILD_SESSION",
     "CLAUDE_CODE_SESSION_ID",
@@ -112,6 +115,7 @@ const NESTED_SESSION_VARS: &[&str] = &[
     "CLAUDE_CODE_EXECPATH",
     "CLAUDE_PID",
     "CLAUDE_EFFORT",
+    "_VOLTA_TOOL_RECURSION",
 ];
 
 /// Finds the executable for a bare command name. On Windows, PATH may hold an extensionless
@@ -420,9 +424,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
             cmd.env("COLORTERM", "truecolor");
         }
     }
-    // Markers of an enclosing Claude Code session (e.g. when cqd was started from one) would
-    // make the agent believe it is a child session and, among other things, disable transcripts.
-    for var in NESTED_SESSION_VARS {
+    for var in LAUNCHER_VARS {
         cmd.env_remove(var);
     }
     let mut child = pair.slave.spawn_command(cmd).with_context(|| format!("spawn {prog}"))?;
