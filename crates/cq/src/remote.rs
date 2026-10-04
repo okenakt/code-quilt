@@ -105,6 +105,7 @@ fn untag_outgoing(msg: Message) -> Message {
             l.machine = LOCAL_MACHINE.to_owned();
             Message::ListDir(l)
         }
+        Message::Shutdown(_) => Message::Shutdown(cq_proto::Shutdown { machine: LOCAL_MACHINE.to_owned() }),
         other => other,
     }
 }

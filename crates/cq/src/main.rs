@@ -21,7 +21,7 @@ mod usage;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
-use cq_proto::{SessionStatus, Size};
+use cq_proto::{LOCAL_MACHINE, SessionStatus, Size};
 use std::ffi::OsString;
 use std::time::Duration;
 
@@ -123,8 +123,12 @@ enum Cmd {
         #[arg(long)]
         channel: bool,
     },
-    /// Run the machine daemon that relays sessions to dashboards.
-    Daemon,
+    /// Run the machine daemon that relays sessions to dashboards (started automatically), or
+    /// manage it. Sessions keep running when it stops.
+    Daemon {
+        #[command(subcommand)]
+        action: Option<DaemonCmd>,
+    },
     /// Relay stdin/stdout to the local daemon (for `ssh <host> cq bridge`).
     Bridge,
     /// Session host process (internal).
@@ -164,6 +168,22 @@ enum Cmd {
     /// Any other name runs the plugin `cq-NAME` (e.g. `cq queen` runs cq-queen).
     #[command(external_subcommand)]
     External(Vec<OsString>),
+}
+
+#[derive(Subcommand)]
+enum DaemonCmd {
+    /// Show whether the local daemon and the remote machines are running.
+    Status,
+    /// Stop a daemon.
+    Stop {
+        #[arg(long, default_value = LOCAL_MACHINE)]
+        machine: String,
+    },
+    /// Stop a daemon and start it again (e.g. after updating cq).
+    Restart {
+        #[arg(long, default_value = LOCAL_MACHINE)]
+        machine: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -327,8 +347,13 @@ async fn run(cmd: Cmd) -> Result<i32> {
             mcp::run(mcp::Scope::parse(&scope)?, channel).await?;
             Ok(0)
         }
-        Cmd::Daemon => {
-            daemon::run().await?;
+        Cmd::Daemon { action } => {
+            match action {
+                None => daemon::run().await?,
+                Some(DaemonCmd::Status) => cli::daemon_status().await?,
+                Some(DaemonCmd::Stop { machine }) => cli::daemon_stop(&machine, false).await?,
+                Some(DaemonCmd::Restart { machine }) => cli::daemon_stop(&machine, true).await?,
+            }
             Ok(0)
         }
         Cmd::Bridge => {

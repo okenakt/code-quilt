@@ -320,6 +320,14 @@ pub struct ListDir {
     pub path: String,
 }
 
+/// Request to stop a machine's daemon. Sessions keep running; the next connection starts a new
+/// daemon, so stopping is also how a daemon is restarted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Shutdown {
+    #[serde(default = "local_machine")]
+    pub machine: String,
+}
+
 /// Failure reply to an id-carrying request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestFailed {
@@ -377,6 +385,8 @@ pub enum Message {
     DirList(DirList),
     /// Daemon to client: an id-carrying request failed.
     RequestFailed(RequestFailed),
+    /// Client to daemon: stop the daemon of a machine.
+    Shutdown(Shutdown),
     /// Client to host: type text once the session is idle.
     Inject(Inject),
     /// Client to host: end the session gracefully.
@@ -419,6 +429,7 @@ mod kind {
     pub const DIR_LIST: u8 = 0x38;
     pub const MACHINE_LIST: u8 = 0x39;
     pub const REQUEST_FAILED: u8 = 0x3a;
+    pub const SHUTDOWN: u8 = 0x3b;
     pub const INJECT: u8 = 0x23;
     pub const SET_META: u8 = 0x24;
     pub const TERMINATE: u8 = 0x25;
@@ -478,6 +489,7 @@ impl Message {
             Message::ListDir(v) => (kind::LIST_DIR, serde_json::to_vec(v)?),
             Message::DirList(v) => (kind::DIR_LIST, serde_json::to_vec(v)?),
             Message::RequestFailed(v) => (kind::REQUEST_FAILED, serde_json::to_vec(v)?),
+            Message::Shutdown(v) => (kind::SHUTDOWN, serde_json::to_vec(v)?),
             Message::Inject(v) => (kind::INJECT, serde_json::to_vec(v)?),
             Message::SetMeta(v) => (kind::SET_META, serde_json::to_vec(v)?),
             Message::Terminate(v) => (kind::TERMINATE, serde_json::to_vec(v)?),
@@ -535,6 +547,7 @@ impl Message {
             kind::LIST_DIR => Message::ListDir(serde_json::from_slice(&payload)?),
             kind::DIR_LIST => Message::DirList(serde_json::from_slice(&payload)?),
             kind::REQUEST_FAILED => Message::RequestFailed(serde_json::from_slice(&payload)?),
+            kind::SHUTDOWN => Message::Shutdown(serde_json::from_slice(&payload)?),
             kind::INJECT => Message::Inject(serde_json::from_slice(&payload)?),
             kind::SET_META => Message::SetMeta(serde_json::from_slice(&payload)?),
             kind::TERMINATE => Message::Terminate(serde_json::from_slice(&payload)?),

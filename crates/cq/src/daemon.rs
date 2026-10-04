@@ -23,15 +23,11 @@ use tokio::task::JoinHandle;
 pub async fn run() -> Result<()> {
     paths::ensure_dirs()?;
     let endpoint = paths::daemon_endpoint()?;
-    let mut listener = match ipc::Listener::bind(&endpoint) {
-        Ok(l) => l,
-        Err(e) => {
-            if ipc::connect_now(&endpoint).await.is_ok() {
-                return Ok(());
-            }
-            return Err(e);
-        }
-    };
+    // Binding a unix socket replaces the file, so check for a live daemon first.
+    if ipc::connect_now(&endpoint).await.is_ok() {
+        return Ok(());
+    }
+    let mut listener = ipc::Listener::bind(&endpoint)?;
     tokio::spawn(maintain_desktop());
     loop {
         let stream = listener.accept().await?;
@@ -239,6 +235,7 @@ fn target_machine(msg: &Message) -> Option<&str> {
         Message::Routed { machine, .. } => Some(machine),
         Message::Launch(l) => Some(&l.machine),
         Message::ListDir(l) => Some(&l.machine),
+        Message::Shutdown(s) => Some(&s.machine),
         _ => None,
     }
 }
@@ -533,6 +530,10 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                 let Some(msg) = handle_desktop(client_id, msg) else { continue };
                 match target_machine(&msg) {
                     None | Some(LOCAL_MACHINE) => {
+                        if matches!(msg, Message::Shutdown(_)) {
+                            ipc::cleanup(&paths::daemon_endpoint()?);
+                            std::process::exit(0);
+                        }
                         if matches!(msg, Message::ListSessions) {
                             for r in remotes.values() {
                                 let _ = r.tx.send(Message::ListSessions);

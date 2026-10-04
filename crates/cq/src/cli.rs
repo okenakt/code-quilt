@@ -287,3 +287,80 @@ pub async fn run_command(name: &str, args: &[String]) -> Result<i32> {
     }
     Ok(if r.ok { 0 } else { 1 })
 }
+
+async fn local_daemon_running() -> Result<bool> {
+    Ok(cq_proto::local::connect(&cq_proto::local::daemon_endpoint()?, Duration::ZERO).await.is_ok())
+}
+
+/// Waits until every machine is reachable or failed, and returns the latest list.
+async fn settled_machines(conn: &mut cq_client::DaemonClient, limit: Duration) -> Vec<cq_proto::MachineInfo> {
+    let deadline = tokio::time::Instant::now() + limit;
+    let mut machines = Vec::new();
+    while let Ok(Some(Ok(msg))) = tokio::time::timeout_at(deadline, conn.msgs.recv()).await {
+        if let Message::MachineList(list) = msg {
+            machines = list;
+            if machines.iter().all(|m| m.online || m.error.is_some()) {
+                break;
+            }
+        }
+    }
+    machines
+}
+
+/// `cq daemon status`: the local daemon and every registered machine.
+pub async fn daemon_status() -> Result<()> {
+    if !local_daemon_running().await? {
+        println!("{LOCAL_MACHINE:<12} not running");
+        return Ok(());
+    }
+    let mut conn = cq_client::DaemonClient::open(true).await?;
+    for m in settled_machines(&mut conn, Duration::from_secs(10)).await {
+        let state = if m.online { "running".to_owned() } else { m.error.unwrap_or_else(|| "connecting".into()) };
+        println!("{:<12} {state}", m.id);
+    }
+    Ok(())
+}
+
+/// `cq daemon stop|restart [--machine ID]`. Sessions keep running either way.
+pub async fn daemon_stop(machine: &str, restart: bool) -> Result<()> {
+    let shutdown = Message::Shutdown(cq_proto::Shutdown { machine: machine.to_owned() });
+    if machine == LOCAL_MACHINE {
+        if local_daemon_running().await? {
+            cq_client::DaemonClient::open(false).await?.send(&shutdown).await?;
+            for _ in 0..50 {
+                if !local_daemon_running().await? {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            println!("stopped the local daemon");
+        } else {
+            println!("the local daemon is not running");
+        }
+        if restart {
+            drop(cq_client::DaemonClient::open(false).await?);
+            println!("started the local daemon");
+        }
+        return Ok(());
+    }
+    let mut conn = cq_client::DaemonClient::open(true).await?;
+    let before = settled_machines(&mut conn, Duration::from_secs(15)).await;
+    match before.iter().find(|m| m.id == machine) {
+        None => bail!("unknown machine '{machine}'"),
+        Some(m) if !m.online => bail!("machine {machine} is not reachable: {}", m.error.as_deref().unwrap_or("connecting")),
+        _ => {}
+    }
+    conn.send(&shutdown).await?;
+    println!("stopped the daemon on {machine}");
+    if restart {
+        // The relay reconnects through `cq bridge`, which starts a new daemon.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let mut conn = cq_client::DaemonClient::open(true).await?;
+        let after = settled_machines(&mut conn, Duration::from_secs(15)).await;
+        match after.iter().find(|m| m.id == machine) {
+            Some(m) if m.online => println!("started the daemon on {machine}"),
+            _ => bail!("the daemon on {machine} did not come back"),
+        }
+    }
+    Ok(())
+}
