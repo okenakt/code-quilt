@@ -50,18 +50,22 @@ pub async fn connect(name: &str, timeout: Duration) -> Result<BoxStream> {
     use tokio::net::windows::named_pipe::ClientOptions;
     const ERROR_FILE_NOT_FOUND: i32 = 2;
     const ERROR_PIPE_BUSY: i32 = 231;
-    let deadline = tokio::time::Instant::now() + timeout;
+    let start = tokio::time::Instant::now();
     loop {
-        match ClientOptions::new().open(name) {
+        // A busy pipe means the server is alive but between instances: always wait for it, or a
+        // quick probe would wrongly conclude that nothing is listening.
+        let wait = match ClientOptions::new().open(name) {
             Ok(c) => return Ok(Box::new(c)),
-            Err(e)
-                if matches!(e.raw_os_error(), Some(ERROR_PIPE_BUSY | ERROR_FILE_NOT_FOUND))
-                    && tokio::time::Instant::now() < deadline =>
-            {
-                tokio::time::sleep(Duration::from_millis(20)).await;
+            Err(e) => match e.raw_os_error() {
+                Some(ERROR_PIPE_BUSY) => start.elapsed() < timeout.max(Duration::from_secs(2)),
+                Some(ERROR_FILE_NOT_FOUND) => start.elapsed() < timeout,
+                _ => false,
             }
-            Err(e) => return Err(e).with_context(|| format!("connect {name}")),
-        }
+            .then_some(())
+            .ok_or(e),
+        };
+        wait.with_context(|| format!("connect {name}"))?;
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 
