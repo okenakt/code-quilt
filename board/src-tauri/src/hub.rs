@@ -177,6 +177,11 @@ impl Hub {
         self.routed(machine, session, Message::Approve(cq_proto::Approve { option, prompt_id }))
     }
 
+    /// Stops a machine's daemon; the connection that notices starts a new one.
+    pub fn restart_daemon(&self, machine: String) -> Result<()> {
+        self.send(Message::Shutdown(cq_proto::Shutdown { machine }))
+    }
+
     /// Commands known to the daemon (plugin manifests and running clients).
     pub fn commands(&self) -> Vec<CommandInfo> {
         self.cache.lock().unwrap().commands.clone()

@@ -38,6 +38,28 @@ fn read_toml(name: &str, errors: &mut Vec<String>) -> serde_json::Value {
     }
 }
 
+const DEFAULT_UI: &str = r#"# CodeQuilt board settings (docs/design.md, "UI settings").
+
+# Commands run in order when the board starts; failures are shown as notifications.
+# The Queen uses Claude and asks you to confirm its channel when it starts.
+[[on_start]]
+command = "queen.start"
+args = { name = "queen" }
+
+[terminal]
+# Fonts tried before the built-in fallbacks, e.g. ["HackGen Console NF"].
+font_family = []
+font_size = 13
+"#;
+
+/// Writes the default `ui.toml` when there is none, so every setting in effect is visible.
+pub fn write_defaults() {
+    if let Some(path) = file("ui.toml").filter(|p| !p.exists()) {
+        let _ = path.parent().map(std::fs::create_dir_all);
+        let _ = std::fs::write(path, DEFAULT_UI);
+    }
+}
+
 /// Reads both files now.
 pub fn load() -> UiConfig {
     let mut errors = Vec::new();

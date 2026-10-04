@@ -771,12 +771,20 @@ kbd {
   font-size: 12px;
 }
 
-.toast {
+.toasts {
   position: fixed;
   right: 16px;
   bottom: 16px;
   z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.toast {
   max-width: min(480px, calc(100vw - 32px));
+  cursor: pointer;
   padding: 8px 12px;
   border-radius: 6px;
   border: 1px solid var(--line);

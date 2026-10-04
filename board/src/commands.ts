@@ -38,9 +38,9 @@ type PluginCommand = {
 /** Contents of `ui.toml` and `keybindings.toml` as sent by the backend. */
 export type UiConfig = { ui: unknown; keybindings: unknown[]; errors: string[] };
 
-type State = { plugins: Command[]; pluginKeys: Binding[]; config: UiConfig };
+type State = { plugins: Command[]; pluginKeys: Binding[]; config: UiConfig; loaded: boolean };
 
-let state: State = { plugins: [], pluginKeys: [], config: { ui: null, keybindings: [], errors: [] } };
+let state: State = { plugins: [], pluginKeys: [], config: { ui: null, keybindings: [], errors: [] }, loaded: false };
 const listeners = new Set<() => void>();
 const set = (next: Partial<State>) => {
   state = { ...state, ...next };
@@ -66,7 +66,7 @@ export const startCommandSync = async (): Promise<() => void> => {
     listen<UiConfig>("ui-config", (e) => set({ config: e.payload })),
   ]);
   applyCommands(await invoke<PluginCommand[]>("commands"));
-  set({ config: await invoke<UiConfig>("ui_config") });
+  set({ config: await invoke<UiConfig>("ui_config"), loaded: true });
   return () => offs.forEach((o) => o());
 };
 
@@ -166,4 +166,20 @@ export const isAppChord = (e: KeyboardEvent): boolean => {
   if (e.isComposing) return false;
   const chord = chordOfEvent(e);
   return chord !== null && activeChords.has(chord);
+};
+
+/** `[[on_start]]` entries of `ui.toml`: commands to run when the board starts. */
+export const onStartCommands = (config: UiConfig): { command: string; args: Record<string, string> }[] | string => {
+  const raw = asRecord(config.ui)?.on_start;
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) return "ui.toml: on_start must be a list of [[on_start]] tables";
+  const out: { command: string; args: Record<string, string> }[] = [];
+  for (const entry of raw) {
+    const command = str(entry, "command");
+    if (!command) return "ui.toml: every [[on_start]] needs a command";
+    const args: Record<string, string> = {};
+    for (const [k, v] of Object.entries(asRecord(asRecord(entry)?.args) ?? {})) args[k] = String(v);
+    out.push({ command, args });
+  }
+  return out;
 };

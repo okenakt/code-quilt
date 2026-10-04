@@ -101,6 +101,11 @@ async fn invoke_command(
 }
 
 #[tauri::command]
+fn restart_daemon(hub: State<'_, HubState>, machine: String) -> Result<(), String> {
+    hub.restart_daemon(machine).map_err(err)
+}
+
+#[tauri::command]
 fn ui_config() -> settings::UiConfig {
     settings::load()
 }
@@ -182,6 +187,7 @@ fn main() {
         .setup(|app| {
             let hub = Hub::start(app.handle().clone());
             app.manage(hub);
+            settings::write_defaults();
             settings::watch(app.handle().clone());
             create_main_window(app)?;
             Ok(())
@@ -201,7 +207,8 @@ fn main() {
             list_dir,
             commands,
             invoke_command,
-            ui_config
+            ui_config,
+            restart_daemon
         ])
         .run(tauri::generate_context!())
         .expect("error while running CodeQuilt");

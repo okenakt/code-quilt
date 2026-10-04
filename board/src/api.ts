@@ -108,3 +108,6 @@ export const decodeBytes = (b64: string): Uint8Array => {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 };
+
+/** Stops a machine's daemon; the board (or the remote relay) reconnects and starts a new one. */
+export const restartDaemon = (machine: string): Promise<void> => invoke("restart_daemon", { machine });

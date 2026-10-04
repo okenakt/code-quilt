@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
-import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, sessionKey, terminate, type Agent } from "./api";
+import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, restartDaemon, sessionKey, terminate, type Agent } from "./api";
 import { ApprovalDialog } from "./components/approval-dialog";
 import { NewSessionDialog } from "./components/new-session-dialog";
 import { SessionList } from "./components/session-list";
@@ -9,7 +9,7 @@ import { TerminalPanel } from "./components/terminal-panel";
 import { UsagePanel } from "./components/usage-panel";
 import { notify } from "./notify";
 import { BUILTIN_COMMANDS, BUILTIN_KEYS } from "./builtins";
-import { invokePluginCommand, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
+import { invokePluginCommand, onStartCommands, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
 import { CommandPalette } from "./components/command-palette";
 import { chordOfEvent, formatChord } from "./keys";
 import { isPinned, togglePin, usePins } from "./pins";
@@ -180,7 +180,7 @@ export const App = () => {
     }
   }, [sessions]);
 
-  const { plugins, pluginKeys, config } = useCommandState();
+  const { plugins, pluginKeys, config, loaded } = useCommandState();
   useEffect(() => {
     let off: (() => void) | null = null;
     let cancelled = false;
@@ -200,12 +200,12 @@ export const App = () => {
   const warnings = [...config.errors, ...keymap.warnings];
 
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [toasts, setToasts] = useState<{ id: number; ok: boolean; text: string }[]>([]);
+  const toastId = useRef(0);
   const showToast = useCallback((ok: boolean, text: string) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ ok, text });
-    toastTimer.current = setTimeout(() => setToast(null), ok ? 4000 : 8000);
+    const id = ++toastId.current;
+    setToasts((ts) => [...ts, { id, ok, text }]);
+    setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), ok ? 4000 : 10000);
   }, []);
 
   /** The session of the active tile, which session commands act on. */
@@ -263,6 +263,13 @@ export const App = () => {
         case "ui.newSession":
           setNewSessionFor(args.machine || "local");
           return;
+        case "daemon.restart": {
+          const machine = args.machine || "local";
+          restartDaemon(machine)
+            .then(() => showToast(true, `Restarting the daemon on ${machine}`))
+            .catch((e: unknown) => showToast(false, `daemon.restart: ${String(e)}`));
+          return;
+        }
         case "session.end":
         case "session.pin":
         case "session.copyId": {
@@ -285,6 +292,17 @@ export const App = () => {
     },
     [openSession, showToast, toggleUsage],
   );
+
+  // Run ui.toml's [[on_start]] commands once the settings are read and the daemon is reachable.
+  const startHooksRan = useRef(false);
+  const localOnline = machines.some((m) => m.id === "local" && m.online);
+  useEffect(() => {
+    if (startHooksRan.current || !loaded || !localOnline) return;
+    startHooksRan.current = true;
+    const list = onStartCommands(config);
+    if (typeof list === "string") return showToast(false, list);
+    list.forEach((c) => runCommand(c.command, c.args));
+  }, [loaded, localOnline, config, runCommand, showToast]);
 
   // Keys bound to commands are handled here, before the terminal sees them. Hold commands
   // (push-to-talk) get press on key down and release on key up.
@@ -417,7 +435,13 @@ export const App = () => {
           onClose={() => setPaletteOpen(false)}
         />
       )}
-      {toast && <div className={`toast ${toast.ok ? "ok" : "error"}`}>{toast.text}</div>}
+      <div className="toasts">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast ${t.ok ? "ok" : "error"}`} onClick={() => setToasts((ts) => ts.filter((x) => x.id !== t.id))}>
+            {t.text}
+          </div>
+        ))}
+      </div>
       {newSessionFor && (
         <NewSessionDialog
           machines={machines}
