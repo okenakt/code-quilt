@@ -48,9 +48,10 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
     const send = (data: string) => void sendInput(machine, session, data).catch(() => undefined);
     term.attachCustomKeyEventHandler((e) => {
       if (isAppChord(e)) return false;
-      // Shift+Enter inserts a newline in Claude Code; xterm would otherwise send a plain CR.
-      if (e.type === "keydown" && e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.isComposing) {
-        send("\x1b[13;2u");
+      // Shift+Enter inserts a newline in Claude Code. xterm would otherwise send a plain CR, also
+      // from the keypress that follows the keydown, so both are kept from it.
+      if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.isComposing) {
+        if (e.type === "keydown") send("\x1b[13;2u");
         return false;
       }
       return true;
