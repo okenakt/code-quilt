@@ -28,6 +28,13 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
     let mut listener = ipc::Listener::bind(&endpoint)?;
+    // Load plugin commands before serving, so a client's first invocation finds them.
+    let plugins = tokio::task::spawn_blocking(|| {
+        plugin::sync_bundled();
+        plugin::installed()
+    })
+    .await?;
+    desktop().lock().unwrap().plugins = plugins;
     tokio::spawn(maintain_desktop());
     loop {
         let stream = listener.accept().await?;
@@ -200,11 +207,14 @@ impl LocalRelay {
                 self.subs.remove(&r.session);
             }
             Message::Launch(req) => {
-                let reply = match crate::launch::launch_detached(&req) {
-                    Ok(session) => Message::Launched(Launched { id: req.id, machine: LOCAL_MACHINE.to_owned(), session }),
-                    Err(e) => Message::RequestFailed(RequestFailed { id: req.id, error: format!("launch failed: {e:#}") }),
-                };
-                let _ = self.out.send(reply);
+                let out = self.out.clone();
+                tokio::spawn(async move {
+                    let reply = match launch_registered(&req).await {
+                        Ok(session) => Message::Launched(Launched { id: req.id, machine: LOCAL_MACHINE.to_owned(), session }),
+                        Err(e) => Message::RequestFailed(RequestFailed { id: req.id, error: format!("launch failed: {e:#}") }),
+                    };
+                    let _ = out.send(reply);
+                });
             }
             Message::ListDir(req) => {
                 let reply = match crate::config::list_dir(&req.path) {
@@ -404,7 +414,6 @@ fn desktop() -> &'static std::sync::Mutex<Desktop> {
 
 /// Keeps the plugin commands current and expires activations that never registered.
 async fn maintain_desktop() {
-    let _ = tokio::task::spawn_blocking(plugin::sync_bundled).await;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let mut n = 0u32;
     loop {
@@ -573,4 +582,18 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
     drop(remotes);
     writer.abort();
     result
+}
+
+/// Starts a session and returns once its host has registered it, so the session is in every
+/// list by the time the caller hears about it.
+async fn launch_registered(req: &cq_proto::Launch) -> Result<String> {
+    let id = crate::launch::launch_detached(req)?;
+    let file = paths::session_file(&id)?;
+    for _ in 0..100 {
+        if file.exists() {
+            return Ok(id);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    bail!("the session host did not start; see ~/.codequilt/logs/{id}.log")
 }
