@@ -9,7 +9,7 @@ mod hook;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use config::{Delivery, QueenConfig};
-use cq_proto::{LOCAL_MACHINE, Launch, Message};
+use cq_proto::{LOCAL_MACHINE, Launch, Message, SessionStatus};
 use serde_json::json;
 
 #[derive(Parser)]
@@ -152,7 +152,27 @@ async fn launch_detached(name: &str, cwd: &std::path::Path, args: Vec<String>) -
     bail!("daemon connection closed")
 }
 
+/// The running local session of the Queen `name`, if any.
+async fn running_queen(name: &str) -> Result<Option<String>> {
+    let mut conn = cq_client::DaemonClient::open(false).await?;
+    conn.send(&Message::ListSessions).await?;
+    while let Some(msg) = conn.msgs.recv().await {
+        if let Message::SessionList(l) = msg? {
+            return Ok(l
+                .sessions
+                .into_iter()
+                .find(|s| s.status == SessionStatus::Running && s.name.as_deref() == Some(name) && s.tags.iter().any(|t| t == "queen"))
+                .map(|s| s.id));
+        }
+    }
+    bail!("daemon connection closed")
+}
+
 async fn start(name: &str, detach: bool, extra: Vec<String>) -> Result<i32> {
+    if let Some(id) = running_queen(name).await? {
+        println!("queen '{name}' is already running as session {id}");
+        return Ok(0);
+    }
     let (cfg, path) = config::load_or_create(name)?;
     let mut args = agent_args(name, &cfg)?;
     args.extend(extra);
