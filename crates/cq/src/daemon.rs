@@ -194,6 +194,9 @@ impl LocalRelay {
                     self.sessions = session::list().unwrap_or_default();
                 }
                 match self.sessions.iter().find(|m| m.id == session) {
+                    Some(meta) if meta.status != SessionStatus::Running => {
+                        let _ = self.out.send(routed(&session, Message::Error("session exited".into())));
+                    }
                     Some(meta) => {
                         let kind = if kind == ClientKind::Event { ClientKind::Hub } else { kind };
                         self.subs.insert(session.clone(), open_host(meta, kind, cols, rows, self.out.clone()));
