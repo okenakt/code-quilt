@@ -2,8 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use cq_proto::{
-    ClientKind, DAEMON_PROTOCOL_VERSION, Hello, LOCAL_MACHINE, Message, SessionStatus, spawn_reader,
-    write_message,
+    LOCAL_MACHINE, Message, SessionStatus,
 };
 use std::time::Duration;
 
@@ -43,12 +42,8 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
     use serde_json::{Value, json};
     use std::collections::{BTreeMap, HashMap};
 
-    let stream = cq_client::connect_daemon().await?;
-    let (rd, mut wr) = tokio::io::split(stream);
-    let mut msgs = spawn_reader(rd);
-    let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: !local_only };
-    write_message(&mut wr, &Message::Hello(hello)).await?;
-    write_message(&mut wr, &Message::ListSessions).await?;
+    let mut conn = cq_client::DaemonClient::open(!local_only).await?;
+    conn.send(&Message::ListSessions).await?;
 
     let mut sessions: HashMap<(String, String), UsageSession> = HashMap::new();
     let mut machines: Vec<cq_proto::MachineInfo> = Vec::new();
@@ -64,7 +59,7 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
                 && machines.iter().all(|m| listed.contains(&m.id) || (!m.online && m.error.is_some()))
         };
         let wait = if all_listed { Duration::from_millis(700) } else { Duration::from_millis(1500) };
-        let next = match tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + wait), msgs.recv()).await {
+        let next = match tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + wait), conn.msgs.recv()).await {
             Ok(Some(m)) => m?,
             Ok(None) => break,
             Err(_) if all_listed || tokio::time::Instant::now() >= deadline => break,
@@ -209,24 +204,14 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
             _ => Duration::ZERO,
         };
     let (machine, key) = parse_target(target);
-    let stream = cq_client::connect_daemon().await?;
-    let (rd, mut wr) = tokio::io::split(stream);
-    let mut msgs = spawn_reader(rd);
-    let hello = Hello {
-        protocol_version: DAEMON_PROTOCOL_VERSION,
-        kind: ClientKind::Hub,
-        cols: 0,
-        rows: 0,
-        federate: machine != LOCAL_MACHINE,
-    };
-    write_message(&mut wr, &Message::Hello(hello)).await?;
-    write_message(&mut wr, &Message::ListSessions).await?;
+    let mut conn = cq_client::DaemonClient::open(machine != LOCAL_MACHINE).await?;
+    conn.send(&Message::ListSessions).await?;
 
     let run = async {
         let mut session: Option<String> = None;
         let mut inner = Some(inner);
         let mut sent_ms = 0u64;
-        while let Some(msg) = msgs.recv().await {
+        while let Some(msg) = conn.msgs.recv().await {
             match msg? {
                 Message::SessionList(l) if l.machine == machine && session.is_none() => {
                     let id = crate::session::pick(&l.sessions, &key)?.id.clone();
@@ -236,7 +221,7 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
                         inner: Box::new(inner.take().expect("sent once")),
                     };
                     sent_ms = crate::session::now_ms();
-                    write_message(&mut wr, &msg).await?;
+                    conn.send(&msg).await?;
                     session = Some(id);
                 }
                 Message::MachineList(list) => {
@@ -276,11 +261,7 @@ pub async fn run_command(name: &str, args: &[String]) -> Result<i32> {
         let (k, v) = a.split_once('=').with_context(|| format!("expected NAME=VALUE, got '{a}'"))?;
         map.insert(k.to_owned(), serde_json::Value::String(v.to_owned()));
     }
-    let stream = cq_client::connect_daemon().await?;
-    let (rd, mut wr) = tokio::io::split(stream);
-    let mut msgs = spawn_reader(rd);
-    let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: false };
-    write_message(&mut wr, &Message::Hello(hello)).await?;
+    let mut conn = cq_client::DaemonClient::open(false).await?;
     let inv = cq_proto::InvokeCommand {
         name: name.to_owned(),
         phase: "invoke".into(),
@@ -288,9 +269,9 @@ pub async fn run_command(name: &str, args: &[String]) -> Result<i32> {
         id: Some(1),
         context: None,
     };
-    write_message(&mut wr, &Message::InvokeCommand(inv)).await?;
+    conn.send(&Message::InvokeCommand(inv)).await?;
     let wait = async {
-        while let Some(msg) = msgs.recv().await {
+        while let Some(msg) = conn.msgs.recv().await {
             match msg? {
                 Message::CommandResult(r) if r.id == 1 => return Ok(r),
                 Message::Error(e) => bail!("daemon: {e}"),

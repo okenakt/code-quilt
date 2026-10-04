@@ -5,7 +5,7 @@
 use anyhow::Result;
 use cq_client::{Activity, Model, Session};
 use cq_proto::{
-    AgentEvent, ClientKind, DAEMON_PROTOCOL_VERSION, Hello, Message, PROTOCOL_VERSION, spawn_reader,
+    AgentEvent, ClientKind, Hello, Message, PROTOCOL_VERSION,
     write_message,
 };
 use serde_json::{Value, json};
@@ -56,13 +56,9 @@ async fn report_blocked(prompt: &str) -> Result<()> {
 }
 
 /// Loads every machine's session list, waiting for reachable remote machines up to a limit.
-async fn load_model() -> Result<(Model, tokio::io::WriteHalf<cq_proto::local::BoxStream>)> {
-    let stream = cq_client::connect_daemon().await?;
-    let (rd, mut wr) = tokio::io::split(stream);
-    let mut msgs = spawn_reader(rd);
-    let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: true };
-    write_message(&mut wr, &Message::Hello(hello)).await?;
-    write_message(&mut wr, &Message::ListSessions).await?;
+async fn load_model() -> Result<(Model, cq_client::DaemonClient)> {
+    let mut conn = cq_client::DaemonClient::open(true).await?;
+    conn.send(&Message::ListSessions).await?;
     let mut model = Model::default();
     let mut listed: Vec<String> = Vec::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
@@ -72,7 +68,7 @@ async fn load_model() -> Result<(Model, tokio::io::WriteHalf<cq_proto::local::Bo
         if done {
             break;
         }
-        match tokio::time::timeout_at(deadline, msgs.recv()).await {
+        match tokio::time::timeout_at(deadline, conn.msgs.recv()).await {
             Ok(Some(Ok(msg))) => {
                 if let Message::SessionList(l) = &msg {
                     listed.push(l.machine.clone());
@@ -82,7 +78,7 @@ async fn load_model() -> Result<(Model, tokio::io::WriteHalf<cq_proto::local::Bo
             _ => break,
         }
     }
-    Ok((model, wr))
+    Ok((model, conn))
 }
 
 /// Runs the hook: reads the hook payload from stdin and prints a block decision when it sent
@@ -94,7 +90,7 @@ pub async fn run() -> Result<()> {
     let prompt = payload.get("prompt").and_then(Value::as_str).unwrap_or_default();
     let Some((target, body)) = parse_mention(prompt) else { return Ok(()) };
     let own = std::env::var("CQ_SESSION_ID").ok();
-    let (model, mut wr) = load_model().await?;
+    let (model, mut conn) = load_model().await?;
     let hits = matches(&model, target, own.as_deref());
     let s = match hits.as_slice() {
         [] => return Ok(()), // Not a session name: let the Queen read it.
@@ -109,7 +105,7 @@ pub async fn run() -> Result<()> {
     let mut bytes = format!("\x1b[200~{body}\x1b[201~").into_bytes();
     bytes.push(b'\r');
     let msg = Message::Routed { machine: s.machine.clone(), session: s.meta.id.clone(), inner: Box::new(Message::Input(bytes)) };
-    write_message(&mut wr, &msg).await?;
+    conn.send(&msg).await?;
     // Let CodeQuilt's own UserPromptSubmit hook (running in parallel) report first, so the
     // "blocked" notice is the last word on this prompt.
     tokio::time::sleep(Duration::from_millis(600)).await;

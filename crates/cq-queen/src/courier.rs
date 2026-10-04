@@ -5,8 +5,7 @@ use crate::config::{Delivery, QueenConfig};
 use anyhow::{Result, bail};
 use cq_client::{Activity, Model, Session};
 use cq_proto::{
-    ClientKind, CommandInfo, DAEMON_PROTOCOL_VERSION, Hello, InvokeCommand, LOCAL_MACHINE, Message,
-    spawn_reader, write_message,
+    CommandInfo, InvokeCommand, LOCAL_MACHINE, Message,
 };
 use serde_json::{Value, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -142,12 +141,8 @@ fn find_queen<'a>(model: &'a Model, name: &str) -> Option<&'a Session> {
 pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
     let scope = Scope::parse(&cfg.scope)?;
     let started = now_ms();
-    let stream = cq_client::connect_daemon().await?;
-    let (rd, mut wr) = tokio::io::split(stream);
-    let mut msgs = spawn_reader(rd);
-    let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: true };
-    write_message(&mut wr, &Message::Hello(hello)).await?;
-    write_message(&mut wr, &Message::ListSessions).await?;
+    let mut conn = cq_client::DaemonClient::open(true).await?;
+    conn.send(&Message::ListSessions).await?;
 
     let me = format!("queen:{name}");
     let mut model = Model::default();
@@ -164,7 +159,7 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
 
     loop {
         tokio::select! {
-            msg = msgs.recv() => {
+            msg = conn.msgs.recv() => {
                 let Some(msg) = msg else { bail!("daemon connection closed") };
                 let msg = msg?;
                 if let Message::CommandList(list) = &msg {
@@ -175,7 +170,7 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                             return Ok(());
                         }
                         let cmd = CommandInfo { name: me.clone(), title: format!("Courier of queen {name}"), ..Default::default() };
-                        write_message(&mut wr, &Message::RegisterCommand(cmd)).await?;
+                        conn.send(&Message::RegisterCommand(cmd)).await?;
                         registered = true;
                     }
                 }
@@ -260,7 +255,7 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                         Message::Routed { machine: LOCAL_MACHINE.to_owned(), session: qid, inner: Box::new(Message::Inject(inj)) }
                     }
                 };
-                write_message(&mut wr, &msg).await?;
+                conn.send(&msg).await?;
                 open.extend(pending.drain(..).filter(|i| matches!(i.kind, ItemKind::Prompt { .. })));
                 first_pending = None;
             }

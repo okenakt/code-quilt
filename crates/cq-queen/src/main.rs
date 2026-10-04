@@ -9,7 +9,7 @@ mod hook;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use config::{Delivery, QueenConfig};
-use cq_proto::{ClientKind, DAEMON_PROTOCOL_VERSION, Hello, LOCAL_MACHINE, Launch, Message, spawn_reader, write_message};
+use cq_proto::{LOCAL_MACHINE, Launch, Message};
 use serde_json::json;
 
 #[derive(Parser)]
@@ -127,11 +127,7 @@ fn spawn_courier(name: &str) -> Result<()> {
 
 /// Launches the Queen session through the daemon without a terminal.
 async fn launch_detached(name: &str, cwd: &std::path::Path, args: Vec<String>) -> Result<String> {
-    let stream = cq_client::connect_daemon().await?;
-    let (rd, mut wr) = tokio::io::split(stream);
-    let mut msgs = spawn_reader(rd);
-    let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: false };
-    write_message(&mut wr, &Message::Hello(hello)).await?;
+    let mut conn = cq_client::DaemonClient::open(false).await?;
     let launch = Launch {
         id: 1,
         machine: LOCAL_MACHINE.into(),
@@ -145,8 +141,8 @@ async fn launch_detached(name: &str, cwd: &std::path::Path, args: Vec<String>) -
         cols: 120,
         rows: 36,
     };
-    write_message(&mut wr, &Message::Launch(launch)).await?;
-    while let Some(msg) = msgs.recv().await {
+    conn.send(&Message::Launch(launch)).await?;
+    while let Some(msg) = conn.msgs.recv().await {
         match msg? {
             Message::Launched(l) if l.id == 1 => return Ok(l.session),
             Message::RequestFailed(f) if f.id == 1 => bail!(f.error),

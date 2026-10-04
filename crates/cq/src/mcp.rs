@@ -3,7 +3,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use cq_client::{Activity, MAX_TURNS, Model, Session};
-use cq_proto::{ClientKind, DAEMON_PROTOCOL_VERSION, Hello, LOCAL_MACHINE, Message, spawn_reader, write_message};
+use cq_proto::{LOCAL_MACHINE, Message};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -210,19 +210,15 @@ async fn daemon_loop(
 ) {
     loop {
         let run = async {
-            let stream = cq_client::connect_daemon().await?;
-            let (rd, mut wr) = tokio::io::split(stream);
-            let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: true };
-            write_message(&mut wr, &Message::Hello(hello)).await?;
-            write_message(&mut wr, &Message::ListSessions).await?;
+            let mut conn = cq_client::DaemonClient::open(true).await?;
+            conn.send(&Message::ListSessions).await?;
             if let Some((name, _)) = &channel {
                 let cmd = cq_proto::CommandInfo { name: name.clone(), title: "Deliver a channel message".into(), ..Default::default() };
-                write_message(&mut wr, &Message::RegisterCommand(cmd)).await?;
+                conn.send(&Message::RegisterCommand(cmd)).await?;
             }
-            let mut msgs = spawn_reader(rd);
             loop {
                 tokio::select! {
-                    msg = msgs.recv() => {
+                    msg = conn.msgs.recv() => {
                         let Some(msg) = msg else { return Ok::<_, anyhow::Error>(()) };
                         let msg = msg?;
                         if let Some((machine, session, ev)) = model.lock().unwrap().apply(&msg) {
@@ -251,7 +247,7 @@ async fn daemon_loop(
                         }
                     }
                     out = rx.recv() => match out {
-                        Some(o) => write_message(&mut wr, &o).await?,
+                        Some(o) => conn.send(&o).await?,
                         None => return Ok(()),
                     },
                 }

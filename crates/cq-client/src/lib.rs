@@ -270,3 +270,31 @@ pub async fn connect_daemon() -> Result<BoxStream> {
     spawn_detached(std::process::Command::new(cq_binary()).arg("daemon"), &log_file("daemon")?)?;
     local::connect(&endpoint, Duration::from_secs(5)).await
 }
+
+/// A hub connection to the local daemon.
+pub struct DaemonClient {
+    pub msgs: tokio::sync::mpsc::UnboundedReceiver<Result<Message>>,
+    wr: tokio::io::WriteHalf<BoxStream>,
+}
+
+impl DaemonClient {
+    /// Connects (starting the daemon if needed) and says hello. With `federate` the daemon also
+    /// relays every registered remote machine.
+    pub async fn open(federate: bool) -> Result<Self> {
+        let (rd, wr) = tokio::io::split(connect_daemon().await?);
+        let mut client = Self { msgs: cq_proto::spawn_reader(rd), wr };
+        let hello = cq_proto::Hello {
+            protocol_version: cq_proto::DAEMON_PROTOCOL_VERSION,
+            kind: cq_proto::ClientKind::Hub,
+            cols: 0,
+            rows: 0,
+            federate,
+        };
+        client.send(&Message::Hello(hello)).await?;
+        Ok(client)
+    }
+
+    pub async fn send(&mut self, msg: &Message) -> Result<()> {
+        cq_proto::write_message(&mut self.wr, msg).await
+    }
+}
