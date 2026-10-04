@@ -21,6 +21,10 @@ pub struct PermissionPrompt {
     /// Prompt text as displayed (tool, command, question), without the options.
     pub text: String,
     pub options: Vec<PromptOption>,
+    /// For lists without numbers: the option currently selected. They are answered by moving
+    /// the selection with the arrow keys instead of typing the number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected: Option<u8>,
 }
 
 /// FNV-1a hash of the prompt content, as hex.
@@ -149,8 +153,28 @@ fn prompt_text(lines: &[&str], end: usize, max: usize) -> String {
     lines[start..=end].iter().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n").trim().to_owned()
 }
 
-fn prompt(kind: &str, text: String, options: Vec<PromptOption>) -> PermissionPrompt {
-    PermissionPrompt { id: prompt_id(&text, &options), kind: kind.to_owned(), text, options }
+fn prompt(kind: &str, text: String, options: Vec<PromptOption>, selected: Option<u8>) -> PermissionPrompt {
+    PermissionPrompt { id: prompt_id(&text, &options), kind: kind.to_owned(), text, options, selected }
+}
+
+/// An unnumbered list ending at the last line of `lines`: consecutive lines, one of them marked
+/// as selected with `❯` or `›`. Returns the index of its first line, the options numbered from
+/// the top, and the selected number.
+fn marked_options(lines: &[&str]) -> Option<(usize, Vec<PromptOption>, u8)> {
+    let end = lines.iter().rposition(|l| !l.trim().is_empty())?;
+    let start = (0..=end).rev().take_while(|&i| !lines[i].trim().is_empty()).last()?;
+    let block = &lines[start..=end];
+    let marker = |l: &str| l.trim_start().starts_with(['❯', '›']);
+    let selected = block.iter().position(|l| marker(l))?;
+    if !(2..=9).contains(&block.len()) {
+        return None;
+    }
+    let options = block
+        .iter()
+        .enumerate()
+        .map(|(i, l)| PromptOption { number: i as u8 + 1, label: l.trim().trim_start_matches(['❯', '›']).trim().to_owned() })
+        .collect();
+    Some((start, options, selected as u8 + 1))
 }
 
 /// The key hint under a selection dialog: Claude Code's "Enter to confirm · Esc to cancel", or
@@ -160,7 +184,7 @@ fn is_dialog_footer(line: &str) -> bool {
     l.contains("enter to confirm") || (l.contains("enter") && (l.contains("confirm") || l.contains("continue")) && l.contains("esc"))
 }
 
-/// Finds a prompt that waits for a numbered choice (Claude Code and Codex): a permission request ("Do you
+/// Finds a prompt that waits for a choice (Claude Code and Codex): a permission request ("Do you
 /// want to ...?" followed by options), or another dialog whose options end with an
 /// "Enter to confirm" footer.
 pub fn find_choice_prompt(screen: &str) -> Option<PermissionPrompt> {
@@ -168,12 +192,18 @@ pub fn find_choice_prompt(screen: &str) -> Option<PermissionPrompt> {
     if let Some(q) = lines.iter().rposition(|l| l.contains("Do you want to")) {
         let options = collect_options(&lines[q + 1..]);
         if options.len() >= 2 {
-            return Some(prompt("permission", prompt_text(&lines, q, 20), options));
+            return Some(prompt("permission", prompt_text(&lines, q, 20), options, None));
         }
     }
     let footer = lines.iter().rposition(|l| is_dialog_footer(l))?;
-    let first = (footer.saturating_sub(15)..footer).find(|&i| parse_option(lines[i]).is_some_and(|o| o.number == 1))?;
-    let options = collect_options(&lines[first..footer]);
+    let numbered = (footer.saturating_sub(15)..footer).find(|&i| parse_option(lines[i]).is_some_and(|o| o.number == 1));
+    let (first, options, selected) = match numbered {
+        Some(first) => (first, collect_options(&lines[first..footer]), None),
+        None => {
+            let (first, options, selected) = marked_options(&lines[footer.saturating_sub(10)..footer])?;
+            (first + footer.saturating_sub(10), options, Some(selected))
+        }
+    };
     if options.len() < 2 || first == 0 {
         return None;
     }
@@ -181,7 +211,7 @@ pub fn find_choice_prompt(screen: &str) -> Option<PermissionPrompt> {
     // Codex asks for tool approval without "Do you want to"; its options give it away.
     let is_permission = options.iter().any(|o| o.label.starts_with("Yes, proceed") || o.label.starts_with("Yes, and don't ask again"));
     let kind = if is_permission { "permission" } else { "dialog" };
-    Some(prompt(kind, prompt_text(&lines, text_end, 12), options))
+    Some(prompt(kind, prompt_text(&lines, text_end, 12), options, selected))
 }
 
 #[cfg(test)]
@@ -300,6 +330,28 @@ mod tests {
         assert_eq!(p.options.len(), 2);
         assert!(p.text.starts_with("WARNING: Loading development channels"), "{}", p.text);
         assert!(p.text.ends_with("Channels: server:cq"));
+        assert_eq!(p.selected, None);
+
+        // Folder trust (Claude Code 2.1.287) lists its options without numbers.
+        let screen = "\
+ Accessing workspace:
+
+ C:\\Users\\me\\queens\\queen
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+";
+        let p = find_choice_prompt(screen).unwrap();
+        assert_eq!(p.kind, "dialog");
+        assert_eq!(p.options[1].label, "Yes, I trust this folder");
+        assert_eq!((p.options.len(), p.selected), (2, Some(1)));
+        assert!(p.text.starts_with("Accessing workspace:") && p.text.ends_with("Security guide"), "{}", p.text);
     }
 
     #[test]

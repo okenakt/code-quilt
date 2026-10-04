@@ -256,6 +256,18 @@ impl State {
             return Err(format!("option {option} not offered"));
         }
         let id = p.id.clone();
+        if let Some(selected) = p.selected {
+            let key: &[u8] = match (option > selected, self.parser.screen().application_cursor()) {
+                (true, true) => b"\x1bOB",
+                (true, false) => b"\x1b[B",
+                (false, true) => b"\x1bOA",
+                (false, false) => b"\x1b[A",
+            };
+            self.pty_tx.send(key.repeat(usize::from(option.abs_diff(selected)))).map_err(|e| e.to_string())?;
+            // Enter separately, so the keys are not taken for a paste.
+            self.send_later(b"\r", 150);
+            return Ok(());
+        }
         self.pty_tx.send(vec![b'0' + option]).map_err(|e| e.to_string())?;
         if self.meta.agent == "codex" {
             // Some Codex lists confirm on the digit, others only move the selection.
@@ -276,18 +288,23 @@ impl State {
         self.pending_confirm = None;
     }
 
+    /// Sends bytes to the agent after a delay.
+    fn send_later(&self, bytes: &'static [u8], ms: u64) {
+        let tx = self.pty_tx.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(ms));
+            let _ = tx.send(bytes.to_vec());
+        });
+    }
+
     /// Writes input to the agent. Codex treats a burst of input as a paste, so the Enter that
     /// ends a pasted message is sent a moment later to submit it.
     fn write_input(&mut self, mut bytes: Vec<u8>) {
         let tail = b"\x1b[201~\r";
         if self.meta.agent == "codex" && bytes.ends_with(tail) {
             bytes.pop();
-            let tx = self.pty_tx.clone();
             let _ = self.pty_tx.send(bytes);
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(500));
-                let _ = tx.send(b"\r".to_vec());
-            });
+            self.send_later(b"\r", 500);
             return;
         }
         let _ = self.pty_tx.send(bytes);
