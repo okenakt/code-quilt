@@ -1,13 +1,10 @@
 import { useEffect, useRef } from "react";
-import type { IDockviewPanelProps } from "dockview-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import { decodeBytes, registerTerminal, resize, sendInput, sessionKey, setFocus, subscribe, unsubscribe } from "../api";
 import { isAppChord, terminalFont, useCommandState } from "../commands";
-
-export type TerminalParams = { machine: string; session: string };
 
 const THEME = {
   background: "#14161a",
@@ -16,11 +13,21 @@ const THEME = {
   selectionBackground: "#3a4152",
 };
 
-/** A tile showing one session's terminal through the daemon relay. */
-export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
-  const { machine, session } = props.params;
+type Props = {
+  machine: string;
+  session: string;
+  focused: boolean;
+  /** The terminal got the keyboard focus. */
+  onFocus: () => void;
+  /** The session no longer exists or has ended. */
+  onGone: () => void;
+};
+
+/** One session's terminal through the daemon relay. */
+export const TerminalView = ({ machine, session, focused, onFocus, onGone }: Props) => {
   const hostRef = useRef<HTMLDivElement>(null);
-  const panelApi = props.api;
+  const callbacks = useRef({ onFocus, onGone });
+  callbacks.current = { onFocus, onGone };
   const termRef = useRef<{ term: Terminal; fit: FitAddon } | null>(null);
   const font = terminalFont(useCommandState().config);
   const fontRef = useRef(font);
@@ -58,11 +65,12 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
     });
     term.onData(send);
     term.onResize(({ cols, rows }) => void resize(machine, session, cols, rows).catch(() => undefined));
-    // Focusing a tile claims the input right so the PTY follows this tile's size, and makes it
-    // the desktop's focus (where e.g. voice input goes).
+    // Focusing a terminal claims the input right so the PTY follows this pane's size, and makes
+    // it the desktop's focus (where e.g. voice input goes).
     term.textarea?.addEventListener("focus", () => {
       send("");
       void setFocus(machine, session).catch(() => undefined);
+      callbacks.current.onFocus();
     });
 
     const off = registerTerminal(sessionKey(machine, session), (msg) => {
@@ -74,8 +82,8 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
       } else if (msg.kind === "exit") {
         term.write("\r\n\x1b[2m[session exited]\x1b[0m\r\n");
       } else if (msg.kind === "error") {
-        // A tile restored from the saved layout may point at a session that has ended.
-        if (msg.json === "unknown session" || msg.json === "session exited") panelApi.close();
+        // A pane restored from the saved layout may point at a session that has ended.
+        if (msg.json === "unknown session" || msg.json === "session exited") callbacks.current.onGone();
         else term.write(`\r\n\x1b[31m[${String(msg.json)}]\x1b[0m\r\n`);
       }
     });
@@ -87,20 +95,18 @@ export const TerminalPanel = (props: IDockviewPanelProps<TerminalParams>) => {
       if (el.clientWidth > 0 && el.clientHeight > 0) fit.fit();
     });
     ro.observe(el);
-    const activeSub = panelApi.onDidActiveChange((e) => {
-      if (e.isActive) term.focus();
-    });
-    if (panelApi.isActive) term.focus();
-
     return () => {
-      activeSub.dispose();
       ro.disconnect();
       off();
       void unsubscribe(machine, session).catch(() => undefined);
       termRef.current = null;
       term.dispose();
     };
-  }, [machine, session, panelApi]);
+  }, [machine, session]);
+
+  useEffect(() => {
+    if (focused) termRef.current?.term.focus();
+  }, [focused]);
 
   // Apply font changes from ui.toml without recreating the terminal.
   useEffect(() => {

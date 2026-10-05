@@ -22,7 +22,7 @@
 
 - **セッション一覧**（左）：マシンごとに、動いているセッション（Active）と終了したセッション（Ended、既定で折りたたみ）を分けて出す。各行は既定で1行（名前・id・状態）で、▸ で詳細（`machine:`、`cwd:`、`model:`、`context:`、`tokens:`）を開く。idはクリックでコピーできる。
 - **ピン留め**：`ui.toml` の `pinned` に書いた名前のセッション（既定は `queen`）を上部にも出す。📌で個別に付け外しできる。
-- **タイル**：セッションをタブとして開き、左右・上下に分割して並べる。配置は保存される。存在しないセッションや終了したセッションのタイルは自動で閉じる。
+- **タブとペイン**：メインエリアのタブごとに、ペインを左右・上下に分割して並べる（tmuxのwindowとpaneと同じ）。一覧からセッションを開くと、今のタブに無ければ、フォーカス中のペインが空ならそこへ、空でなければ親と逆の向きに分割して入れる。同じセッションを複数のタブに置ける。ペインの見出しに名前・id・状態と、デタッチ・終了のボタンがある。境界はドラッグで動かせる。配置は保存され、終了したセッションのペインは自動で閉じる。
 - **承認ダイアログ**：承認の要求や確認ダイアログ（フォルダの信頼、開発用チャネルなど）が出たら、セッション・マシン・cwd・内容・選択肢を示すダイアログを出す。手元の端末で答えても、ダイアログで答えてもよい。
 - **使用量**（右、開閉できる）：エージェントごと・アカウントごとの5hとweeklyのレート制限（使用率、リセット時刻）。
 - **コマンドパレット**（Ctrl+Shift+P）：組み込みとプラグインのコマンドを検索して実行する。引数のあるコマンドは既定値つきで入力を求める。
@@ -93,13 +93,16 @@
 | コマンド | 内容 | 既定のキー |
 | --- | --- | --- |
 | `ui.palette` | コマンドパレット | Ctrl+Shift+P |
-| `ui.nextTile` / `ui.prevTile` | 次 / 前のタイル | Ctrl+Shift+→ / ← （PageDown / PageUp も） |
-| `ui.closeTile` | タイルを閉じる（デタッチ） | Ctrl+Shift+W |
-| `ui.splitRight` / `ui.splitDown` | 右 / 下に分割して次のセッションを開く | Ctrl+Shift+\ / Ctrl+Shift+- |
 | `ui.approvals` | 承認待ちを表示 | Ctrl+Shift+A |
-| `ui.openSession` | 番号のセッションを開く（引数 `index`） | Alt+1〜9 |
 | `ui.toggleUsage` | 使用量の表示を開閉 | なし |
 | `ui.newSession` | 新しいセッション（引数 `machine`） | なし |
+| `tab.new` / `tab.close` / `tab.rename` | タブの追加 / 閉じる（セッションは動き続ける） / 名前の変更（引数 `name`） | Ctrl+Shift+T / なし / なし |
+| `tab.next` / `tab.prev` | 次 / 前のタブ | Ctrl+Shift+PageDown / PageUp |
+| `tab.goTo` | 番号のタブ（引数 `index`） | Alt+1〜9 |
+| `pane.splitLeft` / `Right` / `Up` / `Down` | その方向に空のペインを作る | なし / Ctrl+Shift+\ / なし / Ctrl+Shift+- |
+| `pane.focusLeft` / `Right` / `Up` / `Down` | その方向のペインへフォーカス | Ctrl+Shift+← / → / ↑ / ↓ |
+| `pane.close` | ペインを閉じる（セッションはデタッチ） | Ctrl+Shift+W |
+| `pane.zoom` | ペインを最大化 / 戻す | Ctrl+Shift+Z |
 | `session.end` / `session.pin` / `session.copyId` | フォーカス中のセッションを終了 / ピン留めの切り替え / idのコピー | なし |
 | `daemon.restart` | daemonを再起動（引数 `machine`） | なし |
 

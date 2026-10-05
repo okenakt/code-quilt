@@ -1,22 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DockviewReact, type DockviewApi, type DockviewReadyEvent } from "dockview-react";
-import "dockview-react/dist/styles/dockview.css";
 import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, restartDaemon, sessionKey, terminate, type Agent } from "./api";
 import { ApprovalDialog } from "./components/approval-dialog";
 import { NewSessionDialog } from "./components/new-session-dialog";
 import { SessionList } from "./components/session-list";
-import { TerminalPanel } from "./components/terminal-panel";
 import { UsagePanel } from "./components/usage-panel";
+import { Workspace } from "./components/workspace";
+import {
+  activeTab,
+  addTab,
+  closePane,
+  closeTab,
+  cycleTab,
+  dropSessions,
+  focusedSession as focusedSessionKey,
+  moveFocus,
+  openInActiveTab,
+  renameTab,
+  selectTab,
+  splitFocused,
+  toggleZoom,
+  useLayout,
+  type Side,
+} from "./layout";
 import { notify } from "./notify";
 import { BUILTIN_COMMANDS, BUILTIN_KEYS } from "./builtins";
 import { invokePluginCommand, onStartCommands, pinnedNames, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
 import { CommandPalette } from "./components/command-palette";
-import { chordOfEvent, formatChord } from "./keys";
-import { isPinned, togglePin, usePins } from "./pins";
-import { applyEvent, displayName, markExited, onSignal, setMachines, setSessions, tileTitle, useStore } from "./store";
+import { chordOfEvent } from "./keys";
+import { togglePin, usePins } from "./pins";
+import { applyEvent, displayName, markExited, onSignal, setMachines, setSessions, useStore } from "./store";
 import type { SessionState } from "./types";
 
-const LAYOUT_KEY = "cq.layout.v2";
 const USAGE_OPEN_KEY = "cq.usage-open";
 
 const loadUsageOpen = (): boolean => {
@@ -26,30 +40,16 @@ const loadUsageOpen = (): boolean => {
     return true;
   }
 };
-const components = { terminal: TerminalPanel };
-
-const loadLayout = (): unknown => {
-  try {
-    const raw = localStorage.getItem(LAYOUT_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+const sideOf = (command: string): Side => {
+  const dir = command.replace(/^pane\.(split|focus)/, "").toLowerCase();
+  return dir === "left" || dir === "right" || dir === "up" ? dir : "down";
 };
 
-const saveLayout = (api: DockviewApi) => {
-  try {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(api.toJSON()));
-  } catch {
-    // Layout persistence is a convenience only.
-  }
-};
-
-/** Root component: task list, tiled terminals, approval dialog and notifications. */
+/** Root component: session list, tabs of panes, usage, approvals and notifications. */
 export const App = () => {
   const { machines, sessions } = useStore();
-  const apiRef = useRef<DockviewApi | null>(null);
-  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const layout = useLayout();
+  const activeKey = useMemo(() => focusedSessionKey(), [layout]);
   const [approvalFocus, setApprovalFocus] = useState(0);
   const [newSessionFor, setNewSessionFor] = useState<string | null>(null);
   const [usageOpen, setUsageOpen] = useState(loadUsageOpen);
@@ -106,36 +106,14 @@ export const App = () => {
       }),
     [],
   );
-  const openSession = useCallback((s: SessionState) => {
-    const api = apiRef.current;
-    if (!api) return;
-    const existing = api.getPanel(s.key);
-    if (existing) {
-      existing.api.setActive();
-      return;
-    }
-    api.addPanel({
-      id: s.key,
-      component: "terminal",
-      title: tileTitle(s),
-      params: { machine: s.machine, session: s.meta.id },
-    });
-  }, []);
-
-  /** Opens a tile for a session that may not be in the list yet (just launched). */
-  const openById = useCallback((machine: string, id: string) => {
-    const api = apiRef.current;
-    const key = sessionKey(machine, id);
-    if (!api || api.getPanel(key)) return;
-    api.addPanel({ id: key, component: "terminal", title: id.slice(0, 8), params: { machine, session: id } });
-  }, []);
+  const openSession = useCallback((s: SessionState) => openInActiveTab(s.key), []);
 
   const launch = useCallback(
     async (machine: string, agent: Agent, cwd: string, args: string[], resume: string | null = null) => {
       const id = await launchSession(machine, agent, cwd, args, resume);
-      openById(machine, id);
+      openInActiveTab(sessionKey(machine, id));
     },
-    [openById],
+    [],
   );
 
   const resumeSession = useCallback(
@@ -143,43 +121,14 @@ export const App = () => {
     [launch],
   );
 
-  // Pinned sessions (manually, or tagged `queen`) open once per run in a group at the right edge.
   const pins = usePins();
   const uiConfig = useCommandState().config;
   const pinNames = useMemo(() => pinnedNames(uiConfig), [uiConfig]);
-  const autoOpened = useRef<Set<string>>(new Set());
-  const [layoutReady, setLayoutReady] = useState(false);
-  useEffect(() => {
-    const api = apiRef.current;
-    if (!api || !layoutReady) return;
-    for (const s of sessions) {
-      if (s.activity === "exited" || !isPinned(s, pins, pinNames) || autoOpened.current.has(s.key)) continue;
-      autoOpened.current.add(s.key);
-      if (api.getPanel(s.key)) continue;
-      const pinnedPanel = api.panels.find((p) => {
-        const other = sessions.find((o) => o.key === p.id);
-        return other !== undefined && isPinned(other, pins, pinNames);
-      });
-      api.addPanel({
-        id: s.key,
-        component: "terminal",
-        title: tileTitle(s),
-        params: { machine: s.machine, session: s.meta.id },
-        position: pinnedPanel ? { referencePanel: pinnedPanel.id, direction: "within" } : { direction: "right" },
-        initialWidth: 560,
-        inactive: true,
-      });
-    }
-  }, [sessions, pins, pinNames, layoutReady]);
 
-  // Keep tab titles in sync with session names.
+  // Panes of ended sessions close themselves.
   useEffect(() => {
-    const api = apiRef.current;
-    if (!api) return;
-    for (const s of sessions) {
-      const p = api.getPanel(s.key);
-      if (p && p.title !== tileTitle(s)) p.api.setTitle(tileTitle(s));
-    }
+    const ended = new Set(sessions.filter((s) => s.activity === "exited").map((s) => s.key));
+    if (ended.size > 0) dropSessions((k) => ended.has(k));
   }, [sessions]);
 
   const { plugins, pluginKeys, config, loaded } = useCommandState();
@@ -210,52 +159,54 @@ export const App = () => {
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), ok ? 4000 : 10000);
   }, []);
 
-  /** The session of the active tile, which session commands act on. */
+  /** The session of the focused pane, which session commands act on. */
   const focusedSession = (): SessionState | null => {
-    const id = apiRef.current?.activePanel?.id;
-    return sessionsRef.current.find((s) => s.key === id) ?? null;
+    const key = focusedSessionKey();
+    return sessionsRef.current.find((s) => s.key === key) ?? null;
   };
 
   const runCommand = useCallback(
     (name: string, args: Record<string, string>) => {
-      const api = apiRef.current;
-      const panels = api?.panels ?? [];
-      const idx = panels.findIndex((p) => p.id === api?.activePanel?.id);
       switch (name) {
         case "ui.palette":
           setPaletteOpen(true);
           return;
-        case "ui.nextTile":
-        case "ui.prevTile": {
-          if (panels.length === 0) return;
-          const step = name === "ui.nextTile" ? 1 : -1;
-          panels[(idx + step + panels.length) % panels.length].api.setActive();
+        case "tab.new":
+          addTab();
+          return;
+        case "tab.close":
+          closeTab(activeTab().id);
+          return;
+        case "tab.rename":
+          renameTab(activeTab().id, args.name ?? "");
+          return;
+        case "tab.next":
+        case "tab.prev":
+          cycleTab(name === "tab.next" ? 1 : -1);
+          return;
+        case "tab.goTo": {
+          const t = layout.tabs[Number(args.index) - 1];
+          if (t) selectTab(t.id);
           return;
         }
-        case "ui.closeTile":
-          api?.activePanel?.api.close();
+        case "pane.splitLeft":
+        case "pane.splitRight":
+        case "pane.splitUp":
+        case "pane.splitDown":
+          splitFocused(sideOf(name));
           return;
-        case "ui.splitRight":
-        case "ui.splitDown": {
-          const active = api?.activePanel;
-          const live = sessionsRef.current.filter((s) => s.activity !== "exited" && !api?.getPanel(s.key));
-          const target = live[0];
-          if (!api || !target || !active) return;
-          api.addPanel({
-            id: target.key,
-            component: "terminal",
-            title: tileTitle(target),
-            params: { machine: target.machine, session: target.meta.id },
-            position: { referencePanel: active.id, direction: name === "ui.splitRight" ? "right" : "below" },
-          });
+        case "pane.focusLeft":
+        case "pane.focusRight":
+        case "pane.focusUp":
+        case "pane.focusDown":
+          moveFocus(sideOf(name));
           return;
-        }
-        case "ui.openSession": {
-          const live = sessionsRef.current.filter((s) => s.activity !== "exited");
-          const s = live[Number(args.index) - 1];
-          if (s) openSession(s);
+        case "pane.close":
+          closePane(activeTab().focus);
           return;
-        }
+        case "pane.zoom":
+          toggleZoom();
+          return;
         case "ui.approvals":
           setApprovalFocus((n) => n + 1);
           return;
@@ -276,7 +227,7 @@ export const App = () => {
         case "session.pin":
         case "session.copyId": {
           const s = focusedSession();
-          if (!s) return showToast(false, "No session tile is focused");
+          if (!s) return showToast(false, "No session pane is focused");
           if (name === "session.pin") return togglePin(s, pinNames);
           if (name === "session.copyId") {
             void navigator.clipboard.writeText(s.meta.id).then(() => showToast(true, `Copied ${s.meta.id}`));
@@ -292,7 +243,7 @@ export const App = () => {
         .then((msg) => showToast(true, msg && msg !== "delivered" ? msg : `${name}: done`))
         .catch((e: unknown) => showToast(false, `${name}: ${String(e)}`));
     },
-    [openSession, showToast, toggleUsage, pinNames],
+    [showToast, toggleUsage, pinNames, layout],
   );
 
   // Run ui.toml's [[on_start]] commands once the settings are read and the daemon is reachable.
@@ -343,36 +294,6 @@ export const App = () => {
     };
   }, [keymap, allCommands, runCommand]);
 
-  /** Short key help for the sidebar footer, taken from the effective key map. */
-  const keyHelp: [string, string][] = [
-    ["ui.palette", "commands"],
-    ["ui.nextTile", "next tile"],
-    ["ui.prevTile", "previous tile"],
-    ["ui.splitRight", "split right"],
-    ["ui.splitDown", "split down"],
-    ["ui.closeTile", "close tile"],
-    ["ui.approvals", "approvals"],
-  ].flatMap(([command, label]) => {
-    const chord = keymap.byCommand.get(command)?.[0];
-    return chord ? [[formatChord(chord), label] as [string, string]] : [];
-  });
-  if (keymap.byChord.get("alt+1")?.command === "ui.openSession") keyHelp.unshift(["Alt+1…9", "open session"]);
-
-  const onReady = (e: DockviewReadyEvent) => {
-    apiRef.current = e.api;
-    const saved = loadLayout();
-    if (saved) {
-      try {
-        e.api.fromJSON(saved as Parameters<DockviewApi["fromJSON"]>[0]);
-      } catch {
-        e.api.clear();
-      }
-    }
-    setLayoutReady(true);
-    e.api.onDidLayoutChange(() => saveLayout(e.api));
-    e.api.onDidActivePanelChange((ev) => setActiveKey(ev.panel?.id ?? null));
-  };
-
   const pendingApprovals = sessions.filter((s) => s.prompt).length;
 
   return (
@@ -411,24 +332,8 @@ export const App = () => {
           pins={pins}
           pinNames={pinNames}
         />
-        <footer className="help">
-          {keyHelp.map(([k, v]) => (
-            <div key={k}>
-              <kbd>{k}</kbd> {v}
-            </div>
-          ))}
-        </footer>
       </aside>
-      <main className="tiles">
-        <DockviewReact
-          className="dockview-theme-dark"
-          components={components}
-          onReady={onReady}
-        />
-        {apiRef.current?.panels.length === 0 && sessions.length > 0 && (
-          <div className="tiles-empty">Select a session to open it as a tile.</div>
-        )}
-      </main>
+      <Workspace sessions={sessions} onNewSession={() => setNewSessionFor("local")} onGone={(key) => dropSessions((k) => k === key)} />
       {usageOpen && <UsagePanel sessions={sessions} machines={machines} />}
       <ApprovalDialog sessions={sessions} machines={machines} focusToken={approvalFocus} />
       {paletteOpen && (
