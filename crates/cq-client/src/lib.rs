@@ -246,7 +246,7 @@ pub fn spawn_detached(cmd: &mut std::process::Command, log: &std::path::Path) ->
                 Ok(())
             });
         }
-        // Reap the child when it exits; a long-lived caller such as cqd would otherwise keep
+        // Reap the child when it exits; a long-lived caller such as the daemon would otherwise keep
         // zombies.
         let mut child = cmd.spawn().context("spawn detached process")?;
         std::thread::spawn(move || {

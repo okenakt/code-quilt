@@ -15,16 +15,6 @@ pub fn sessions_dir() -> Result<PathBuf> {
     Ok(root()?.join("sessions"))
 }
 
-/// Directory holding `<id>.jsonl` hook event spools.
-pub fn spool_dir() -> Result<PathBuf> {
-    Ok(root()?.join("spool"))
-}
-
-/// Directory holding the latest status line payload per session.
-pub fn status_dir() -> Result<PathBuf> {
-    Ok(root()?.join("status"))
-}
-
 /// Settings file injected into claude via `--settings`.
 pub fn claude_settings() -> Result<PathBuf> {
     Ok(root()?.join("claude.json"))
@@ -37,7 +27,7 @@ pub fn session_file(id: &str) -> Result<PathBuf> {
 
 /// Creates all state directories.
 pub fn ensure_dirs() -> Result<()> {
-    for d in [sessions_dir()?, spool_dir()?, status_dir()?, root()?.join("logs")] {
+    for d in [sessions_dir()?, root()?.join("logs")] {
         std::fs::create_dir_all(&d)?;
     }
     #[cfg(unix)]

@@ -32,38 +32,25 @@ fn parse(raw: &[u8]) -> serde_json::Value {
         .unwrap_or_else(|_| serde_json::Value::String(String::from_utf8_lossy(raw).into_owned()))
 }
 
-/// Handles a hook invocation: appends the payload to the session spool and forwards it to the
-/// host if reachable. Always succeeds silently.
+/// Handles a hook invocation: forwards the payload to the host if reachable. Always succeeds
+/// silently.
 pub async fn hook() {
     let raw = read_stdin();
-    let Ok(id) = std::env::var("CQ_SESSION_ID") else { return };
-    let ev = AgentEvent { source: "hook".into(), received_at_ms: session::now_ms(), payload: parse(&raw) };
-    if let Ok(dir) = paths::spool_dir() {
-        let _ = std::fs::create_dir_all(&dir);
-        if let Ok(mut f) =
-            std::fs::OpenOptions::new().create(true).append(true).open(dir.join(format!("{id}.jsonl")))
-        {
-            if let Ok(mut line) = serde_json::to_vec(&ev) {
-                line.push(b'\n');
-                let _ = f.write_all(&line);
-            }
-        }
+    if std::env::var_os("CQ_SESSION_ID").is_none() {
+        return;
     }
+    let ev = AgentEvent { source: "hook".into(), received_at_ms: session::now_ms(), payload: parse(&raw) };
     let r = tokio::time::timeout(Duration::from_millis(500), send_event(ev)).await;
     if std::env::var_os("CQ_DEBUG").is_some() {
         eprintln!("cq hook: {r:?}");
     }
 }
 
-/// Handles a status line invocation: records the payload, then chains to the user's own
+/// Handles a status line invocation: forwards the payload to the host, then chains to the user's own
 /// status line command so the local display is unchanged.
 pub async fn statusline() {
     let raw = read_stdin();
-    if let Ok(id) = std::env::var("CQ_SESSION_ID") {
-        if let Ok(dir) = paths::status_dir() {
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::write(dir.join(format!("{id}.json")), &raw);
-        }
+    if std::env::var_os("CQ_SESSION_ID").is_some() {
         let ev = AgentEvent {
             source: "statusline".into(),
             received_at_ms: session::now_ms(),
