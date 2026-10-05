@@ -38,9 +38,9 @@ pub fn session_endpoint(id: &str) -> Result<String> {
 /// is part of the name.
 pub fn daemon_endpoint() -> Result<String> {
     if cfg!(windows) {
-        Ok(format!(r"\\.\pipe\codequilt-cqd-{}", user_tag()))
+        Ok(format!(r"\\.\pipe\codequilt-daemon-{}", user_tag()))
     } else {
-        Ok(state_root()?.join("run").join("cqd.sock").to_string_lossy().into_owned())
+        Ok(state_root()?.join("run").join("daemon.sock").to_string_lossy().into_owned())
     }
 }
 
