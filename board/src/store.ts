@@ -122,7 +122,6 @@ const parseStatus = (payload: unknown, receivedAt: number): StatusLine => ({
   contextPercent: num(payload, "context_window", "used_percentage"),
   inputTokens: num(payload, "context_window", "total_input_tokens"),
   outputTokens: num(payload, "context_window", "total_output_tokens"),
-  costUsd: num(payload, "cost", "total_cost_usd"),
   fiveHour: rateWindow(asRecord(asRecord(payload)?.rate_limits)?.five_hour),
   sevenDay: rateWindow(asRecord(asRecord(payload)?.rate_limits)?.seven_day),
 });

@@ -269,10 +269,6 @@ kbd {
   background: var(--panel-2);
 }
 
-.session.exited {
-  opacity: 0.55;
-}
-
 .session.approval {
   border-color: var(--approval);
 }
@@ -316,6 +312,66 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-usage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ctx-track {
+  display: inline-block;
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.ctx-fill {
+  display: block;
+  height: 100%;
+  background: var(--working);
+}
+
+.section-toggle,
+.section-more {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.section-toggle:hover,
+.section-more:hover {
+  color: var(--text);
+}
+
+.ended {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ended .session-name {
+  font-weight: 400;
+}
+
+.ended-when {
+  flex-shrink: 0;
+  font-size: 11px;
 }
 
 .badge {
@@ -513,13 +569,18 @@ kbd {
 }
 
 .session-resume {
-  margin-top: 4px;
+  flex-shrink: 0;
   font-size: 11px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--accent);
   border-radius: 4px;
-  background: var(--panel-2);
+  background: transparent;
+  color: var(--accent);
   cursor: pointer;
-  padding: 1px 8px;
+  padding: 0 8px;
+}
+
+.session-resume:hover {
+  background: rgba(245, 196, 81, 0.15);
 }
 
 .modal-backdrop {

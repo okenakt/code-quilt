@@ -1,36 +1,51 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { terminate } from "../api";
 import { isPinned, togglePin } from "../pins";
 import { displayName } from "../store";
 import type { Activity, MachineInfo, SessionState } from "../types";
 
-const ACTIVITY_LABEL: Record<Activity, string> = {
+const ACTIVITY_LABEL: Record<Exclude<Activity, "exited">, string> = {
   starting: "starting",
   working: "working",
   idle: "idle",
   approval: "needs approval",
-  exited: "exited",
 };
 
-const formatTokens = (n: number | null): string | null => {
-  if (n === null) return null;
-  return n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n);
+/** Ended sessions listed before "show all". */
+const ENDED_LIMIT = 20;
+
+const formatTokens = (n: number): string =>
+  n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n);
+
+const ago = (ms: number): string => {
+  const mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 48 * 60) return `${Math.round(mins / 60)}h ago`;
+  return `${Math.round(mins / 1440)}d ago`;
 };
 
-const sumTokens = (c: { input: number; output: number; cacheRead: number; cacheCreation: number }) =>
-  c.input + c.output + c.cacheRead + c.cacheCreation;
-
-/** Badge with model, context usage and token totals (transcript totals when available). */
-const UsageBadge = ({ s }: { s: SessionState }) => {
+/** Model, context usage and token total of a running session. */
+const UsageLine = ({ s }: { s: SessionState }) => {
   const st = s.status;
-  if (!st && !s.tokens) return null;
-  const total = s.tokens ? sumTokens(s.tokens) : (st?.inputTokens ?? 0) + (st?.outputTokens ?? 0);
-  const parts = [
-    st?.model ?? null,
-    st?.contextPercent != null ? `ctx ${Math.round(st.contextPercent)}%` : null,
-    total ? `${formatTokens(total)} tok` : null,
-  ].filter((p): p is string => p !== null);
-  return <div className="session-usage">{parts.join(" · ")}</div>;
+  const t = s.tokens;
+  const total = t ? t.input + t.output + t.cacheRead + t.cacheCreation : (st?.inputTokens ?? 0) + (st?.outputTokens ?? 0);
+  const ctx = st?.contextPercent ?? null;
+  if (!st?.model && ctx === null && !total) return null;
+  return (
+    <div className="session-usage">
+      {st?.model && <span>{st.model}</span>}
+      {ctx !== null && (
+        <span className="ctx" title={`context ${Math.round(ctx)}% used`}>
+          ctx
+          <span className="ctx-track">
+            <span className="ctx-fill" style={{ width: `${Math.min(100, ctx)}%` }} />
+          </span>
+          {Math.round(ctx)}%
+        </span>
+      )}
+      {total > 0 && <span>{formatTokens(total)} tokens</span>}
+    </div>
+  );
 };
 
 /** Per-model token breakdown shown for the selected session. */
@@ -58,26 +73,8 @@ const TokenDetail = ({ s }: { s: SessionState }) => {
           </tr>
         ))}
       </tbody>
-      {s.status?.costUsd != null && (
-        <tfoot>
-          <tr>
-            <td colSpan={5}>≈ ${s.status.costUsd.toFixed(2)} API-equivalent</td>
-          </tr>
-        </tfoot>
-      )}
     </table>
   );
-};
-
-type ItemProps = {
-  s: SessionState;
-  machine: MachineInfo | undefined;
-  active: boolean;
-  pinned: boolean;
-  /** Show the machine label (in the pinned section, which mixes machines). */
-  showMachine: boolean;
-  onOpen: (s: SessionState) => void;
-  onResume: (s: SessionState) => void;
 };
 
 /** Short session id; clicking copies the full id. */
@@ -102,7 +99,17 @@ const SessionId = ({ id }: { id: string }) => {
   );
 };
 
-const SessionItem = ({ s, machine, active, pinned, showMachine, onOpen, onResume }: ItemProps) => (
+type ActiveProps = {
+  s: SessionState;
+  machine: MachineInfo | undefined;
+  active: boolean;
+  pinned: boolean;
+  /** Show the machine label (in the pinned section, which mixes machines). */
+  showMachine: boolean;
+  onOpen: (s: SessionState) => void;
+};
+
+const ActiveItem = ({ s, machine, active, pinned, showMachine, onOpen }: ActiveProps) => (
   <div
     role="button"
     tabIndex={0}
@@ -114,33 +121,29 @@ const SessionItem = ({ s, machine, active, pinned, showMachine, onOpen, onResume
     <div className="session-row">
       <span className="session-name">{displayName(s)}</span>
       <SessionId id={s.meta.id} />
-      <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>
-      {s.activity !== "exited" && (
-        <button
-          className={`pin ${pinned ? "on" : ""}`}
-          title={pinned ? "unpin" : "pin to the front"}
-          onClick={(e) => {
-            e.stopPropagation();
-            togglePin(s.key);
-          }}
-        >
-          📌
-        </button>
-      )}
-      {s.activity !== "exited" && (
-        <button
-          className="end-session"
-          title="end session (the agent exits; killed after 10s)"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (confirm(`End session "${displayName(s)}" (${s.meta.id.slice(0, 8)})?`)) {
-              terminate(s.machine, s.meta.id).catch((err: unknown) => alert(String(err)));
-            }
-          }}
-        >
-          ✕
-        </button>
-      )}
+      {s.activity !== "exited" && <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>}
+      <button
+        className={`pin ${pinned ? "on" : ""}`}
+        title={pinned ? "unpin" : "pin to the front"}
+        onClick={(e) => {
+          e.stopPropagation();
+          togglePin(s.key);
+        }}
+      >
+        📌
+      </button>
+      <button
+        className="end-session"
+        title="end session (the agent exits; killed after 10s)"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (confirm(`End session "${displayName(s)}" (${s.meta.id.slice(0, 8)})?`)) {
+            terminate(s.machine, s.meta.id).catch((err: unknown) => alert(String(err)));
+          }
+        }}
+      >
+        ✕
+      </button>
     </div>
     <div className="session-cwd">
       {showMachine && machine ? `${machine.label} · ` : ""}
@@ -155,21 +158,70 @@ const SessionItem = ({ s, machine, active, pinned, showMachine, onOpen, onResume
         ))}
       </div>
     )}
-    <UsageBadge s={s} />
+    <UsageLine s={s} />
     {active && <TokenDetail s={s} />}
-    {s.activity === "exited" && s.meta.agent_session_id && machine?.online && (
-      <button
-        className="session-resume"
-        onClick={(e) => {
-          e.stopPropagation();
-          onResume(s);
-        }}
-      >
-        resume
+  </div>
+);
+
+const EndedItem = ({ s, canResume, onResume }: { s: SessionState; canResume: boolean; onResume: (s: SessionState) => void }) => (
+  <div className="ended" title={s.meta.cwd}>
+    <span className="session-name">{displayName(s)}</span>
+    <SessionId id={s.meta.id} />
+    <span className="ended-when">{ago(s.meta.ended_at_ms ?? s.meta.started_at_ms)}</span>
+    {canResume && s.meta.agent_session_id && (
+      <button className="session-resume" onClick={() => onResume(s)}>
+        Resume
       </button>
     )}
   </div>
 );
+
+const openKey = (machine: string) => `cq.ended-open.${machine}`;
+
+const loadOpen = (machine: string): boolean => {
+  try {
+    return localStorage.getItem(openKey(machine)) === "1";
+  } catch {
+    return false;
+  }
+};
+
+/** Ended sessions of a machine, newest first, collapsed by default. */
+const EndedSection = ({ machine, sessions, onResume }: { machine: MachineInfo; sessions: SessionState[]; onResume: (s: SessionState) => void }) => {
+  const [open, setOpen] = useState(() => loadOpen(machine.id));
+  const [all, setAll] = useState(false);
+  useEffect(() => {
+    try {
+      localStorage.setItem(openKey(machine.id), open ? "1" : "0");
+    } catch {
+      // Remembering the section state is a convenience only.
+    }
+  }, [machine.id, open]);
+  if (sessions.length === 0) return null;
+  const sorted = [...sessions].sort(
+    (a, b) => (b.meta.ended_at_ms ?? b.meta.started_at_ms) - (a.meta.ended_at_ms ?? a.meta.started_at_ms),
+  );
+  const shown = all ? sorted : sorted.slice(0, ENDED_LIMIT);
+  return (
+    <div className="ended-section">
+      <button className="section-toggle" onClick={() => setOpen(!open)}>
+        {open ? "▾" : "▸"} Ended ({sessions.length})
+      </button>
+      {open && (
+        <>
+          {shown.map((s) => (
+            <EndedItem key={s.key} s={s} canResume={machine.online} onResume={onResume} />
+          ))}
+          {!all && sorted.length > ENDED_LIMIT && (
+            <button className="section-more" onClick={() => setAll(true)}>
+              Show all {sorted.length}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
 
 type Props = {
   machines: MachineInfo[];
@@ -181,9 +233,10 @@ type Props = {
   pins: Set<string>;
 };
 
-/** Task list: pinned sessions first, then sessions grouped by machine, live ones first. */
+/** Session list: pinned sessions first, then each machine's active sessions and its ended ones. */
 export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume, pins }: Props) => {
-  const pinned = sessions.filter((s) => s.activity !== "exited" && isPinned(s, pins));
+  const running = sessions.filter((s) => s.activity !== "exited");
+  const pinned = running.filter((s) => isPinned(s, pins));
   const machineOf = (s: SessionState) => machines.find((m) => m.id === s.machine);
   return (
     <nav className="session-list">
@@ -191,23 +244,13 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
         <section className="machine pinned">
           <header className="machine-header">Pinned</header>
           {pinned.map((s) => (
-            <SessionItem
-              key={s.key}
-              s={s}
-              machine={machineOf(s)}
-              active={s.key === activeKey}
-              pinned
-              showMachine
-              onOpen={onOpen}
-              onResume={onResume}
-            />
+            <ActiveItem key={s.key} s={s} machine={machineOf(s)} active={s.key === activeKey} pinned showMachine onOpen={onOpen} />
           ))}
         </section>
       )}
       {machines.map((m) => {
-        const mine = sessions.filter((s) => s.machine === m.id && !pinned.includes(s));
-        const live = mine.filter((s) => s.activity !== "exited");
-        const exited = mine.filter((s) => s.activity === "exited").slice(-8).reverse();
+        const active = running.filter((s) => s.machine === m.id && !pinned.includes(s));
+        const ended = sessions.filter((s) => s.machine === m.id && s.activity === "exited");
         return (
           <section key={m.id} className="machine">
             <header className="machine-header" title={m.error ?? undefined}>
@@ -220,19 +263,11 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
                 </button>
               )}
             </header>
-            {live.length === 0 && <div className="empty">no running sessions</div>}
-            {[...live, ...exited].map((s) => (
-              <SessionItem
-                key={s.key}
-                s={s}
-                machine={m}
-                active={s.key === activeKey}
-                pinned={false}
-                showMachine={false}
-                onOpen={onOpen}
-                onResume={onResume}
-              />
+            {active.length === 0 && <div className="empty">No active sessions</div>}
+            {active.map((s) => (
+              <ActiveItem key={s.key} s={s} machine={m} active={s.key === activeKey} pinned={false} showMachine={false} onOpen={onOpen} />
             ))}
+            <EndedSection machine={m} sessions={ended} onResume={onResume} />
           </section>
         );
       })}

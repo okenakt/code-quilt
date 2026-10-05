@@ -9,6 +9,7 @@ export type SessionMeta = {
   started_at_ms: number;
   status: "running" | "exited";
   exit_code: number | null;
+  ended_at_ms?: number | null;
   agent_session_id: string | null;
   name: string | null;
   tags: string[];
@@ -46,7 +47,6 @@ export type StatusLine = {
   contextPercent: number | null;
   inputTokens: number | null;
   outputTokens: number | null;
-  costUsd: number | null;
   fiveHour: RateWindow | null;
   sevenDay: RateWindow | null;
 };
