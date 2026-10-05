@@ -108,7 +108,7 @@ fn find_queen<'a>(model: &'a Model, name: &str) -> Option<&'a Session> {
 /// Runs the courier until the Queen session exits.
 pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
     let scope = cq_client::Scope::parse(&cfg.scope)?;
-    let started = now_ms();
+    let mut started = now_ms();
     let mut conn = cq_client::DaemonClient::open(true).await?;
     conn.send(&Message::ListSessions).await?;
 
@@ -116,6 +116,9 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
     let mut model = Model::default();
     let mut commands: Vec<String> = Vec::new();
     let mut registered = false;
+    // Whether the local session list arrived on this connection; until then a missing Queen
+    // only means the list is not there yet.
+    let mut listed = false;
     let mut queen_id: Option<String> = None;
     let mut pending: Vec<Item> = Vec::new();
     let mut open: Vec<Item> = Vec::new();
@@ -128,8 +131,17 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
     loop {
         tokio::select! {
             msg = conn.msgs.recv() => {
-                let Some(msg) = msg else { bail!("daemon connection closed") };
-                let msg = msg?;
+                let Some(Ok(msg)) = msg else {
+                    // The daemon went away (e.g. restarted): connect again and rebuild the view;
+                    // undelivered items are kept.
+                    conn.reconnect().await;
+                    let _ = conn.send(&Message::ListSessions).await;
+                    (model, registered, listed, started) = (Model::default(), false, false, now_ms());
+                    continue;
+                };
+                if matches!(&msg, Message::SessionList(l) if l.machine == LOCAL_MACHINE) {
+                    listed = true;
+                }
                 if let Message::CommandList(list) = &msg {
                     commands = list.iter().map(|c| c.name.clone()).collect();
                     if !registered {
@@ -138,8 +150,7 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                             return Ok(());
                         }
                         let cmd = CommandInfo { name: me.clone(), title: format!("Courier of queen {name}"), ..Default::default() };
-                        conn.send(&Message::RegisterCommand(cmd)).await?;
-                        registered = true;
+                        registered = conn.send(&Message::RegisterCommand(cmd)).await.is_ok();
                     }
                 }
                 let Some((machine, session, ev)) = model.apply(&msg) else { continue };
@@ -188,6 +199,9 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
             }
             _ = tick.tick() => {
                 // Follow the Queen session; stop when it is gone.
+                if !listed {
+                    continue;
+                }
                 match find_queen(&model, name).map(|q| q.meta.id.clone()) {
                     Some(id) => queen_id = Some(id),
                     None if queen_id.is_some() => return Ok(()),
@@ -223,7 +237,9 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                         Message::Routed { machine: LOCAL_MACHINE.to_owned(), session: qid, inner: Box::new(Message::Inject(inj)) }
                     }
                 };
-                conn.send(&msg).await?;
+                if conn.send(&msg).await.is_err() {
+                    continue; // The receive side notices the lost connection and reconnects.
+                }
                 open.extend(pending.drain(..).filter(|i| matches!(i.kind, ItemKind::Prompt { .. })));
                 first_pending = None;
             }

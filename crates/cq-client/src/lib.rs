@@ -270,6 +270,7 @@ pub async fn connect_daemon() -> Result<BoxStream> {
 pub struct DaemonClient {
     pub msgs: tokio::sync::mpsc::UnboundedReceiver<Result<Message>>,
     wr: tokio::io::WriteHalf<BoxStream>,
+    federate: bool,
 }
 
 impl DaemonClient {
@@ -277,7 +278,7 @@ impl DaemonClient {
     /// relays every registered remote machine.
     pub async fn open(federate: bool) -> Result<Self> {
         let (rd, wr) = tokio::io::split(connect_daemon().await?);
-        let mut client = Self { msgs: cq_proto::spawn_reader(rd), wr };
+        let mut client = Self { msgs: cq_proto::spawn_reader(rd), wr, federate };
         let hello = cq_proto::Hello {
             protocol_version: cq_proto::DAEMON_PROTOCOL_VERSION,
             kind: cq_proto::ClientKind::Hub,
@@ -291,6 +292,18 @@ impl DaemonClient {
 
     pub async fn send(&mut self, msg: &Message) -> Result<()> {
         cq_proto::write_message(&mut self.wr, msg).await
+    }
+
+    /// Connects again after the daemon went away (e.g. `cq daemon restart`), starting it if
+    /// needed and retrying every second until it succeeds.
+    pub async fn reconnect(&mut self) {
+        loop {
+            match Self::open(self.federate).await {
+                Ok(c) => return *self = c,
+                Err(e) => eprintln!("daemon unreachable: {e:#}"),
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
 }
 
