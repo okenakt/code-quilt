@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { terminate } from "../api";
-import { isPinned, togglePin } from "../pins";
+import { isPinned, togglePin, type Pins } from "../pins";
 import { displayName } from "../store";
 import type { Activity, MachineInfo, SessionState } from "../types";
 
@@ -127,7 +127,7 @@ const ActiveItem = ({ s, machine, active, pinned, showMachine, onOpen }: ActiveP
         title={pinned ? "unpin" : "pin to the front"}
         onClick={(e) => {
           e.stopPropagation();
-          togglePin(s.key);
+          togglePin(s);
         }}
       >
         📌
@@ -230,10 +230,10 @@ type Props = {
   onOpen: (s: SessionState) => void;
   onNew: (machine: string) => void;
   onResume: (s: SessionState) => void;
-  pins: Set<string>;
+  pins: Pins;
 };
 
-/** Session list: pinned sessions first, then each machine's active sessions and its ended ones. */
+/** Pinned sessions first (also listed under their machine), then each machine's sessions. */
 export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume, pins }: Props) => {
   const running = sessions.filter((s) => s.activity !== "exited");
   const pinned = running.filter((s) => isPinned(s, pins));
@@ -249,7 +249,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
         </section>
       )}
       {machines.map((m) => {
-        const active = running.filter((s) => s.machine === m.id && !pinned.includes(s));
+        const active = running.filter((s) => s.machine === m.id);
         const ended = sessions.filter((s) => s.machine === m.id && s.activity === "exited");
         return (
           <section key={m.id} className="machine">
@@ -265,7 +265,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
             </header>
             {active.length === 0 && <div className="empty">No active sessions</div>}
             {active.map((s) => (
-              <ActiveItem key={s.key} s={s} machine={m} active={s.key === activeKey} pinned={false} showMachine={false} onOpen={onOpen} />
+              <ActiveItem key={s.key} s={s} machine={m} active={s.key === activeKey} pinned={isPinned(s, pins)} showMachine={false} onOpen={onOpen} />
             ))}
             <EndedSection machine={m} sessions={ended} onResume={onResume} />
           </section>

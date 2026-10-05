@@ -1,32 +1,27 @@
 import { useSyncExternalStore } from "react";
 import type { SessionState } from "./types";
 
-/** Sessions with this tag are pinned automatically (e.g. orchestrators). */
+/** Sessions with this tag are pinned unless the user unpins them (e.g. orchestrators). */
 export const AUTO_PIN_TAG = "queen";
 
-const KEY = "cq.pins.v1";
+/** Session key to an explicit pin choice; sessions without one follow their tag. */
+export type Pins = Record<string, boolean>;
+
+const KEY = "cq.pins.v2";
 const listeners = new Set<() => void>();
 
-const load = (): Set<string> => {
+const load = (): Pins => {
   try {
-    return new Set(JSON.parse(localStorage.getItem(KEY) ?? "[]") as string[]);
+    return JSON.parse(localStorage.getItem(KEY) ?? "{}") as Pins;
   } catch {
-    return new Set();
+    return {};
   }
 };
 
 let pins = load();
 
-const save = () => {
-  try {
-    localStorage.setItem(KEY, JSON.stringify([...pins]));
-  } catch {
-    // Pins are a per-viewer convenience.
-  }
-};
-
-/** React hook returning the set of manually pinned session keys. */
-export const usePins = (): Set<string> =>
+/** React hook returning the explicit pin choices. */
+export const usePins = (): Pins =>
   useSyncExternalStore(
     (l) => {
       listeners.add(l);
@@ -35,15 +30,16 @@ export const usePins = (): Set<string> =>
     () => pins,
   );
 
+/** Whether a session is pinned: the user's choice, or else its tag. */
+export const isPinned = (s: SessionState, choices: Pins): boolean => choices[s.key] ?? s.meta.tags.includes(AUTO_PIN_TAG);
+
 /** Pins or unpins a session. */
-export const togglePin = (key: string): void => {
-  pins = new Set(pins);
-  if (pins.has(key)) pins.delete(key);
-  else pins.add(key);
-  save();
+export const togglePin = (s: SessionState): void => {
+  pins = { ...pins, [s.key]: !isPinned(s, pins) };
+  try {
+    localStorage.setItem(KEY, JSON.stringify(pins));
+  } catch {
+    // Pins are a per-viewer convenience.
+  }
   listeners.forEach((l) => l());
 };
-
-/** Whether a session is pinned, manually or by its tag. */
-export const isPinned = (s: SessionState, manual: Set<string>): boolean =>
-  manual.has(s.key) || s.meta.tags.includes(AUTO_PIN_TAG);

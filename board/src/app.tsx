@@ -275,7 +275,7 @@ export const App = () => {
         case "session.copyId": {
           const s = focusedSession();
           if (!s) return showToast(false, "No session tile is focused");
-          if (name === "session.pin") return togglePin(s.key);
+          if (name === "session.pin") return togglePin(s);
           if (name === "session.copyId") {
             void navigator.clipboard.writeText(s.meta.id).then(() => showToast(true, `Copied ${s.meta.id}`));
             return;
