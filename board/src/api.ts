@@ -111,3 +111,9 @@ export const decodeBytes = (b64: string): Uint8Array => {
 
 /** Stops a machine's daemon; the board (or the remote relay) reconnects and starts a new one. */
 export const restartDaemon = (machine: string): Promise<void> => invoke("restart_daemon", { machine });
+
+/** Binds a key to a command in keybindings.toml (replacing the user's previous use of the key). */
+export const bindKey = (key: string, command: string): Promise<void> => invoke("bind_key", { key, command });
+
+/** Unbinds a key from a command in keybindings.toml (removing a default binding if needed). */
+export const unbindKey = (key: string, command: string): Promise<void> => invoke("unbind_key", { key, command });

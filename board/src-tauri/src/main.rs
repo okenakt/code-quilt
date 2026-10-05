@@ -106,6 +106,16 @@ fn restart_daemon(hub: State<'_, HubState>, machine: String) -> Result<(), Strin
 }
 
 #[tauri::command]
+fn bind_key(key: String, command: String) -> Result<(), String> {
+    settings::bind_key(&key, &command)
+}
+
+#[tauri::command]
+fn unbind_key(key: String, command: String) -> Result<(), String> {
+    settings::unbind_key(&key, &command)
+}
+
+#[tauri::command]
 fn ui_config() -> settings::UiConfig {
     settings::load()
 }
@@ -207,7 +217,9 @@ fn main() {
             commands,
             invoke_command,
             ui_config,
-            restart_daemon
+            restart_daemon,
+            bind_key,
+            unbind_key
         ])
         .run(tauri::generate_context!())
         .expect("error while running CodeQuilt");

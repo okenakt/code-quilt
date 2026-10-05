@@ -1234,3 +1234,106 @@ kbd {
   color: var(--approval);
   font-size: 11px;
 }
+
+.main-overlay {
+  grid-column: 3;
+  grid-row: 2;
+  z-index: 30;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.keybindings-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 16px;
+}
+
+.keybindings-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.keybindings-title {
+  font-weight: 600;
+}
+
+.keybindings-header input {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
+.keybindings-table {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.keybindings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.keybindings-command {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.keybindings-name {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.keybindings-keys {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.key-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.key-chip.user kbd {
+  border-color: var(--accent);
+}
+
+.key-chip.plugin kbd {
+  border-color: var(--working);
+}
+
+.key-chip button,
+.key-add {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.key-chip button:hover,
+.key-add:hover {
+  color: var(--text);
+}
+
+.key-add.recording {
+  color: var(--accent);
+}

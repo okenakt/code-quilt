@@ -79,6 +79,50 @@ pub fn load() -> UiConfig {
     UiConfig { ui, keybindings, errors }
 }
 
+/// Edits `keybindings.toml` in place, keeping the user's comments and layout.
+fn edit_bindings(f: impl FnOnce(&mut toml_edit::ArrayOfTables)) -> Result<(), String> {
+    let path = file("keybindings.toml").ok_or("no home directory")?;
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| format!("keybindings.toml: {e}"))?;
+    let bindings = doc
+        .entry("binding")
+        .or_insert(toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()))
+        .as_array_of_tables_mut()
+        .ok_or("keybindings.toml: `binding` must be a list of [[binding]] tables")?;
+    f(bindings);
+    std::fs::write(&path, doc.to_string()).map_err(|e| e.to_string())
+}
+
+fn is_binding(t: &toml_edit::Table, key: &str, command: &str) -> bool {
+    t.get("key").and_then(|v| v.as_str()) == Some(key) && t.get("command").and_then(|v| v.as_str()) == Some(command)
+}
+
+/// Binds `key` to `command`, replacing what the user had bound to that key before.
+pub fn bind_key(key: &str, command: &str) -> Result<(), String> {
+    edit_bindings(|bindings| {
+        bindings.retain(|t| t.get("key").and_then(|v| v.as_str()) != Some(key));
+        let mut t = toml_edit::Table::new();
+        t["key"] = toml_edit::value(key);
+        t["command"] = toml_edit::value(command);
+        bindings.push(t);
+    })
+}
+
+/// Unbinds `key` from `command`: deletes the user's own binding, or for a default binding adds
+/// a `-command` entry that removes it.
+pub fn unbind_key(key: &str, command: &str) -> Result<(), String> {
+    edit_bindings(|bindings| {
+        let before = bindings.len();
+        bindings.retain(|t| !is_binding(t, key, command));
+        if bindings.len() == before {
+            let mut t = toml_edit::Table::new();
+            t["key"] = toml_edit::value(key);
+            t["command"] = toml_edit::value(format!("-{command}"));
+            bindings.push(t);
+        }
+    })
+}
+
 fn stamp() -> [Option<SystemTime>; 2] {
     ["ui.toml", "keybindings.toml"].map(|n| file(n).and_then(|p| p.metadata().ok()).and_then(|m| m.modified().ok()))
 }

@@ -7,7 +7,7 @@
 ### セッション
 
 - `cq claude` / `cq codex` でエージェントをCodeQuiltのセッションとして起動する。手元の端末にそのまま表示され、Ctrl+\ で切り離しても動き続ける。
-- 切り離したセッションは `cq attach`（`cq a`）でどの端末からでも付け直せる。ダッシュボードのタイルからも同時に操作できる。
+- 切り離したセッションは `cq attach`（`cq a`）でどの端末からでも付け直せる。ダッシュボードのペインからも同時に操作できる。
 - セッションは名前・id・idの前方一致で指定できる。名前は動いているセッションの中でマシンごとに一意。
 - 終了は `cq kill` かダッシュボードの「End session」。エージェント自身に終了させ、10秒で終わらなければ強制終了する。
 - ダッシュボードの「New session」では、そのマシンのClaude CodeやCodexで信頼済みのフォルダが一覧に出る。それ以外は「Choose another folder…」で `allowed_roots` の配下から選ぶ。
@@ -26,7 +26,7 @@
 - **承認**：承認の要求や確認ダイアログ（フォルダの信頼、開発用チャネルなど）が出たら、右下にセッション・マシン・cwd・内容・選択肢を示すカードを出す。カードは入力のフォーカスを奪わず、最小化しても右サイドバーのApprovalsに残り、選ぶともう一度出る（`ui.approvals` で最新のカードにフォーカス）。手元の端末で答えてもカードで答えてもよい。承認待ちのセッションのペインは枠の色で知らせる。
 - **右サイドバー**（開閉できる）：Approvals（承認待ちの一覧）と、Usage（エージェントごと・アカウントごとの5hとweeklyのレート制限、使用率とリセット時刻）。
 - **コマンドパレット**（Ctrl+Shift+P）：組み込みとプラグインのコマンドを検索して実行する。引数のあるコマンドは既定値つきで入力を求める。
-- **キーバインド**：すべてのコマンドに `keybindings.toml` でキーを割り当てられる。
+- **キーバインド**：すべてのコマンドにキーを割り当てられる。`ui.keybindings` で開く画面で、コマンドとキーと出どころ（default / plugin / user）を検索・一覧し、「+ key」を押してからキーを押すと割り当て、✕で外す。変更は `keybindings.toml` にコメントを保ったまま書き込まれ、直接編集してもよい。
 - **起動時の処理**：`ui.toml` の `on_start` に並べたコマンドを起動時に実行する（既定はQueenの起動）。
 - **通知**：ターン終了や承認待ちをOS通知で知らせる。コマンドの結果と失敗は右下に出す。
 - **フォント**：`ui.toml` でターミナルのフォントと大きさを変えられる。
@@ -93,6 +93,7 @@
 | コマンド | 内容 | 既定のキー |
 | --- | --- | --- |
 | `ui.palette` | コマンドパレット | Ctrl+Shift+P |
+| `ui.keybindings` | キーバインドの画面の開閉 | なし |
 | `ui.approvals` | 承認待ちを表示 | Ctrl+Shift+A |
 | `ui.toggleRightSidebar` | 右サイドバーの開閉 | なし |
 | `ui.togglePinned` / `ui.toggleTabs` / `ui.toggleMachines` | 左サイドバーの各欄の表示・非表示 | なし |
@@ -160,7 +161,7 @@ args = { name = "main" }
 
 [[binding]]
 key = "ctrl+shift+w"
-command = "-ui.closeTile"   # "-" removes a default binding (all of its keys without `key`)
+command = "-pane.close"     # "-" removes a default binding (all of its keys without `key`)
 ```
 
 - 優先順位はユーザー > プラグインの既定 > 組み込みの既定。上書きや未知のコマンドはパレットの下に警告として出る。

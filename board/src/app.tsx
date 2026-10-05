@@ -24,8 +24,9 @@ import {
 } from "./layout";
 import { notify } from "./notify";
 import { BUILTIN_COMMANDS, BUILTIN_KEYS } from "./builtins";
-import { invokePluginCommand, onStartCommands, pinnedNames, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
+import { invokePluginCommand, isRecording, onStartCommands, pinnedNames, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
 import { CommandPalette } from "./components/command-palette";
+import { KeybindingsView } from "./components/keybindings-view";
 import { chordOfEvent } from "./keys";
 import { togglePin, usePins } from "./pins";
 import { toggleRight, toggleSection, usePrefs } from "./prefs";
@@ -143,6 +144,7 @@ export const App = () => {
   const warnings = [...config.errors, ...keymap.warnings];
 
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [keybindingsOpen, setKeybindingsOpen] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; ok: boolean; text: string }[]>([]);
   const toastId = useRef(0);
   const showToast = useCallback((ok: boolean, text: string) => {
@@ -162,6 +164,9 @@ export const App = () => {
       switch (name) {
         case "ui.palette":
           setPaletteOpen(true);
+          return;
+        case "ui.keybindings":
+          setKeybindingsOpen((open) => !open);
           return;
         case "tab.new":
           addTab();
@@ -261,6 +266,8 @@ export const App = () => {
   const held = useRef(new Map<string, string>());
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The keybindings view is recording a new key; it handles the press itself.
+      if (isRecording()) return;
       if (e.type === "keyup") {
         const command = held.current.get(e.code);
         if (command) {
@@ -339,6 +346,17 @@ export const App = () => {
       </aside>
       <SidebarResizer side="left" />
       <Workspace sessions={sessions} onNewSession={() => setNewSessionFor("local")} onGone={(key) => dropSessions((k) => k === key)} />
+      {keybindingsOpen && (
+        <div className="main-overlay">
+          <KeybindingsView
+            commands={allCommands.filter((c) => c.palette)}
+            keymap={keymap}
+            warnings={warnings}
+            onError={(m) => showToast(false, m)}
+            onClose={() => setKeybindingsOpen(false)}
+          />
+        </div>
+      )}
       {prefs.rightOpen && <SidebarResizer side="right" />}
       {prefs.rightOpen && <RightSidebar sessions={sessions} machines={machines} onShowApproval={showApproval} />}
       {paletteOpen && (

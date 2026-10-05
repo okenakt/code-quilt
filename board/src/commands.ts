@@ -106,7 +106,7 @@ const userBindings = (raw: unknown[], errors: string[]): { add: Binding[]; remov
 };
 
 /** The effective key map and any conflicts or errors to show to the user. */
-export type Keymap = { byChord: Map<string, Binding>; byCommand: Map<string, string[]>; warnings: string[] };
+export type Keymap = { byChord: Map<string, Binding>; byCommand: Map<string, string[]>; sources: Map<string, BindingLayer>; warnings: string[] };
 
 /** Merges built-in, plugin and user bindings (user > plugin > built-in). */
 export const resolveKeymap = (builtin: Binding[], plugin: Binding[], userRaw: unknown[], known: Set<string>): Keymap => {
@@ -137,7 +137,7 @@ export const resolveKeymap = (builtin: Binding[], plugin: Binding[], userRaw: un
   });
   const byCommand = new Map<string, string[]>();
   for (const [chord, b] of byChord) byCommand.set(b.command, [...(byCommand.get(b.command) ?? []), chord]);
-  return { byChord, byCommand, warnings };
+  return { byChord, byCommand, sources: layer, warnings };
 };
 
 /** Fallback fonts appended after the user's choice so missing fonts never break the terminal. */
@@ -189,3 +189,12 @@ export const pinnedNames = (config: UiConfig): string[] => {
   const raw = asRecord(config.ui)?.pinned;
   return Array.isArray(raw) ? raw.filter((n): n is string => typeof n === "string") : [];
 };
+
+let recording = false;
+
+/** While a key is being recorded for a binding, key presses must not run commands. */
+export const setRecording = (on: boolean): void => {
+  recording = on;
+};
+
+export const isRecording = (): boolean => recording;

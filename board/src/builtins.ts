@@ -12,6 +12,7 @@ const builtin = (name: string, title: string, args: Command["args"] = []): Comma
 /** Commands the dashboard itself provides. */
 export const BUILTIN_COMMANDS: Command[] = [
   builtin("ui.palette", "Show Command Palette"),
+  builtin("ui.keybindings", "Show Keyboard Shortcuts"),
   builtin("ui.approvals", "Show Pending Approvals"),
   builtin("ui.toggleRightSidebar", "Toggle Right Sidebar"),
   builtin("ui.togglePinned", "Toggle Pinned Section"),
