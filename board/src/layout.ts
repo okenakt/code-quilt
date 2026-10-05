@@ -212,20 +212,22 @@ export const resizeSplit = (splitId: string, sizes: number[]) =>
   updateTab(activeTab().id, (t) => ({ ...t, root: replace(t.root, splitId, (n) => ({ ...(n as SplitNode), sizes })) }));
 
 /**
- * Shows a session in the active tab: focuses it if the tab already has it, fills the focused
- * pane if that is empty, and otherwise splits the focused pane across its parent's direction.
+ * Shows a session in a tab: focuses it if the tab already has it, fills the focused pane if that
+ * is empty, and otherwise splits the focused pane across its parent's direction.
  */
-export const openInActiveTab = (session: string) =>
-  updateTab(activeTab().id, (t) => {
-    const existing = panesOf(t.root).find((p) => p.session === session);
-    if (existing) return { ...t, focus: existing.id };
-    const focused = findPane(t.root, t.focus);
-    if (focused && focused.session === null) return { ...t, root: setSession(t.root, focused.id, session) };
-    const parent = parentOf(t.root, t.focus);
-    const side: Side = parent?.split.dir === "row" ? "down" : "right";
-    const { root, pane } = splitPane(t.root, t.focus, side, session);
-    return { ...t, root, focus: pane.id, zoom: null };
-  });
+const showIn = (t: Tab, session: string): Tab => {
+  const existing = panesOf(t.root).find((p) => p.session === session);
+  if (existing) return { ...t, focus: existing.id };
+  const focused = findPane(t.root, t.focus);
+  if (focused && focused.session === null) return { ...t, root: setSession(t.root, focused.id, session) };
+  const parent = parentOf(t.root, t.focus);
+  const side: Side = parent?.split.dir === "row" ? "down" : "right";
+  const { root, pane } = splitPane(t.root, t.focus, side, session);
+  return { ...t, root, focus: pane.id, zoom: null };
+};
+
+/** Shows a session in the active tab (see `showIn`). */
+export const openInActiveTab = (session: string) => updateTab(activeTab().id, (t) => showIn(t, session));
 
 /** Drops panes whose session is gone or ended, in every tab. */
 export const dropSessions = (gone: (session: string) => boolean) => {
@@ -275,5 +277,47 @@ export const moveTab = (id: string, index: number) => {
   if (!tab) return;
   const tabs = layout.tabs.filter((t) => t.id !== id);
   tabs.splice(index, 0, tab);
+  commit({ ...layout, tabs });
+};
+
+/** Where a dragged pane lands on a target pane: one of its edges, or swapped into it. */
+export type DropZone = Side | "center";
+
+/** Moves the session of pane `src` next to pane `target` in the active tab, or swaps the two. */
+export const movePane = (src: string, target: string, zone: DropZone) =>
+  updateTab(activeTab().id, (t) => {
+    if (src === target) return t;
+    const from = findPane(t.root, src);
+    const to = findPane(t.root, target);
+    if (!from || !to) return t;
+    if (zone === "center") {
+      let root = setSession(t.root, from.id, to.session);
+      root = setSession(root, to.id, from.session);
+      return { ...t, root, focus: to.id };
+    }
+    const { root, pane } = splitPane(removePane(t.root, src), target, zone, from.session);
+    return { ...t, root, focus: pane.id, zoom: null };
+  });
+
+/** Moves the session of pane `src` from the active tab into tab `tabId` (a new tab for `null`). */
+export const movePaneToTab = (src: string, tabId: string | null) => {
+  const from = activeTab();
+  const pane = findPane(from.root, src);
+  if (!pane || tabId === from.id) return;
+  let tabs = layout.tabs;
+  let target = tabId;
+  if (target === null) {
+    const tab = newTab(`tab ${tabs.length + 1}`);
+    tabs = [...tabs, tab];
+    target = tab.id;
+  }
+  tabs = tabs.map((t) => {
+    if (t.id === from.id) {
+      const root = removePane(t.root, src);
+      const focus = findPane(root, t.focus) ? t.focus : panesOf(root)[0].id;
+      return { ...t, root, focus, zoom: t.zoom === src ? null : t.zoom };
+    }
+    return t.id === target && pane.session !== null ? showIn(t, pane.session) : t;
+  });
   commit({ ...layout, tabs });
 };

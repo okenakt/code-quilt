@@ -1024,3 +1024,47 @@ kbd {
 .pane-empty li button:hover {
   background: var(--panel-2);
 }
+
+.workspace {
+  position: relative;
+}
+
+.workspace.dragging,
+.workspace.dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+.pane-header {
+  cursor: grab;
+}
+
+.pane.dragging {
+  opacity: 0.5;
+}
+
+.drop-preview {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(245, 196, 81, 0.18);
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  z-index: 20;
+}
+
+.drag-ghost {
+  position: fixed;
+  pointer-events: none;
+  z-index: 130;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  font-size: 12px;
+}
+
+.tab.drop-target,
+.tab-add.drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
