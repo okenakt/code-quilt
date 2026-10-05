@@ -9,6 +9,7 @@ pub mod local;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Version of the host protocol (terminal, hub, monitor and event clients of `cq host`).
@@ -75,6 +76,32 @@ pub struct SessionMeta {
     /// (e.g. `cq attach NAME`, `@name`).
     #[serde(default)]
     pub name: Option<String>,
+    /// Account the agent was last seen logged in with (its label, e.g. an email address).
+    #[serde(default)]
+    pub account: Option<String>,
+    /// Tokens used per UTC hour, keyed `YYYY-MM-DDTHH`. Resumed sessions re-read the agent's
+    /// whole log, so sessions sharing an `agent_session_id` report overlapping hours.
+    #[serde(default)]
+    pub tokens_by_hour: BTreeMap<String, TokenCounts>,
+}
+
+/// Token counts of one or more API responses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenCounts {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_creation: u64,
+}
+
+impl TokenCounts {
+    /// Adds `o` to these counts.
+    pub fn add(&mut self, o: &TokenCounts) {
+        self.input += o.input;
+        self.output += o.output;
+        self.cache_read += o.cache_read;
+        self.cache_creation += o.cache_creation;
+    }
 }
 
 /// Lifecycle status of a session.

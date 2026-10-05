@@ -5,8 +5,9 @@
 //! so all format knowledge stays in this module and every read degrades to "unknown" instead of
 //! failing.
 
+pub use cq_proto::TokenCounts as Counts;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
@@ -128,6 +129,8 @@ pub struct CodexTail {
     offset: u64,
     partial: Vec<u8>,
     model: Option<String>,
+    last: Counts,
+    by_hour: BTreeMap<String, Counts>,
 }
 
 impl CodexTail {
@@ -144,8 +147,7 @@ impl CodexTail {
         let mut f = std::fs::File::open(&path).ok()?;
         let len = f.metadata().ok()?.len();
         if len < self.offset {
-            self.offset = 0;
-            self.partial.clear();
+            *self = Self { path: self.path.take(), ..Self::default() };
         }
         if len == self.offset {
             return None;
@@ -180,7 +182,15 @@ impl CodexTail {
                     cache_read: cached,
                     cache_creation: n("/info/total_token_usage/cache_write_input_tokens"),
                 };
-                let mut totals = TokenTotals { total: counts, by_model: HashMap::new() };
+                let delta = Counts {
+                    input: counts.input.saturating_sub(self.last.input),
+                    output: counts.output.saturating_sub(self.last.output),
+                    cache_read: counts.cache_read.saturating_sub(self.last.cache_read),
+                    cache_creation: counts.cache_creation.saturating_sub(self.last.cache_creation),
+                };
+                self.last = counts;
+                self.by_hour.entry(hour_of(&v)).or_default().add(&delta);
+                let mut totals = TokenTotals { total: counts, by_model: HashMap::new(), by_hour: self.by_hour.clone() };
                 totals.by_model.insert(model.clone(), counts);
                 update.tokens = Some(totals);
             }
@@ -200,29 +210,19 @@ impl CodexTail {
     }
 }
 
-/// Token counts in one usage record.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-pub struct Counts {
-    pub input: u64,
-    pub output: u64,
-    pub cache_read: u64,
-    pub cache_creation: u64,
-}
-
-impl Counts {
-    fn add(&mut self, o: &Counts) {
-        self.input += o.input;
-        self.output += o.output;
-        self.cache_read += o.cache_read;
-        self.cache_creation += o.cache_creation;
-    }
-}
-
 /// Aggregated usage of a transcript.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct TokenTotals {
     pub total: Counts,
     pub by_model: HashMap<String, Counts>,
+    /// Usage per UTC hour (`YYYY-MM-DDTHH`), persisted in the session's metadata.
+    #[serde(skip)]
+    pub by_hour: BTreeMap<String, Counts>,
+}
+
+/// UTC hour (`YYYY-MM-DDTHH`) of a log line's ISO 8601 `timestamp`.
+fn hour_of(line: &serde_json::Value) -> String {
+    line.get("timestamp").and_then(|t| t.as_str()).and_then(|t| t.get(..13)).unwrap_or("unknown").to_owned()
 }
 
 /// Incrementally tails a transcript jsonl and aggregates usage per API message.
@@ -232,7 +232,7 @@ pub struct TranscriptTail {
     offset: u64,
     partial: Vec<u8>,
     /// Usage keyed by message id: one response is logged once per content block.
-    messages: HashMap<String, (String, Counts)>,
+    messages: HashMap<String, (String, String, Counts)>,
 }
 
 impl TranscriptTail {
@@ -293,15 +293,18 @@ impl TranscriptTail {
             .and_then(|i| i.as_str())
             .map(str::to_owned)
             .unwrap_or_else(|| format!("line:{}", self.messages.len()));
-        let prev = self.messages.insert(id, (model.clone(), counts));
-        prev != Some((model, counts))
+        let entry = (model, hour_of(&v), counts);
+        let changed = self.messages.get(&id) != Some(&entry);
+        self.messages.insert(id, entry);
+        changed
     }
 
     fn totals(&self) -> TokenTotals {
         let mut t = TokenTotals::default();
-        for (model, c) in self.messages.values() {
+        for (model, hour, c) in self.messages.values() {
             t.total.add(c);
             t.by_model.entry(model.clone()).or_default().add(c);
+            t.by_hour.entry(hour.clone()).or_default().add(c);
         }
         t
     }
@@ -339,7 +342,7 @@ mod tests {
         let p = dir.join("rollout.jsonl");
         let lines = [
             r#"{"type":"turn_context","payload":{"model":"gpt-6"}}"#,
-            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":600,"cache_write_input_tokens":50,"output_tokens":40},"last_token_usage":{"total_tokens":2000},"model_context_window":10000},"rate_limits":{"primary":{"used_percent":12.5,"window_minutes":300,"resets_at":1790000000},"secondary":{"used_percent":40.0,"window_minutes":10080,"resets_at":1790500000}}}}"#,
+            r#"{"timestamp":"2026-10-05T01:59:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":600,"cache_write_input_tokens":50,"output_tokens":40},"last_token_usage":{"total_tokens":2000},"model_context_window":10000},"rate_limits":{"primary":{"used_percent":12.5,"window_minutes":300,"resets_at":1790000000},"secondary":{"used_percent":40.0,"window_minutes":10080,"resets_at":1790500000}}}}"#,
         ];
         std::fs::write(&p, lines.join("\n") + "\n").unwrap();
         let mut t = CodexTail::default();
@@ -348,6 +351,7 @@ mod tests {
         let tok = u.tokens.unwrap();
         assert_eq!(tok.total, Counts { input: 400, output: 40, cache_read: 600, cache_creation: 50 });
         assert!(tok.by_model.contains_key("gpt-6"));
+        assert_eq!(tok.by_hour["2026-10-05T01"], tok.total);
         let st = u.status.unwrap();
         assert_eq!(st.pointer("/rate_limits/five_hour/used_percentage").unwrap(), 12.5);
         assert_eq!(st.pointer("/rate_limits/seven_day/resets_at").unwrap(), 1790500000);
@@ -368,7 +372,7 @@ mod tests {
         let p = dir.join("t.jsonl");
         let line = |id: &str, out: u64| {
             format!(
-                r#"{{"type":"assistant","message":{{"id":"{id}","model":"m1","usage":{{"input_tokens":10,"output_tokens":{out},"cache_read_input_tokens":5,"cache_creation_input_tokens":1}}}}}}"#
+                r#"{{"type":"assistant","timestamp":"2026-10-05T0{out}:00:00Z","message":{{"id":"{id}","model":"m1","usage":{{"input_tokens":10,"output_tokens":{out},"cache_read_input_tokens":5,"cache_creation_input_tokens":1}}}}}}"#
             )
         };
         std::fs::write(&p, format!("{}\n{}\n{{\"type\":\"user\"}}\n", line("a", 3), line("a", 3))).unwrap();
@@ -382,6 +386,7 @@ mod tests {
         let totals = t.poll().unwrap();
         assert_eq!(totals.total.output, 10);
         assert_eq!(totals.by_model["m1"].input, 20);
+        assert_eq!(totals.by_hour["2026-10-05T07"].output, 7);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

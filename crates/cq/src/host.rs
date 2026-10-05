@@ -440,6 +440,8 @@ pub async fn run(args: HostArgs) -> Result<()> {
         ended_at_ms: None,
         agent_session_id: None,
         name: args.name.clone(),
+        account: None,
+        tokens_by_hour: Default::default(),
     };
     session::save(&meta)?;
 
@@ -762,10 +764,13 @@ async fn terminate(state: Shared, t: Terminate) {
     }
 }
 
-/// Publishes account changes and token totals (and, for Codex, its status) every two seconds.
+/// Publishes account changes and token totals (and, for Codex, its status) every two seconds,
+/// and keeps them in the session's metadata (saved at most once a minute, and at exit).
 async fn poll_usage(state: Shared) {
     let codex = state.lock().unwrap().meta.agent == "codex";
     let mut stamp = None;
+    let mut saved = std::time::Instant::now();
+    let mut unsaved = false;
     loop {
         let recheck = std::mem::take(&mut state.lock().unwrap().account_recheck);
         let now_stamp = if codex { usage::codex_account_stamp() } else { usage::account_stamp() };
@@ -776,23 +781,31 @@ async fn poll_usage(state: Shared) {
             let mut st = state.lock().unwrap();
             if account != st.account {
                 st.account = account.clone();
+                st.meta.account = account.as_ref().map(|a| a.label.clone());
+                let _ = session::save(&st.meta);
                 st.publish(cq_event(serde_json::json!({ "type": "account", "account": account })));
             }
         }
         {
             let mut st = state.lock().unwrap();
-            if codex {
-                if let Some(u) = st.codex_rollout.poll() {
-                    if let Some(totals) = u.tokens {
-                        st.publish(cq_event(serde_json::json!({ "type": "tokens", "tokens": totals })));
-                    }
-                    if let Some(status) = u.status {
-                        // Codex has no status line; publish the same shape from its rollout.
-                        st.publish(AgentEvent { source: "statusline".into(), received_at_ms: session::now_ms(), payload: status });
-                    }
+            let tokens = if codex {
+                let u = st.codex_rollout.poll();
+                if let Some(status) = u.as_ref().and_then(|u| u.status.clone()) {
+                    // Codex has no status line; publish the same shape from its rollout.
+                    st.publish(AgentEvent { source: "statusline".into(), received_at_ms: session::now_ms(), payload: status });
                 }
-            } else if let Some(totals) = st.transcript.poll() {
+                u.and_then(|u| u.tokens)
+            } else {
+                st.transcript.poll()
+            };
+            if let Some(totals) = tokens {
                 st.publish(cq_event(serde_json::json!({ "type": "tokens", "tokens": totals })));
+                unsaved |= st.meta.tokens_by_hour != totals.by_hour;
+                st.meta.tokens_by_hour = totals.by_hour;
+            }
+            if unsaved && saved.elapsed() >= Duration::from_secs(60) {
+                (saved, unsaved) = (std::time::Instant::now(), false);
+                let _ = session::save(&st.meta);
             }
         }
         tokio::time::sleep(Duration::from_secs(2)).await;

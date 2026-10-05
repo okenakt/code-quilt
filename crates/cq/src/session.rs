@@ -132,6 +132,8 @@ mod tests {
             ended_at_ms: None,
             agent_session_id: None,
             name: name.map(Into::into),
+            account: None,
+            tokens_by_hour: Default::default(),
         }
     }
 

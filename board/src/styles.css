@@ -179,6 +179,99 @@ kbd {
   background: var(--danger);
 }
 
+.token-usage {
+  padding: 4px 4px 8px;
+}
+
+.token-controls {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.token-controls select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.segmented button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.segmented button.on {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.token-machine + .token-machine {
+  margin-top: 8px;
+}
+
+.token-machine-head {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.token-machine .token-row {
+  padding-left: 16px;
+}
+
+.token-row {
+  margin-top: 6px;
+}
+
+.token-row-head {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.token-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.token-row-total {
+  font-variant-numeric: tabular-nums;
+}
+
+.token-row-accounts {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 8px;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .approval-chip {
   border: 1px solid var(--approval);
   color: var(--approval);

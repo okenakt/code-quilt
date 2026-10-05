@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 /** Sections of the sidebars. The left ones can be hidden; all of them can be folded. */
-export type Section = "pinned" | "tabs" | "machines" | "approvals" | "usage";
+export type Section = "pinned" | "tabs" | "machines" | "approvals" | "usage" | "tokens";
 export type LeftSection = "pinned" | "tabs" | "machines";
 
 /** Per-viewer layout of the sidebars. */
@@ -11,10 +11,14 @@ export type Prefs = {
   rightOpen: boolean;
   hidden: LeftSection[];
   folded: string[];
+  tokenView: "tree" | "rank";
+  tokenPeriod: TokenPeriod;
 };
 
+export type TokenPeriod = "24h" | "7d" | "all";
+
 const KEY = "cq.prefs.v1";
-const DEFAULTS: Prefs = { leftWidth: 280, rightWidth: 260, rightOpen: true, hidden: [], folded: [] };
+const DEFAULTS: Prefs = { leftWidth: 280, rightWidth: 260, rightOpen: true, hidden: [], folded: [], tokenView: "tree", tokenPeriod: "7d" };
 
 const load = (): Prefs => {
   try {
@@ -49,6 +53,8 @@ export const usePrefs = (): Prefs =>
 
 export const setWidth = (side: "left" | "right", width: number) =>
   set(side === "left" ? { leftWidth: Math.round(width) } : { rightWidth: Math.round(width) });
+
+export const setTokenPrefs = (patch: Partial<Pick<Prefs, "tokenView" | "tokenPeriod">>) => set(patch);
 
 export const toggleRight = () => set({ rightOpen: !prefs.rightOpen });
 

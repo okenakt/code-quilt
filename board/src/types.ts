@@ -12,7 +12,12 @@ export type SessionMeta = {
   ended_at_ms?: number | null;
   agent_session_id: string | null;
   name: string | null;
+  account?: string | null;
+  /** Tokens per UTC hour, keyed `YYYY-MM-DDTHH`. */
+  tokens_by_hour?: Record<string, TokenCounts>;
 };
+
+export type TokenCounts = { input: number; output: number; cache_read: number; cache_creation: number };
 
 /** Agent event relayed from hooks, the status line, or the host itself. */
 export type AgentEvent = {
