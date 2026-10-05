@@ -81,7 +81,7 @@ const Limit = ({ label, w, now }: { label: string; w: RateWindow | null; now: nu
   );
 };
 
-/** Right sidebar with rate limits grouped by agent and account, similar to Claude Code's `/status`. */
+/** Rate limits grouped by agent and account, similar to Claude Code's `/status`. */
 export const UsagePanel = ({ sessions, machines }: { sessions: SessionState[]; machines: MachineInfo[] }) => {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -90,7 +90,7 @@ export const UsagePanel = ({ sessions, machines }: { sessions: SessionState[]; m
   }, []);
   const groups = agentGroups(sessions, machines);
   return (
-    <aside className="usage-panel">
+    <div className="usage-panel">
       {groups.length === 0 && <div className="usage-empty">no usage data yet</div>}
       {groups.flatMap((g) =>
         g.accounts.map((a) => (
@@ -105,6 +105,6 @@ export const UsagePanel = ({ sessions, machines }: { sessions: SessionState[]; m
           </section>
         )),
       )}
-    </aside>
+    </div>
   );
 };

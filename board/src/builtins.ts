@@ -13,7 +13,10 @@ const builtin = (name: string, title: string, args: Command["args"] = []): Comma
 export const BUILTIN_COMMANDS: Command[] = [
   builtin("ui.palette", "Show Command Palette"),
   builtin("ui.approvals", "Show Pending Approvals"),
-  builtin("ui.toggleUsage", "Toggle Usage Sidebar"),
+  builtin("ui.toggleRightSidebar", "Toggle Right Sidebar"),
+  builtin("ui.togglePinned", "Toggle Pinned Section"),
+  builtin("ui.toggleTabs", "Toggle Tabs Section"),
+  builtin("ui.toggleMachines", "Toggle Machines Section"),
   builtin("ui.newSession", "New Session", [{ name: "machine", title: "Machine id", default: "local" }]),
   builtin("tab.new", "New Tab"),
   builtin("tab.close", "Close Tab (Sessions Keep Running)"),

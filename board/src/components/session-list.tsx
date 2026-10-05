@@ -1,4 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { focusPane, panesOf, selectTab, useLayout } from "../layout";
+import { toggleFold, toggleSection, usePrefs, type LeftSection, type Prefs } from "../prefs";
+import { Fold, SidebarSection, isExpanded } from "./sidebar-section";
 import { terminate } from "../api";
 import { isPinned, togglePin, type Pins } from "../pins";
 import { displayName } from "../store";
@@ -61,30 +64,6 @@ const SessionDetails = ({ s, machine }: { s: SessionState; machine: MachineInfo 
   );
 };
 
-const EXPANDED_KEY = "cq.expanded";
-
-const loadExpanded = (): Set<string> => {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? "[]") as string[]);
-  } catch {
-    return new Set();
-  }
-};
-
-/** Sessions whose details are shown, remembered across restarts. */
-let expanded = loadExpanded();
-
-const toggleExpanded = (key: string) => {
-  expanded = new Set(expanded);
-  if (expanded.has(key)) expanded.delete(key);
-  else expanded.add(key);
-  try {
-    localStorage.setItem(EXPANDED_KEY, JSON.stringify([...expanded]));
-  } catch {
-    // Remembering the expanded rows is a convenience only.
-  }
-};
-
 /** Short session id; clicking copies the full id. */
 const SessionId = ({ id }: { id: string }) => {
   const [copied, setCopied] = useState(false);
@@ -117,7 +96,8 @@ type ActiveProps = {
 };
 
 const ActiveItem = ({ s, machine, active, pinned, onPin, onOpen }: ActiveProps) => {
-  const [open, setOpen] = useState(() => expanded.has(s.key));
+  const detailsKey = `details:${s.key}`;
+  const open = isExpanded(usePrefs(), detailsKey, false);
   return (
     <div
       role="button"
@@ -133,8 +113,7 @@ const ActiveItem = ({ s, machine, active, pinned, onPin, onOpen }: ActiveProps) 
           title={open ? "hide details" : "show details"}
           onClick={(e) => {
             e.stopPropagation();
-            toggleExpanded(s.key);
-            setOpen(!open);
+            toggleFold(detailsKey);
           }}
         >
           {open ? "▾" : "▸"}
@@ -183,36 +162,21 @@ const EndedItem = ({ s, canResume, onResume }: { s: SessionState; canResume: boo
   </div>
 );
 
-const openKey = (machine: string) => `cq.ended-open.${machine}`;
-
-const loadOpen = (machine: string): boolean => {
-  try {
-    return localStorage.getItem(openKey(machine)) === "1";
-  } catch {
-    return false;
-  }
-};
 
 /** Ended sessions of a machine, newest first, collapsed by default. */
-const EndedSection = ({ machine, sessions, onResume }: { machine: MachineInfo; sessions: SessionState[]; onResume: (s: SessionState) => void }) => {
-  const [open, setOpen] = useState(() => loadOpen(machine.id));
+const EndedSection = ({ machine, sessions, prefs, onResume }: { machine: MachineInfo; sessions: SessionState[]; prefs: Prefs; onResume: (s: SessionState) => void }) => {
   const [all, setAll] = useState(false);
-  useEffect(() => {
-    try {
-      localStorage.setItem(openKey(machine.id), open ? "1" : "0");
-    } catch {
-      // Remembering the section state is a convenience only.
-    }
-  }, [machine.id, open]);
   if (sessions.length === 0) return null;
+  const key = `ended:${machine.id}`;
+  const open = isExpanded(prefs, key, false);
   const sorted = [...sessions].sort(
     (a, b) => (b.meta.ended_at_ms ?? b.meta.started_at_ms) - (a.meta.ended_at_ms ?? a.meta.started_at_ms),
   );
   const shown = all ? sorted : sorted.slice(0, ENDED_LIMIT);
   return (
     <div className="ended-section">
-      <button className="section-toggle" onClick={() => setOpen(!open)}>
-        {open ? "▾" : "▸"} Ended ({sessions.length})
+      <button className="section-toggle" onClick={() => toggleFold(key)}>
+        <Fold open={open} /> Ended ({sessions.length})
       </button>
       {open && (
         <>
@@ -230,6 +194,59 @@ const EndedSection = ({ machine, sessions, onResume }: { machine: MachineInfo; s
   );
 };
 
+const SECTION_TITLE: Record<LeftSection, string> = { pinned: "Pinned", tabs: "Tabs", machines: "Machines" };
+
+/** Each tab with the sessions shown in it; selecting one switches to its tab and pane. */
+const TabsSection = ({ prefs, sessions }: { prefs: Prefs; sessions: Map<string, SessionState> }) => {
+  const { tabs, active } = useLayout();
+  return (
+    <>
+      {tabs.map((t) => {
+        const key = `tab:${t.id}`;
+        const open = isExpanded(prefs, key, true);
+        const panes = panesOf(t.root);
+        const empty = panes.filter((p) => p.session === null).length;
+        return (
+          <div key={t.id} className={`tab-group ${t.id === active ? "active" : ""}`}>
+            <div className="tab-group-header">
+              <button className="fold-button" onClick={() => toggleFold(key)}>
+                <Fold open={open} />
+              </button>
+              <button className="tab-group-name" onClick={() => selectTab(t.id)}>
+                {t.name}
+              </button>
+            </div>
+            {open && (
+              <ul className="tab-group-panes">
+                {panes.map((p) => {
+                  if (p.session === null) return null;
+                  const s = sessions.get(p.session);
+                  const id = p.session.slice(p.session.indexOf("/") + 1);
+                  return (
+                    <li key={p.id}>
+                      <button
+                        className={t.id === active && t.focus === p.id ? "focused" : ""}
+                        onClick={() => {
+                          selectTab(t.id);
+                          focusPane(p.id);
+                        }}
+                      >
+                        {s ? displayName(s) : id.slice(0, 8)} <span className="session-id">{id.slice(0, 8)}</span>
+                        {s && s.activity !== "exited" && <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>}
+                      </button>
+                    </li>
+                  );
+                })}
+                {empty > 0 && <li className="empty">{empty} empty pane{empty > 1 ? "s" : ""}</li>}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+};
+
 type Props = {
   machines: MachineInfo[];
   sessions: SessionState[];
@@ -242,46 +259,73 @@ type Props = {
   pinNames: string[];
 };
 
-/** Pinned sessions first (also listed under their machine), then each machine's sessions. */
+/** Left sidebar: Pinned, Tabs and Machines, each of which can be hidden and folded. */
 export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume, pins, pinNames }: Props) => {
+  const prefs = usePrefs();
   const running = sessions.filter((s) => s.activity !== "exited");
   const pinOf = (s: SessionState) => isPinned(s, pins, pinNames);
   const onPin = (s: SessionState) => togglePin(s, pinNames);
   const pinned = running.filter(pinOf);
   const machineOf = (s: SessionState) => machines.find((m) => m.id === s.machine);
+  const shown = (s: LeftSection) => !prefs.hidden.includes(s);
   return (
     <nav className="session-list">
-      {pinned.length > 0 && (
-        <section className="machine pinned">
-          <header className="machine-header">Pinned</header>
+      <div className="section-switches">
+        {(Object.keys(SECTION_TITLE) as LeftSection[]).map((s) => (
+          <button key={s} className={shown(s) ? "on" : ""} title={`${shown(s) ? "Hide" : "Show"} ${SECTION_TITLE[s]}`} onClick={() => toggleSection(s)}>
+            {SECTION_TITLE[s]}
+          </button>
+        ))}
+      </div>
+      {shown("pinned") && (
+        <SidebarSection title={SECTION_TITLE.pinned} foldKey="pinned" prefs={prefs} onHide={() => toggleSection("pinned")}>
+          {pinned.length === 0 && <div className="empty">No pinned sessions</div>}
           {pinned.map((s) => (
             <ActiveItem key={s.key} s={s} machine={machineOf(s)} active={s.key === activeKey} pinned onPin={onPin} onOpen={onOpen} />
           ))}
-        </section>
+        </SidebarSection>
       )}
-      {machines.map((m) => {
-        const active = running.filter((s) => s.machine === m.id);
-        const ended = sessions.filter((s) => s.machine === m.id && s.activity === "exited");
-        return (
-          <section key={m.id} className="machine">
-            <header className="machine-header" title={m.error ?? undefined}>
-              <span className={`dot ${m.online ? "online" : "offline"}`} />
-              {m.label}
-              {!m.online && <span className="machine-offline">offline</span>}
-              {m.online && (
-                <button className="machine-new" title="New session" onClick={() => onNew(m.id)}>
-                  +
-                </button>
-              )}
-            </header>
-            {active.length === 0 && <div className="empty">No active sessions</div>}
-            {active.map((s) => (
-              <ActiveItem key={s.key} s={s} machine={m} active={s.key === activeKey} pinned={pinOf(s)} onPin={onPin} onOpen={onOpen} />
-            ))}
-            <EndedSection machine={m} sessions={ended} onResume={onResume} />
-          </section>
-        );
-      })}
+      {shown("tabs") && (
+        <SidebarSection title={SECTION_TITLE.tabs} foldKey="tabs" prefs={prefs} onHide={() => toggleSection("tabs")}>
+          <TabsSection prefs={prefs} sessions={new Map(sessions.map((s) => [s.key, s]))} />
+        </SidebarSection>
+      )}
+      {shown("machines") && (
+        <SidebarSection title={SECTION_TITLE.machines} foldKey="machines" prefs={prefs} onHide={() => toggleSection("machines")}>
+          {machines.map((m) => {
+            const active = running.filter((s) => s.machine === m.id);
+            const ended = sessions.filter((s) => s.machine === m.id && s.activity === "exited");
+            const key = `machine:${m.id}`;
+            const open = isExpanded(prefs, key, true);
+            return (
+              <div key={m.id} className="machine">
+                <header className="machine-header" title={m.error ?? undefined}>
+                  <button className="fold-button" onClick={() => toggleFold(key)}>
+                    <Fold open={open} />
+                  </button>
+                  <span className={`dot ${m.online ? "online" : "offline"}`} />
+                  {m.label}
+                  {!m.online && <span className="machine-offline">offline</span>}
+                  {m.online && (
+                    <button className="machine-new" title="New session" onClick={() => onNew(m.id)}>
+                      +
+                    </button>
+                  )}
+                </header>
+                {open && (
+                  <>
+                    {active.length === 0 && <div className="empty">No active sessions</div>}
+                    {active.map((s) => (
+                      <ActiveItem key={s.key} s={s} machine={m} active={s.key === activeKey} pinned={pinOf(s)} onPin={onPin} onOpen={onOpen} />
+                    ))}
+                    <EndedSection machine={m} sessions={ended} prefs={prefs} onResume={onResume} />
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </SidebarSection>
+      )}
     </nav>
   );
 };

@@ -47,13 +47,8 @@ kbd {
 
 .app {
   display: grid;
-  grid-template-columns: 280px 1fr;
   grid-template-rows: auto 1fr;
   height: 100%;
-}
-
-.app.with-usage {
-  grid-template-columns: 280px 1fr 260px;
 }
 
 .topbar {
@@ -103,11 +98,7 @@ kbd {
 }
 
 .usage-panel {
-  border-left: 1px solid var(--line);
-  background: var(--panel);
-  overflow-y: auto;
-  padding: 10px 12px;
-  min-height: 0;
+  padding: 4px 4px 8px;
 }
 
 .usage-empty {
@@ -207,7 +198,6 @@ kbd {
 .sidebar {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--line);
   background: var(--panel);
   min-height: 0;
 }
@@ -219,7 +209,7 @@ kbd {
 }
 
 .machine + .machine {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .machine-header {
@@ -395,18 +385,18 @@ kbd {
   background: #14161a;
 }
 
-.approval-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: grid;
-  place-items: center;
-  z-index: 100;
+.approval-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
-.approval-dialog {
-  width: min(720px, 92vw);
-  max-height: 86vh;
+.approval-card {
+  width: min(460px, calc(100vw - 32px));
+  max-height: 60vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -418,7 +408,8 @@ kbd {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
-.approval-dialog header {
+.approval-card header {
+  align-items: center;
   display: flex;
   justify-content: space-between;
 }
@@ -480,11 +471,6 @@ kbd {
 
 .approval-error {
   color: var(--danger);
-}
-
-.approval-dialog footer {
-  color: var(--muted);
-  font-size: 11px;
 }
 
 .machine-new {
@@ -756,11 +742,19 @@ kbd {
   font-size: 12px;
 }
 
-.toasts {
+.corner {
   position: fixed;
   right: 16px;
   bottom: 16px;
   z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  max-height: calc(100vh - 32px);
+}
+
+.toasts {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1067,4 +1061,176 @@ kbd {
 .tab-add.drop-target {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+
+.sidebar-resizer {
+  cursor: col-resize;
+  background: var(--line);
+  opacity: 0.5;
+}
+
+.sidebar-resizer:hover {
+  opacity: 1;
+  background: var(--accent);
+}
+
+.right-sidebar {
+  background: var(--panel);
+  overflow-y: auto;
+  padding: 8px;
+  min-height: 0;
+}
+
+.section-switches {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.section-switches button {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.section-switches button.on {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.sidebar-section + .sidebar-section {
+  margin-top: 10px;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.section-title {
+  flex: 1;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.section-hide {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.sidebar-section-header:hover .section-hide {
+  opacity: 1;
+}
+
+.fold {
+  display: inline-block;
+  width: 12px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.fold-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.tab-group-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tab-group-name {
+  flex: 1;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tab-group.active .tab-group-name {
+  color: var(--accent);
+}
+
+.tab-group-panes {
+  list-style: none;
+  margin: 0 0 4px 14px;
+  padding: 0;
+}
+
+.tab-group-panes button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tab-group-panes button:hover,
+.tab-group-panes button.focused {
+  background: var(--panel-2);
+}
+
+.tab-group-panes .empty {
+  font-size: 11px;
+}
+
+.approval-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.approval-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-left: 2px solid var(--approval);
+  background: transparent;
+  color: var(--text);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.approval-list button:hover {
+  background: var(--panel-2);
+}
+
+.approval-kind {
+  margin-left: auto;
+  color: var(--approval);
+  font-size: 11px;
 }

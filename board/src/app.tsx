@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, restartDaemon, sessionKey, terminate, type Agent } from "./api";
-import { ApprovalDialog } from "./components/approval-dialog";
+import { ApprovalCards, pendingApprovals, promptKey } from "./components/approvals";
+import { RightSidebar, SidebarResizer } from "./components/right-sidebar";
 import { NewSessionDialog } from "./components/new-session-dialog";
 import { SessionList } from "./components/session-list";
-import { UsagePanel } from "./components/usage-panel";
 import { Workspace } from "./components/workspace";
 import {
   activeTab,
@@ -28,18 +28,10 @@ import { invokePluginCommand, onStartCommands, pinnedNames, resolveKeymap, setAc
 import { CommandPalette } from "./components/command-palette";
 import { chordOfEvent } from "./keys";
 import { togglePin, usePins } from "./pins";
+import { toggleRight, toggleSection, usePrefs } from "./prefs";
 import { applyEvent, displayName, markExited, onSignal, setMachines, setSessions, useStore } from "./store";
 import type { SessionState } from "./types";
 
-const USAGE_OPEN_KEY = "cq.usage-open";
-
-const loadUsageOpen = (): boolean => {
-  try {
-    return localStorage.getItem(USAGE_OPEN_KEY) !== "0";
-  } catch {
-    return true;
-  }
-};
 const sideOf = (command: string): Side => {
   const dir = command.replace(/^pane\.(split|focus)/, "").toLowerCase();
   return dir === "left" || dir === "right" || dir === "up" ? dir : "down";
@@ -50,18 +42,18 @@ export const App = () => {
   const { machines, sessions } = useStore();
   const layout = useLayout();
   const activeKey = useMemo(() => focusedSessionKey(), [layout]);
-  const [approvalFocus, setApprovalFocus] = useState(0);
   const [newSessionFor, setNewSessionFor] = useState<string | null>(null);
-  const [usageOpen, setUsageOpen] = useState(loadUsageOpen);
-  const toggleUsage = useCallback(() => {
-    setUsageOpen((open) => {
-      try {
-        localStorage.setItem(USAGE_OPEN_KEY, open ? "0" : "1");
-      } catch {
-        // Remembering the toggle is a convenience only.
-      }
-      return !open;
+  const prefs = usePrefs();
+  const [minimized, setMinimized] = useState<Set<string>>(new Set());
+  const [approvalFocus, setApprovalFocus] = useState<{ key: string; token: number } | null>(null);
+  /** Brings an approval card back and gives it the keyboard focus. */
+  const showApproval = useCallback((key: string) => {
+    setMinimized((m) => {
+      const next = new Set(m);
+      next.delete(key);
+      return next;
     });
+    setApprovalFocus((f) => ({ key, token: (f?.token ?? 0) + 1 }));
   }, []);
   const sessionsRef = useRef<SessionState[]>(sessions);
   sessionsRef.current = sessions;
@@ -207,11 +199,18 @@ export const App = () => {
         case "pane.zoom":
           toggleZoom();
           return;
-        case "ui.approvals":
-          setApprovalFocus((n) => n + 1);
+        case "ui.approvals": {
+          const newest = pendingApprovals(sessionsRef.current).at(-1);
+          if (newest) showApproval(promptKey(newest));
           return;
-        case "ui.toggleUsage":
-          toggleUsage();
+        }
+        case "ui.toggleRightSidebar":
+          toggleRight();
+          return;
+        case "ui.togglePinned":
+        case "ui.toggleTabs":
+        case "ui.toggleMachines":
+          toggleSection(name === "ui.togglePinned" ? "pinned" : name === "ui.toggleTabs" ? "tabs" : "machines");
           return;
         case "ui.newSession":
           setNewSessionFor(args.machine || "local");
@@ -243,7 +242,7 @@ export const App = () => {
         .then((msg) => showToast(true, msg && msg !== "delivered" ? msg : `${name}: done`))
         .catch((e: unknown) => showToast(false, `${name}: ${String(e)}`));
     },
-    [showToast, toggleUsage, pinNames, layout],
+    [showToast, showApproval, pinNames, layout],
   );
 
   // Run ui.toml's [[on_start]] commands once the settings are read and the daemon is reachable.
@@ -294,30 +293,35 @@ export const App = () => {
     };
   }, [keymap, allCommands, runCommand]);
 
-  const pendingApprovals = sessions.filter((s) => s.prompt).length;
+  const waiting = pendingApprovals(sessions).length;
 
   return (
-    <div className={`app ${usageOpen ? "with-usage" : ""}`}>
+    <div
+      className="app"
+      style={{
+        gridTemplateColumns: `${prefs.leftWidth}px 4px 1fr${prefs.rightOpen ? ` 4px ${prefs.rightWidth}px` : ""}`,
+      }}
+    >
       <header className="topbar">
         <div className="brand">
           Code<span>Quilt</span>
         </div>
         <div className="topbar-spacer" />
-        {pendingApprovals > 0 && (
-          <button className="approval-chip" onClick={() => setApprovalFocus((n) => n + 1)}>
-            {pendingApprovals} approval{pendingApprovals > 1 ? "s" : ""}
+        {waiting > 0 && (
+          <button className="approval-chip" onClick={() => runCommand("ui.approvals", {})}>
+            {waiting} approval{waiting > 1 ? "s" : ""}
           </button>
         )}
         <button
-          className={`usage-toggle ${usageOpen ? "on" : ""}`}
-          title={usageOpen ? "Hide usage sidebar" : "Show usage sidebar"}
-          aria-label="Toggle usage sidebar"
-          onClick={toggleUsage}
+          className={`usage-toggle ${prefs.rightOpen ? "on" : ""}`}
+          title={prefs.rightOpen ? "Hide right sidebar" : "Show right sidebar"}
+          aria-label="Toggle right sidebar"
+          onClick={toggleRight}
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
             <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
             <line x1="10" y1="2.5" x2="10" y2="13.5" />
-            {usageOpen && <rect x="10" y="2.5" width="4.5" height="11" fill="currentColor" stroke="none" opacity="0.5" />}
+            {prefs.rightOpen && <rect x="10" y="2.5" width="4.5" height="11" fill="currentColor" stroke="none" opacity="0.5" />}
           </svg>
         </button>
       </header>
@@ -333,9 +337,10 @@ export const App = () => {
           pinNames={pinNames}
         />
       </aside>
+      <SidebarResizer side="left" />
       <Workspace sessions={sessions} onNewSession={() => setNewSessionFor("local")} onGone={(key) => dropSessions((k) => k === key)} />
-      {usageOpen && <UsagePanel sessions={sessions} machines={machines} />}
-      <ApprovalDialog sessions={sessions} machines={machines} focusToken={approvalFocus} />
+      {prefs.rightOpen && <SidebarResizer side="right" />}
+      {prefs.rightOpen && <RightSidebar sessions={sessions} machines={machines} onShowApproval={showApproval} />}
       {paletteOpen && (
         <CommandPalette
           commands={allCommands.filter((c) => c.palette)}
@@ -348,12 +353,21 @@ export const App = () => {
           onClose={() => setPaletteOpen(false)}
         />
       )}
-      <div className="toasts">
-        {toasts.map((t) => (
-          <div key={t.id} className={`toast ${t.ok ? "ok" : "error"}`} onClick={() => setToasts((ts) => ts.filter((x) => x.id !== t.id))}>
-            {t.text}
-          </div>
-        ))}
+      <div className="corner">
+        <ApprovalCards
+          sessions={sessions}
+          machines={machines}
+          minimized={minimized}
+          onMinimize={(key) => setMinimized((m) => new Set(m).add(key))}
+          focus={approvalFocus}
+        />
+        <div className="toasts">
+          {toasts.map((t) => (
+            <div key={t.id} className={`toast ${t.ok ? "ok" : "error"}`} onClick={() => setToasts((ts) => ts.filter((x) => x.id !== t.id))}>
+              {t.text}
+            </div>
+          ))}
+        </div>
       </div>
       {newSessionFor && (
         <NewSessionDialog
