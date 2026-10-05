@@ -444,6 +444,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
         started_at_ms: session::now_ms(),
         status: SessionStatus::Running,
         exit_code: None,
+        ended_at_ms: None,
         agent_session_id: None,
         name: args.name.clone(),
         tags: args.tags.clone(),
@@ -561,6 +562,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
         let mut st = state.lock().unwrap();
         st.meta.status = SessionStatus::Exited;
         st.meta.exit_code = exit_code;
+        st.meta.ended_at_ms = Some(session::now_ms());
         let _ = session::save(&st.meta);
         st.broadcast(&Message::Exit(Exit { code: exit_code }));
     }

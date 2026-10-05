@@ -66,6 +66,9 @@ pub struct SessionMeta {
     pub started_at_ms: u64,
     pub status: SessionStatus,
     pub exit_code: Option<u32>,
+    /// When the session ended (milliseconds since the epoch).
+    #[serde(default)]
+    pub ended_at_ms: Option<u64>,
     /// Agent-side session id (Claude Code `session_id`), learned from the SessionStart hook.
     pub agent_session_id: Option<String>,
     /// User-given name, used by clients to address the session (e.g. `@name`).

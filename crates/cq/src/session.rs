@@ -38,6 +38,7 @@ pub fn list() -> Result<Vec<SessionMeta>> {
         let Ok(mut meta) = serde_json::from_slice::<SessionMeta>(&data) else { continue };
         if meta.status == SessionStatus::Running && !pid_alive(meta.host_pid) {
             meta.status = SessionStatus::Exited;
+            meta.ended_at_ms.get_or_insert_with(now_ms);
             let _ = save(&meta);
         }
         out.push(meta);
@@ -118,6 +119,7 @@ mod tests {
             started_at_ms: 0,
             status: if running { SessionStatus::Running } else { SessionStatus::Exited },
             exit_code: None,
+            ended_at_ms: None,
             agent_session_id: None,
             name: name.map(Into::into),
             tags: Vec::new(),
