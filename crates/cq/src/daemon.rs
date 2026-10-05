@@ -27,14 +27,15 @@ pub async fn run() -> Result<()> {
     if ipc::connect_now(&endpoint).await.is_ok() {
         return Ok(());
     }
-    let mut listener = ipc::Listener::bind(&endpoint)?;
-    // Load plugin commands before serving, so a client's first invocation finds them.
+    // Load plugin commands before listening, so a client's first invocation finds them and no
+    // client waits on an endpoint that is not accepting yet.
     let plugins = tokio::task::spawn_blocking(|| {
         plugin::sync_bundled();
         plugin::installed()
     })
     .await?;
     desktop().lock().unwrap().plugins = plugins;
+    let mut listener = ipc::Listener::bind(&endpoint)?;
     tokio::spawn(maintain_desktop());
     loop {
         let stream = listener.accept().await?;
