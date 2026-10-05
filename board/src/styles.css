@@ -82,12 +82,19 @@ kbd {
 }
 
 .usage-toggle {
-  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
   border-radius: 4px;
-  padding: 2px 10px;
+  padding: 4px;
   cursor: pointer;
+}
+
+.usage-toggle:hover {
+  color: var(--text);
+  border-color: var(--line);
 }
 
 .usage-toggle.on {

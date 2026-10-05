@@ -387,10 +387,15 @@ export const App = () => {
         )}
         <button
           className={`usage-toggle ${usageOpen ? "on" : ""}`}
-          title={usageOpen ? "hide usage" : "show usage"}
+          title={usageOpen ? "Hide usage sidebar" : "Show usage sidebar"}
+          aria-label="Toggle usage sidebar"
           onClick={toggleUsage}
         >
-          Usage
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+            <line x1="10" y1="2.5" x2="10" y2="13.5" />
+            {usageOpen && <rect x="10" y="2.5" width="4.5" height="11" fill="currentColor" stroke="none" opacity="0.5" />}
+          </svg>
         </button>
       </header>
       <aside className="sidebar">
