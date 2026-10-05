@@ -1,7 +1,9 @@
-//! Account identification and token accounting for a session, published as host events.
+//! What the agents' own files tell about the user: the account, token usage of a session, and
+//! the directories the user trusted.
 //!
-//! Both read Claude Code's private files (`.claude.json`, transcript jsonl), so all format
-//! knowledge stays in this module and every read degrades to "unknown" instead of failing.
+//! These are private formats (`.claude.json`, transcripts, Codex's `auth.json` and `config.toml`),
+//! so all format knowledge stays in this module and every read degrades to "unknown" instead of
+//! failing.
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -303,6 +305,27 @@ impl TranscriptTail {
         }
         t
     }
+}
+
+/// Directories the user trusted in Claude Code (`projects.<dir>.hasTrustDialogAccepted`) or in
+/// Codex (`[projects."<dir>"] trust_level = "trusted"`).
+pub fn trusted_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let claude = claude_json_path().and_then(|p| std::fs::read(p).ok());
+    if let Some(v) = claude.and_then(|d| serde_json::from_slice::<serde_json::Value>(&d).ok()) {
+        if let Some(projects) = v.get("projects").and_then(|p| p.as_object()) {
+            let trusted = projects.iter().filter(|(_, p)| p.get("hasTrustDialogAccepted").and_then(|t| t.as_bool()) == Some(true));
+            out.extend(trusted.map(|(dir, _)| PathBuf::from(dir)));
+        }
+    }
+    let codex = codex_home().and_then(|h| std::fs::read_to_string(h.join("config.toml")).ok());
+    if let Some(t) = codex.and_then(|s| s.parse::<toml::Table>().ok()) {
+        if let Some(projects) = t.get("projects").and_then(|p| p.as_table()) {
+            let trusted = projects.iter().filter(|(_, p)| p.get("trust_level").and_then(|l| l.as_str()) == Some("trusted"));
+            out.extend(trusted.map(|(dir, _)| PathBuf::from(dir)));
+        }
+    }
+    out
 }
 
 #[cfg(test)]

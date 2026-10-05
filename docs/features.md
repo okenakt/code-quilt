@@ -10,6 +10,7 @@
 - 切り離したセッションは `cq attach`（`cq a`）でどの端末からでも付け直せる。ダッシュボードのタイルからも同時に操作できる。
 - セッションは名前・id・idの前方一致で指定できる。名前は動いているセッションの中でマシンごとに一意。
 - 終了は `cq kill` かダッシュボードの「End session」。エージェント自身に終了させ、10秒で終わらなければ強制終了する。
+- ダッシュボードの「New session」では、そのマシンのClaude CodeやCodexで信頼済みのフォルダが一覧に出る。それ以外は「Choose another folder…」で `allowed_roots` の配下から選ぶ。
 - 終了したセッションはresumeできる（エージェント側のセッションを引き継いで起動し直す）。
 
 ### マシン
@@ -113,7 +114,7 @@
 ### `~/.codequilt/config.toml`
 
 ```toml
-allowed_roots = ["C:/Users/me/work"]   # where sessions may be started from the board; default: home
+allowed_roots = ["C:/Users/me/work"]   # folders under which the board may start sessions (besides trusted ones); default: home
 
 [aliases]
 q = "queen"                 # built in; user aliases take precedence

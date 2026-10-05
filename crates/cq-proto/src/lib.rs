@@ -337,6 +337,9 @@ pub struct DirList {
     pub parent: Option<String>,
     pub entries: Vec<String>,
     pub roots: Vec<String>,
+    /// Directories the user trusted in an agent, offered as shortcuts with the roots.
+    #[serde(default)]
+    pub known: Vec<String>,
 }
 
 /// A decoded protocol message.

@@ -14,29 +14,43 @@ const splitArgs = (s: string): string[] => [...s.matchAll(/"([^"]*)"|(\S+)/g)].m
 
 const join = (dir: string, name: string) => (/[\\/]$/.test(dir) ? dir + name : `${dir}${dir.includes("\\") ? "\\" : "/"}${name}`);
 
-/** Starts a new session in a directory under the machine's allowed roots. */
+/** Starts a new session in a folder the user trusted in an agent, or in another allowed folder. */
 export const NewSessionDialog = ({ machines, initialMachine, onLaunch, onClose }: Props) => {
   const online = machines.filter((m) => m.online);
   const [machine, setMachine] = useState(initialMachine);
   const [agent, setAgent] = useState<Agent>("claude");
-  const [list, setList] = useState<DirList | null>(null);
+  const [known, setKnown] = useState<string[]>([]);
+  const [cwd, setCwd] = useState<string | null>(null);
+  /** The folder browser, open while choosing another folder. */
+  const [browser, setBrowser] = useState<DirList | null>(null);
   const [args, setArgs] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const browse = (path: string) => {
     setError(null);
-    listDir(machine, path).then(setList, (e: unknown) => setError(String(e)));
+    listDir(machine, path).then((l) => {
+      setBrowser(l);
+      if (l.path) setCwd(l.path);
+    }, (e: unknown) => setError(String(e)));
   };
 
-  useEffect(() => browse(""), [machine]);
+  // The trusted folders and roots are read anew each time, so changes show up right away.
+  useEffect(() => {
+    setCwd(null);
+    setBrowser(null);
+    listDir(machine, "").then((l) => {
+      setKnown(l.known);
+      if (l.known.length === 0) setBrowser(l);
+    }, (e: unknown) => setError(String(e)));
+  }, [machine]);
 
   const start = async () => {
-    if (!list?.path) return;
+    if (!cwd) return;
     setBusy(true);
     setError(null);
     try {
-      await onLaunch(machine, agent, list.path, splitArgs(args));
+      await onLaunch(machine, agent, cwd, splitArgs(args));
       onClose();
     } catch (e) {
       setError(String(e));
@@ -72,21 +86,46 @@ export const NewSessionDialog = ({ machines, initialMachine, onLaunch, onClose }
           </select>
         </label>
         <div className="field">
-          <span>directory</span>
-          <div className="dir-current">{list?.path || "choose a root"}</div>
+          <span>folder</span>
+          <div className="dir-current">{cwd ?? "choose a folder"}</div>
         </div>
-        <ul className="dir-list">
-          {list?.path && (
+        {!browser && (
+          <ul className="dir-list">
+            {known.map((dir) => (
+              <li key={dir}>
+                <button className={dir === cwd ? "selected" : ""} onClick={() => setCwd(dir)}>
+                  {dir}
+                </button>
+              </li>
+            ))}
             <li>
-              <button onClick={() => browse(list.parent ?? "")}>..</button>
+              <button className="dir-other" onClick={() => browse("")}>
+                Choose another folder…
+              </button>
             </li>
-          )}
-          {list?.entries.map((name) => (
-            <li key={name}>
-              <button onClick={() => browse(list.path ? join(list.path, name) : name)}>{name}</button>
-            </li>
-          ))}
-        </ul>
+          </ul>
+        )}
+        {browser && (
+          <ul className="dir-list">
+            {known.length > 0 && (
+              <li>
+                <button className="dir-other" onClick={() => setBrowser(null)}>
+                  ← Trusted folders
+                </button>
+              </li>
+            )}
+            {browser.path && (
+              <li>
+                <button onClick={() => browse(browser.parent ?? "")}>..</button>
+              </li>
+            )}
+            {browser.entries.map((name) => (
+              <li key={name}>
+                <button onClick={() => browse(browser.path ? join(browser.path, name) : name)}>{name}</button>
+              </li>
+            ))}
+          </ul>
+        )}
         <label className="field">
           <span>arguments</span>
           <input
@@ -99,7 +138,7 @@ export const NewSessionDialog = ({ machines, initialMachine, onLaunch, onClose }
         {error && <div className="modal-error">{error}</div>}
         <footer className="modal-actions">
           <button onClick={onClose}>Cancel</button>
-          <button className="primary" disabled={!list?.path || busy} onClick={() => void start()}>
+          <button className="primary" disabled={!cwd || busy} onClick={() => void start()}>
             Start {agent} here
           </button>
         </footer>

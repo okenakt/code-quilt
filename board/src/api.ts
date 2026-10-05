@@ -46,7 +46,7 @@ export const terminate = (machine: string, session: string): Promise<void> => in
 export const setFocus = (machine: string | null, session: string | null): Promise<void> =>
   invoke("set_focus", { machine, session });
 
-export type DirList = { path: string; parent: string | null; entries: string[]; roots: string[] };
+export type DirList = { path: string; parent: string | null; entries: string[]; roots: string[]; known: string[] };
 
 /** Lists subdirectories on a machine (an empty path lists the allowed roots). */
 export const listDir = (machine: string, path: string): Promise<DirList> => invoke("list_dir", { machine, path });

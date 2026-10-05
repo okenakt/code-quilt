@@ -350,3 +350,8 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 
 - **hookのスプールとstatusLineのファイル**：hookは `~/.codequilt/spool/<id>.jsonl` に、statusLineは `~/.codequilt/status/<id>.json` に書いていたが、どこからも読まれていなかった（当初はクライアントの起動時に状態を復元する想定だったが、cq hostが履歴を持って再送する形になり不要になった）。どちらも書かないようにした。
 - **ドキュメント**：`design.md` は現在の設計、`features.md` は機能・コマンド・設定・データの置き場所、`decisions.md` だけが経緯を持つ形に分けた。ロードマップや完了済みの試作の記述は `design.md` から外した。常駐プロセスはコードと同じ名前（`cq daemon`／daemon、`cq host`）で呼び、通称は使わない。
+
+## 35. 新規セッションのフォルダ
+
+- **結論**：「New session」では、そのマシンのClaude Code（`.claude.json` の `projects.<dir>.hasTrustDialogAccepted`）とCodex（`config.toml` の `trust_level = "trusted"`）で信頼済みのフォルダを候補として出し、それ以外は「Choose another folder…」で `allowed_roots` の配下から選ぶ。信頼済みのフォルダは `allowed_roots` の外でも起動を許す（ユーザーがエージェントで明示的に信頼したため）。CodeQuiltの状態ディレクトリ（Queenの作業フォルダ）は除く。どちらも要求のたびに読み直し、キャッシュしない。
+- **検討した選択肢**：`allowed_roots` から辿るだけ（よく使うフォルダに毎回辿り着く手間がかかる）。CodeQuilt独自の「最近使ったフォルダ」の記録（エージェントの信頼の記録と二重になる）。

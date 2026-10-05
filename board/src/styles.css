@@ -625,6 +625,15 @@ kbd {
   background: var(--panel-2);
 }
 
+.dir-list button.selected {
+  background: var(--panel-2);
+  color: var(--accent);
+}
+
+.dir-list button.dir-other {
+  color: var(--muted);
+}
+
 .modal-error {
   color: var(--danger);
 }

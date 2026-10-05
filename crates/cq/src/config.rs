@@ -81,24 +81,41 @@ pub fn allowed_roots() -> Vec<PathBuf> {
     roots.into_iter().filter_map(|r| r.canonicalize().ok()).collect()
 }
 
-/// Resolves `path` and verifies it is a directory inside an allowed root.
+/// Existing directories the user trusted in Claude Code or Codex, outside CodeQuilt's own state
+/// (e.g. Queen directories), canonical and sorted. Read anew on every call.
+pub fn trusted_dirs() -> Vec<PathBuf> {
+    let own = paths::root().ok().and_then(|r| r.canonicalize().ok());
+    let mut dirs: Vec<PathBuf> = crate::usage::trusted_dirs()
+        .into_iter()
+        .filter_map(|d| d.canonicalize().ok())
+        .filter(|d| d.is_dir() && !own.as_ref().is_some_and(|o| d.starts_with(o)))
+        .collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+/// Resolves `path` and verifies it is a directory inside an allowed root or one the user trusted
+/// in an agent. Both are read anew on every call, so edits apply right away.
 pub fn check_allowed(path: &str) -> Result<PathBuf> {
     let p = Path::new(path).canonicalize().with_context(|| format!("no such directory: {path}"))?;
     if !p.is_dir() {
         bail!("not a directory: {path}");
     }
-    if !allowed_roots().iter().any(|r| p.starts_with(r)) {
-        bail!("{path} is outside the allowed roots (see ~/.codequilt/config.toml)");
+    if !allowed_roots().iter().any(|r| p.starts_with(r)) && !trusted_dirs().contains(&p) {
+        bail!("{path} is neither inside the allowed roots (see ~/.codequilt/config.toml) nor trusted in an agent");
     }
     Ok(display_path(&p))
 }
 
-/// Lists subdirectories of an allowed directory, or the roots themselves for an empty path.
+/// Lists subdirectories of an allowed directory, or for an empty path the roots and the trusted
+/// directories.
 pub fn list_dir(path: &str) -> Result<cq_proto::DirList> {
-    let roots: Vec<String> =
-        allowed_roots().iter().map(|r| display_path(r).to_string_lossy().into_owned()).collect();
+    let shown = |ds: Vec<PathBuf>| -> Vec<String> { ds.iter().map(|d| display_path(d).to_string_lossy().into_owned()).collect() };
+    let roots = shown(allowed_roots());
     if path.is_empty() {
-        return Ok(cq_proto::DirList { id: 0, path: String::new(), parent: None, entries: roots.clone(), roots });
+        let known = shown(trusted_dirs());
+        return Ok(cq_proto::DirList { id: 0, path: String::new(), parent: None, entries: roots.clone(), roots, known });
     }
     let dir = check_allowed(path)?;
     let mut entries: Vec<String> = std::fs::read_dir(&dir)?
@@ -113,7 +130,7 @@ pub fn list_dir(path: &str) -> Result<cq_proto::DirList> {
         .parent()
         .filter(|p| check_allowed(&p.to_string_lossy()).is_ok())
         .map(|p| p.to_string_lossy().into_owned());
-    Ok(cq_proto::DirList { id: 0, path: dir.to_string_lossy().into_owned(), parent, entries, roots })
+    Ok(cq_proto::DirList { id: 0, path: dir.to_string_lossy().into_owned(), parent, entries, roots, known: Vec::new() })
 }
 
 /// Subcommand aliases: the built-in `q = queen` plus the user's own, which take precedence.
