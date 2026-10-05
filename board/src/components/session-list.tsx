@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { terminate } from "../api";
 import { isPinned, togglePin, type Pins } from "../pins";
 import { displayName } from "../store";
@@ -24,57 +24,66 @@ const ago = (ms: number): string => {
   return `${Math.round(mins / 1440)}d ago`;
 };
 
-/** Model, context usage and token total of a running session. */
-const UsageLine = ({ s }: { s: SessionState }) => {
+/** Details of a running session as `name: value` lines. */
+const SessionDetails = ({ s, machine }: { s: SessionState; machine: MachineInfo | undefined }) => {
   const st = s.status;
   const t = s.tokens;
-  const total = t ? t.input + t.output + t.cacheRead + t.cacheCreation : (st?.inputTokens ?? 0) + (st?.outputTokens ?? 0);
+  const tokens = t ? t.input + t.output + t.cacheRead + t.cacheCreation : (st?.inputTokens ?? 0) + (st?.outputTokens ?? 0);
   const ctx = st?.contextPercent ?? null;
-  if (!st?.model && ctx === null && !total) return null;
+  const rows: [string, ReactNode][] = [
+    ["machine", machine?.label ?? s.machine],
+    ["cwd", s.meta.cwd],
+    ...(s.meta.tags.length > 0 ? [["tags", s.meta.tags.join(", ")] as [string, ReactNode]] : []),
+    ...(st?.model ? [["model", st.model] as [string, ReactNode]] : []),
+    ...(ctx !== null
+      ? [
+          [
+            "context",
+            <span className="ctx">
+              <span className="ctx-track">
+                <span className="ctx-fill" style={{ width: `${Math.min(100, ctx)}%` }} />
+              </span>
+              {Math.round(ctx)}%
+            </span>,
+          ] as [string, ReactNode],
+        ]
+      : []),
+    ...(tokens > 0 ? [["tokens", formatTokens(tokens)] as [string, ReactNode]] : []),
+  ];
   return (
-    <div className="session-usage">
-      {st?.model && <span>{st.model}</span>}
-      {ctx !== null && (
-        <span className="ctx" title={`context ${Math.round(ctx)}% used`}>
-          ctx
-          <span className="ctx-track">
-            <span className="ctx-fill" style={{ width: `${Math.min(100, ctx)}%` }} />
-          </span>
-          {Math.round(ctx)}%
-        </span>
-      )}
-      {total > 0 && <span>{formatTokens(total)} tokens</span>}
-    </div>
+    <dl className="session-details">
+      {rows.map(([k, v]) => (
+        <div key={k}>
+          <dt>{k}:</dt>
+          <dd>{v}</dd>
+        </div>
+      ))}
+    </dl>
   );
 };
 
-/** Per-model token breakdown shown for the selected session. */
-const TokenDetail = ({ s }: { s: SessionState }) => {
-  if (!s.tokens) return null;
-  return (
-    <table className="token-detail">
-      <thead>
-        <tr>
-          <th>model</th>
-          <th>in</th>
-          <th>out</th>
-          <th>cache r</th>
-          <th>cache w</th>
-        </tr>
-      </thead>
-      <tbody>
-        {Object.entries(s.tokens.byModel).map(([model, c]) => (
-          <tr key={model}>
-            <td>{model.replace(/^claude-/, "")}</td>
-            <td>{formatTokens(c.input)}</td>
-            <td>{formatTokens(c.output)}</td>
-            <td>{formatTokens(c.cacheRead)}</td>
-            <td>{formatTokens(c.cacheCreation)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+const EXPANDED_KEY = "cq.expanded";
+
+const loadExpanded = (): Set<string> => {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? "[]") as string[]);
+  } catch {
+    return new Set();
+  }
+};
+
+/** Sessions whose details are shown, remembered across restarts. */
+let expanded = loadExpanded();
+
+const toggleExpanded = (key: string) => {
+  expanded = new Set(expanded);
+  if (expanded.has(key)) expanded.delete(key);
+  else expanded.add(key);
+  try {
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify([...expanded]));
+  } catch {
+    // Remembering the expanded rows is a convenience only.
+  }
 };
 
 /** Short session id; clicking copies the full id. */
@@ -104,64 +113,62 @@ type ActiveProps = {
   machine: MachineInfo | undefined;
   active: boolean;
   pinned: boolean;
-  /** Show the machine label (in the pinned section, which mixes machines). */
-  showMachine: boolean;
   onOpen: (s: SessionState) => void;
 };
 
-const ActiveItem = ({ s, machine, active, pinned, showMachine, onOpen }: ActiveProps) => (
-  <div
-    role="button"
-    tabIndex={0}
-    className={`session ${s.activity} ${active ? "active" : ""}`}
-    onClick={() => onOpen(s)}
-    onKeyDown={(e) => e.key === "Enter" && onOpen(s)}
-    title={s.meta.cwd}
-  >
-    <div className="session-row">
-      <span className="session-name">{displayName(s)}</span>
-      <SessionId id={s.meta.id} />
-      {s.activity !== "exited" && <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>}
-      <button
-        className={`pin ${pinned ? "on" : ""}`}
-        title={pinned ? "unpin" : "pin to the front"}
-        onClick={(e) => {
-          e.stopPropagation();
-          togglePin(s);
-        }}
-      >
-        📌
-      </button>
-      <button
-        className="end-session"
-        title="end session (the agent exits; killed after 10s)"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (confirm(`End session "${displayName(s)}" (${s.meta.id.slice(0, 8)})?`)) {
-            terminate(s.machine, s.meta.id).catch((err: unknown) => alert(String(err)));
-          }
-        }}
-      >
-        ✕
-      </button>
-    </div>
-    <div className="session-cwd">
-      {showMachine && machine ? `${machine.label} · ` : ""}
-      {s.meta.cwd}
-    </div>
-    {s.meta.tags.length > 0 && (
-      <div className="session-tags">
-        {s.meta.tags.map((t) => (
-          <span key={t} className="tag">
-            {t}
-          </span>
-        ))}
+const ActiveItem = ({ s, machine, active, pinned, onOpen }: ActiveProps) => {
+  const [open, setOpen] = useState(() => expanded.has(s.key));
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className={`session ${s.activity} ${active ? "active" : ""}`}
+      onClick={() => onOpen(s)}
+      onKeyDown={(e) => e.key === "Enter" && onOpen(s)}
+      title={s.meta.cwd}
+    >
+      <div className="session-row">
+        <button
+          className="session-expand"
+          title={open ? "hide details" : "show details"}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleExpanded(s.key);
+            setOpen(!open);
+          }}
+        >
+          {open ? "▾" : "▸"}
+        </button>
+        <span className="session-name">{displayName(s)}</span>
+        <SessionId id={s.meta.id} />
+        {s.activity !== "exited" && <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>}
+        <button
+          className={`pin ${pinned ? "on" : ""}`}
+          title={pinned ? "unpin" : "pin to the front"}
+          onClick={(e) => {
+            e.stopPropagation();
+            togglePin(s);
+          }}
+        >
+          📌
+        </button>
+        <button
+          className="end-session"
+          title="end session (the agent exits; killed after 10s)"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (confirm(`End session "${displayName(s)}" (${s.meta.id.slice(0, 8)})?`)) {
+              terminate(s.machine, s.meta.id).catch((err: unknown) => alert(String(err)));
+            }
+          }}
+        >
+          ✕
+        </button>
       </div>
-    )}
-    <UsageLine s={s} />
-    {active && <TokenDetail s={s} />}
-  </div>
-);
+      {open && <SessionDetails s={s} machine={machine} />}
+    </div>
+  );
+};
 
 const EndedItem = ({ s, canResume, onResume }: { s: SessionState; canResume: boolean; onResume: (s: SessionState) => void }) => (
   <div className="ended" title={s.meta.cwd}>
@@ -244,7 +251,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
         <section className="machine pinned">
           <header className="machine-header">Pinned</header>
           {pinned.map((s) => (
-            <ActiveItem key={s.key} s={s} machine={machineOf(s)} active={s.key === activeKey} pinned showMachine onOpen={onOpen} />
+            <ActiveItem key={s.key} s={s} machine={machineOf(s)} active={s.key === activeKey} pinned onOpen={onOpen} />
           ))}
         </section>
       )}
@@ -265,7 +272,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
             </header>
             {active.length === 0 && <div className="empty">No active sessions</div>}
             {active.map((s) => (
-              <ActiveItem key={s.key} s={s} machine={m} active={s.key === activeKey} pinned={isPinned(s, pins)} showMachine={false} onOpen={onOpen} />
+              <ActiveItem key={s.key} s={s} machine={m} active={s.key === activeKey} pinned={isPinned(s, pins)} onOpen={onOpen} />
             ))}
             <EndedSection machine={m} sessions={ended} onResume={onResume} />
           </section>

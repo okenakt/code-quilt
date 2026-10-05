@@ -311,22 +311,6 @@ kbd {
   color: var(--idle);
 }
 
-
-.session-cwd,
-.session-usage {
-  color: var(--muted);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-usage {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .ctx {
   display: inline-flex;
   align-items: center;
@@ -534,31 +518,6 @@ kbd {
   font-size: 11px;
 }
 
-.token-detail {
-  width: 100%;
-  margin-top: 6px;
-  border-collapse: collapse;
-  font-size: 11px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.token-detail th,
-.token-detail td {
-  text-align: right;
-  padding: 1px 4px;
-}
-
-.token-detail th:first-child,
-.token-detail td:first-child {
-  text-align: left;
-}
-
-.token-detail tfoot td {
-  text-align: left;
-  padding-top: 3px;
-}
-
 .machine-new {
   margin-left: auto;
   border: 1px solid var(--line);
@@ -692,26 +651,6 @@ kbd {
 .modal-actions button:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-.token-detail th {
-  white-space: nowrap;
-  font-weight: 500;
-}
-
-.session-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
-}
-
-.tag {
-  font-size: 10px;
-  padding: 0 6px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  color: var(--muted);
 }
 
 .pin {
@@ -863,4 +802,44 @@ kbd {
 .toast.error {
   border-color: var(--danger);
   color: var(--danger);
+}
+
+.session-expand {
+  flex: none;
+  width: 14px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.session-expand:hover {
+  color: var(--text);
+}
+
+.session-details {
+  margin: 4px 0 0 20px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.session-details div {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-details dt {
+  flex: none;
+}
+
+.session-details dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
