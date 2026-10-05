@@ -183,3 +183,9 @@ export const onStartCommands = (config: UiConfig): { command: string; args: Reco
   }
   return out;
 };
+
+/** Names of sessions pinned by default (`pinned` in ui.toml). */
+export const pinnedNames = (config: UiConfig): string[] => {
+  const raw = asRecord(config.ui)?.pinned;
+  return Array.isArray(raw) ? raw.filter((n): n is string => typeof n === "string") : [];
+};

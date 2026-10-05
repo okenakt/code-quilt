@@ -243,6 +243,9 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
                         if ev.source == "cq" && ty == Some(confirm) && fresh {
                             return Ok(s);
                         }
+                        if ev.source == "cq" && ty == Some("rejected") && fresh {
+                            bail!("{}", ev.payload.get("reason").and_then(|r| r.as_str()).unwrap_or("rejected"));
+                        }
                     }
                 }
                 Message::Error(e) => bail!("daemon: {e}"),

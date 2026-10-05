@@ -23,7 +23,7 @@ pub struct QueenConfig {
     pub model: String,
     /// `default`, or a path to a prompt file.
     pub persona: String,
-    /// `tag:NAME` / `machine:ID` entries; empty means every session.
+    /// `machine:ID` entries; empty means every machine.
     pub scope: Vec<String>,
     pub delivery: Delivery,
     /// Which events wake the Queen: `permission`, `question` (other dialogs), `stop`.

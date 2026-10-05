@@ -12,7 +12,6 @@ export type SessionMeta = {
   ended_at_ms?: number | null;
   agent_session_id: string | null;
   name: string | null;
-  tags: string[];
 };
 
 /** Agent event relayed from hooks, the status line, or the host itself. */

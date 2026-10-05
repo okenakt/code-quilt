@@ -64,11 +64,10 @@ fn session_settings(id: &str, extra: Option<&str>) -> Result<std::path::PathBuf>
     Ok(path)
 }
 
-/// Name and tags given to a session at start.
+/// Name and extra settings given to a session at start.
 #[derive(Default)]
 pub struct Labels {
     pub name: Option<String>,
-    pub tags: Vec<String>,
     /// Extra settings file merged with CodeQuilt's hooks.
     pub settings_extra: Option<String>,
 }
@@ -79,10 +78,10 @@ pub fn spawn_host(id: &str, agent: &str, cwd: &str, size: Size, labels: &Labels,
     cmd.args(["host", "--id", id, "--agent", agent, "--cwd", cwd])
         .args(["--cols", &size.cols.to_string(), "--rows", &size.rows.to_string()]);
     if let Some(n) = &labels.name {
+        if let Some(other) = session::name_taken(n, "") {
+            anyhow::bail!("session {other} is already named '{n}'");
+        }
         cmd.args(["--name", n]);
-    }
-    for t in &labels.tags {
-        cmd.args(["--tag", t]);
     }
     cmd.arg("--").args(command);
     cq_client::spawn_detached(&mut cmd, &cq_client::log_file(id)?)
@@ -138,7 +137,7 @@ pub fn launch_detached(req: &cq_proto::Launch) -> Result<String> {
     let id = session::new_id();
     let command = agent_command(&req.agent, &id, req.settings_extra.as_deref(), req.resume.as_deref(), &req.args)?;
     let size = Size { cols: req.cols.max(20), rows: req.rows.max(5) };
-    let labels = Labels { name: req.name.clone(), tags: req.tags.clone(), settings_extra: None };
+    let labels = Labels { name: req.name.clone(), settings_extra: None };
     spawn_host(&id, &req.agent, &cwd.to_string_lossy(), size, &labels, &command)?;
     Ok(id)
 }

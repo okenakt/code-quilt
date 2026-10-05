@@ -5,7 +5,7 @@ use crate::agent::{self, PermissionPrompt};
 use crate::{ipc, paths, session, usage};
 use anyhow::{Context, Result, bail};
 use cq_proto::{
-    AgentEvent, ClientKind, Exit, Hello, Inject, InputOwner, Message, PROTOCOL_VERSION, SessionMeta, SetMeta,
+    AgentEvent, ClientKind, Exit, Hello, Inject, InputOwner, Message, PROTOCOL_VERSION, SessionMeta, Rename,
     SessionStatus, Size, Terminate, Welcome, read_message, write_message,
 };
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -22,7 +22,6 @@ pub struct HostArgs {
     pub cwd: String,
     pub size: Size,
     pub name: Option<String>,
-    pub tags: Vec<String>,
     pub command: Vec<String>,
 }
 
@@ -314,22 +313,16 @@ impl State {
         let _ = self.pty_tx.send(bytes);
     }
 
-    fn set_meta(&mut self, m: SetMeta) {
-        if m.clear_name {
-            self.meta.name = None;
+    fn rename(&mut self, r: Rename) {
+        let name = r.name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty());
+        if let Some(taken) = name.as_deref().and_then(|n| session::name_taken(n, &self.meta.id)) {
+            let reason = format!("session {taken} is already named '{}'", name.unwrap_or_default());
+            self.publish(cq_event(serde_json::json!({ "type": "rejected", "reason": reason })));
+            return;
         }
-        if let Some(name) = m.name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) {
-            self.meta.name = Some(name);
-        }
-        for t in m.add_tags {
-            if !self.meta.tags.contains(&t) {
-                self.meta.tags.push(t);
-            }
-        }
-        self.meta.tags.retain(|t| !m.remove_tags.contains(t));
+        self.meta.name = name;
         let _ = session::save(&self.meta);
-        let payload = serde_json::json!({ "type": "meta", "name": self.meta.name, "tags": self.meta.tags });
-        self.publish(AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload });
+        self.publish(cq_event(serde_json::json!({ "type": "meta", "name": self.meta.name })));
     }
 
     /// Types the next queued injection when the agent is idle, no prompt or typed text is on
@@ -447,7 +440,6 @@ pub async fn run(args: HostArgs) -> Result<()> {
         ended_at_ms: None,
         agent_session_id: None,
         name: args.name.clone(),
-        tags: args.tags.clone(),
     };
     session::save(&meta)?;
 
@@ -651,7 +643,7 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
                     st.injections.push_back(inj);
                     st.publish(AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload });
                 }
-                Message::SetMeta(m) => st.set_meta(m),
+                Message::Rename(r) => st.rename(r),
                 Message::Terminate(t) => {
                     if !std::mem::replace(&mut st.terminating, true) {
                         let payload = serde_json::json!({ "type": "terminating", "force": t.force });

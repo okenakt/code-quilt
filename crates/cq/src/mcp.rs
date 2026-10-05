@@ -11,41 +11,13 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
-/// Which sessions this server may see and drive.
-#[derive(Clone, Default)]
-pub struct Scope {
-    tags: Vec<String>,
-    machines: Vec<String>,
-}
-
-impl Scope {
-    /// Parses `tag:NAME` / `machine:ID` entries; empty means every session.
-    pub fn parse(entries: &[String]) -> Result<Self> {
-        let mut s = Self::default();
-        for e in entries {
-            match e.split_once(':') {
-                Some(("tag", t)) => s.tags.push(t.to_owned()),
-                Some(("machine", m)) => s.machines.push(m.to_owned()),
-                _ => bail!("invalid scope '{e}' (use tag:NAME or machine:ID)"),
-            }
-        }
-        Ok(s)
-    }
-
-    fn admits(&self, s: &Session) -> bool {
-        let tag_ok = self.tags.is_empty() || s.meta.tags.iter().any(|t| self.tags.contains(t));
-        let machine_ok = self.machines.is_empty() || self.machines.contains(&s.machine);
-        tag_ok && machine_ok
-    }
-}
-
 type Approvals = Arc<Mutex<HashMap<(String, String), oneshot::Sender<Value>>>>;
 
 struct Server {
     model: Arc<Mutex<Model>>,
     approvals: Approvals,
     tx: mpsc::UnboundedSender<Message>,
-    scope: Scope,
+    scope: cq_client::Scope,
     /// Declare the Claude Code channel capability.
     channel: bool,
     /// The session this server runs inside (the orchestrator itself), if any.
@@ -95,7 +67,6 @@ impl Server {
         json!({
             "session": s.key(),
             "name": s.meta.name,
-            "tags": s.meta.tags,
             "machine": s.machine,
             "agent": s.meta.agent,
             "cwd": s.meta.cwd,
@@ -174,7 +145,7 @@ fn tools() -> Value {
     json!([
         {
             "name": "list_sessions",
-            "description": "List coding agent sessions in scope: machine, name, tags, directory, state (working / idle / approval / exited), any pending permission prompt, and the start of the last prompt and reply.",
+            "description": "List coding agent sessions in scope: machine, name, directory, state (working / idle / approval / exited), any pending permission prompt, and the start of the last prompt and reply.",
             "inputSchema": { "type": "object", "properties": { "include_exited": { "type": "boolean" } } }
         },
         {
@@ -264,7 +235,7 @@ async fn daemon_loop(
 
 /// Runs the MCP server on stdin/stdout. With `channel`, the server is also a Claude Code channel:
 /// invoking the desktop command [`channel_command`] for this session pushes a message into it.
-pub async fn run(scope: Scope, channel: bool) -> Result<()> {
+pub async fn run(scope: cq_client::Scope, channel: bool) -> Result<()> {
     let own = std::env::var("CQ_SESSION_ID").ok();
     if channel && own.is_none() {
         bail!("--channel needs to run inside a CodeQuilt session (CQ_SESSION_ID is not set)");

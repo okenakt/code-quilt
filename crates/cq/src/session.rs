@@ -73,6 +73,16 @@ pub fn pick<'a>(sessions: &'a [SessionMeta], key: &str) -> Result<&'a SessionMet
     anyhow::bail!("no running session matches '{key}'")
 }
 
+/// The id of another running session already called `name`, if any. Names are unique among a
+/// machine's running sessions so that a name alone identifies a session.
+pub fn name_taken(name: &str, except_id: &str) -> Option<String> {
+    list()
+        .ok()?
+        .into_iter()
+        .find(|m| m.status == SessionStatus::Running && m.id != except_id && m.name.as_deref() == Some(name))
+        .map(|m| m.id)
+}
+
 /// Resolves a local running session by name, id, or unique id prefix.
 pub fn resolve(key: &str) -> Result<SessionMeta> {
     let sessions = list()?;
@@ -122,7 +132,6 @@ mod tests {
             ended_at_ms: None,
             agent_session_id: None,
             name: name.map(Into::into),
-            tags: Vec::new(),
         }
     }
 

@@ -33,7 +33,6 @@ const SessionDetails = ({ s, machine }: { s: SessionState; machine: MachineInfo 
   const rows: [string, ReactNode][] = [
     ["machine", machine?.label ?? s.machine],
     ["cwd", s.meta.cwd],
-    ...(s.meta.tags.length > 0 ? [["tags", s.meta.tags.join(", ")] as [string, ReactNode]] : []),
     ...(st?.model ? [["model", st.model] as [string, ReactNode]] : []),
     ...(ctx !== null
       ? [
@@ -113,10 +112,11 @@ type ActiveProps = {
   machine: MachineInfo | undefined;
   active: boolean;
   pinned: boolean;
+  onPin: (s: SessionState) => void;
   onOpen: (s: SessionState) => void;
 };
 
-const ActiveItem = ({ s, machine, active, pinned, onOpen }: ActiveProps) => {
+const ActiveItem = ({ s, machine, active, pinned, onPin, onOpen }: ActiveProps) => {
   const [open, setOpen] = useState(() => expanded.has(s.key));
   return (
     <div
@@ -147,7 +147,7 @@ const ActiveItem = ({ s, machine, active, pinned, onOpen }: ActiveProps) => {
           title={pinned ? "unpin" : "pin to the front"}
           onClick={(e) => {
             e.stopPropagation();
-            togglePin(s);
+            onPin(s);
           }}
         >
           📌
@@ -238,12 +238,16 @@ type Props = {
   onNew: (machine: string) => void;
   onResume: (s: SessionState) => void;
   pins: Pins;
+  /** Names pinned by default (`pinned` in ui.toml). */
+  pinNames: string[];
 };
 
 /** Pinned sessions first (also listed under their machine), then each machine's sessions. */
-export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume, pins }: Props) => {
+export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume, pins, pinNames }: Props) => {
   const running = sessions.filter((s) => s.activity !== "exited");
-  const pinned = running.filter((s) => isPinned(s, pins));
+  const pinOf = (s: SessionState) => isPinned(s, pins, pinNames);
+  const onPin = (s: SessionState) => togglePin(s, pinNames);
+  const pinned = running.filter(pinOf);
   const machineOf = (s: SessionState) => machines.find((m) => m.id === s.machine);
   return (
     <nav className="session-list">
@@ -251,7 +255,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
         <section className="machine pinned">
           <header className="machine-header">Pinned</header>
           {pinned.map((s) => (
-            <ActiveItem key={s.key} s={s} machine={machineOf(s)} active={s.key === activeKey} pinned onOpen={onOpen} />
+            <ActiveItem key={s.key} s={s} machine={machineOf(s)} active={s.key === activeKey} pinned onPin={onPin} onOpen={onOpen} />
           ))}
         </section>
       )}
@@ -272,7 +276,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
             </header>
             {active.length === 0 && <div className="empty">No active sessions</div>}
             {active.map((s) => (
-              <ActiveItem key={s.key} s={s} machine={m} active={s.key === activeKey} pinned={isPinned(s, pins)} onOpen={onOpen} />
+              <ActiveItem key={s.key} s={s} machine={m} active={s.key === activeKey} pinned={pinOf(s)} onPin={onPin} onOpen={onOpen} />
             ))}
             <EndedSection machine={m} sessions={ended} onResume={onResume} />
           </section>

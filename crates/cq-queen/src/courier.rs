@@ -98,48 +98,16 @@ fn compose(new: &[Item], open: &[Item]) -> String {
     out
 }
 
-/// Scope filter shared with `cq mcp`: `tag:NAME` / `machine:ID`.
-struct Scope {
-    tags: Vec<String>,
-    machines: Vec<String>,
-}
-
-impl Scope {
-    fn parse(entries: &[String]) -> Result<Self> {
-        let mut s = Scope { tags: vec![], machines: vec![] };
-        for e in entries {
-            match e.split_once(':') {
-                Some(("tag", t)) => s.tags.push(t.to_owned()),
-                Some(("machine", m)) => s.machines.push(m.to_owned()),
-                _ => bail!("invalid scope '{e}' (use tag:NAME or machine:ID)"),
-            }
-        }
-        Ok(s)
-    }
-
-    fn admits(&self, s: &Session) -> bool {
-        (self.tags.is_empty() || s.meta.tags.iter().any(|t| self.tags.contains(t)))
-            && (self.machines.is_empty() || self.machines.contains(&s.machine))
-    }
-}
-
-/// The Queen's own session: local, tagged `queen`, named after this Queen; newest wins.
+/// The Queen's own session: the local running session named after this Queen (names are unique).
 fn find_queen<'a>(model: &'a Model, name: &str) -> Option<&'a Session> {
-    model
-        .sessions
-        .values()
-        .filter(|s| {
-            s.machine == LOCAL_MACHINE
-                && s.activity != Activity::Exited
-                && s.meta.name.as_deref() == Some(name)
-                && s.meta.tags.iter().any(|t| t == "queen")
-        })
-        .max_by_key(|s| s.meta.started_at_ms)
+    model.sessions.values().find(|s| {
+        s.machine == LOCAL_MACHINE && s.activity != Activity::Exited && s.meta.name.as_deref() == Some(name)
+    })
 }
 
 /// Runs the courier until the Queen session exits.
 pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
-    let scope = Scope::parse(&cfg.scope)?;
+    let scope = cq_client::Scope::parse(&cfg.scope)?;
     let started = now_ms();
     let mut conn = cq_client::DaemonClient::open(true).await?;
     conn.send(&Message::ListSessions).await?;
@@ -223,7 +191,7 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                 match find_queen(&model, name).map(|q| q.meta.id.clone()) {
                     Some(id) => queen_id = Some(id),
                     None if queen_id.is_some() => return Ok(()),
-                    None if Instant::now() > give_up => bail!("no running session named '{name}' tagged queen"),
+                    None if Instant::now() > give_up => bail!("no running session named '{name}'"),
                     None => continue,
                 }
                 let Some(qid) = queen_id.clone() else { continue };

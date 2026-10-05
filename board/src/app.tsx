@@ -9,7 +9,7 @@ import { TerminalPanel } from "./components/terminal-panel";
 import { UsagePanel } from "./components/usage-panel";
 import { notify } from "./notify";
 import { BUILTIN_COMMANDS, BUILTIN_KEYS } from "./builtins";
-import { invokePluginCommand, onStartCommands, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
+import { invokePluginCommand, onStartCommands, pinnedNames, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
 import { CommandPalette } from "./components/command-palette";
 import { chordOfEvent, formatChord } from "./keys";
 import { isPinned, togglePin, usePins } from "./pins";
@@ -145,18 +145,20 @@ export const App = () => {
 
   // Pinned sessions (manually, or tagged `queen`) open once per run in a group at the right edge.
   const pins = usePins();
+  const uiConfig = useCommandState().config;
+  const pinNames = useMemo(() => pinnedNames(uiConfig), [uiConfig]);
   const autoOpened = useRef<Set<string>>(new Set());
   const [layoutReady, setLayoutReady] = useState(false);
   useEffect(() => {
     const api = apiRef.current;
     if (!api || !layoutReady) return;
     for (const s of sessions) {
-      if (s.activity === "exited" || !isPinned(s, pins) || autoOpened.current.has(s.key)) continue;
+      if (s.activity === "exited" || !isPinned(s, pins, pinNames) || autoOpened.current.has(s.key)) continue;
       autoOpened.current.add(s.key);
       if (api.getPanel(s.key)) continue;
       const pinnedPanel = api.panels.find((p) => {
         const other = sessions.find((o) => o.key === p.id);
-        return other !== undefined && isPinned(other, pins);
+        return other !== undefined && isPinned(other, pins, pinNames);
       });
       api.addPanel({
         id: s.key,
@@ -168,7 +170,7 @@ export const App = () => {
         inactive: true,
       });
     }
-  }, [sessions, pins, layoutReady]);
+  }, [sessions, pins, pinNames, layoutReady]);
 
   // Keep tab titles in sync with session names.
   useEffect(() => {
@@ -275,7 +277,7 @@ export const App = () => {
         case "session.copyId": {
           const s = focusedSession();
           if (!s) return showToast(false, "No session tile is focused");
-          if (name === "session.pin") return togglePin(s);
+          if (name === "session.pin") return togglePin(s, pinNames);
           if (name === "session.copyId") {
             void navigator.clipboard.writeText(s.meta.id).then(() => showToast(true, `Copied ${s.meta.id}`));
             return;
@@ -290,7 +292,7 @@ export const App = () => {
         .then((msg) => showToast(true, msg && msg !== "delivered" ? msg : `${name}: done`))
         .catch((e: unknown) => showToast(false, `${name}: ${String(e)}`));
     },
-    [openSession, showToast, toggleUsage],
+    [openSession, showToast, toggleUsage, pinNames],
   );
 
   // Run ui.toml's [[on_start]] commands once the settings are read and the daemon is reachable.
@@ -407,6 +409,7 @@ export const App = () => {
           onNew={setNewSessionFor}
           onResume={resumeSession}
           pins={pins}
+          pinNames={pinNames}
         />
         <footer className="help">
           {keyHelp.map(([k, v]) => (

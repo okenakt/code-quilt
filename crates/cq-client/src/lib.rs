@@ -163,12 +163,7 @@ impl Model {
                         s.activity = Activity::Idle;
                     }
                 }
-                Some("meta") => {
-                    s.meta.name = text("name");
-                    if let Some(tags) = ev.payload.get("tags").and_then(Value::as_array) {
-                        s.meta.tags = tags.iter().filter_map(|t| t.as_str().map(str::to_owned)).collect();
-                    }
-                }
+                Some("meta") => s.meta.name = text("name"),
                 _ => {}
             },
             _ => {}
@@ -296,5 +291,26 @@ impl DaemonClient {
 
     pub async fn send(&mut self, msg: &Message) -> Result<()> {
         cq_proto::write_message(&mut self.wr, msg).await
+    }
+}
+
+/// Which machines' sessions an orchestrator may see and drive (`machine:ID` entries; none
+/// means every machine).
+#[derive(Debug, Clone, Default)]
+pub struct Scope {
+    machines: Vec<String>,
+}
+
+impl Scope {
+    pub fn parse(entries: &[String]) -> Result<Self> {
+        let machines = entries
+            .iter()
+            .map(|e| e.strip_prefix("machine:").map(str::to_owned).with_context(|| format!("invalid scope '{e}' (use machine:ID)")))
+            .collect::<Result<_>>()?;
+        Ok(Self { machines })
+    }
+
+    pub fn admits(&self, s: &Session) -> bool {
+        self.machines.is_empty() || self.machines.contains(&s.machine)
     }
 }

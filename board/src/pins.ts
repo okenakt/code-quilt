@@ -1,10 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { SessionState } from "./types";
 
-/** Sessions with this tag are pinned unless the user unpins them (e.g. orchestrators). */
-export const AUTO_PIN_TAG = "queen";
-
-/** Session key to an explicit pin choice; sessions without one follow their tag. */
+/** Session key to an explicit pin choice; sessions without one follow `pinned` in ui.toml. */
 export type Pins = Record<string, boolean>;
 
 const KEY = "cq.pins.v2";
@@ -30,12 +27,13 @@ export const usePins = (): Pins =>
     () => pins,
   );
 
-/** Whether a session is pinned: the user's choice, or else its tag. */
-export const isPinned = (s: SessionState, choices: Pins): boolean => choices[s.key] ?? s.meta.tags.includes(AUTO_PIN_TAG);
+/** Whether a session is pinned: the user's choice, or else whether ui.toml pins its name. */
+export const isPinned = (s: SessionState, choices: Pins, names: string[]): boolean =>
+  choices[s.key] ?? (s.meta.name !== null && names.includes(s.meta.name));
 
 /** Pins or unpins a session. */
-export const togglePin = (s: SessionState): void => {
-  pins = { ...pins, [s.key]: !isPinned(s, pins) };
+export const togglePin = (s: SessionState, names: string[]): void => {
+  pins = { ...pins, [s.key]: !isPinned(s, pins, names) };
   try {
     localStorage.setItem(KEY, JSON.stringify(pins));
   } catch {

@@ -76,7 +76,7 @@ flowchart TB
 | クライアント | cq-whisper | 音声入力。文字起こしをフォーカス中のセッションに入れる |
 
 - クライアントはローカルのcqdにだけ接続する。リモートへのssh接続はcqdが受け持つ。
-- クライアント同士は依存しない。Queenも本体から見ればタグの付いたセッションの一つで、UIはそれを前面に固定（ピン留め）できるだけ。
+- クライアント同士は依存しない。Queenも本体から見れば名前の付いたセッションの一つで、UIはそれを前面に固定（ピン留め）できるだけ。
 - 将来のCodex対応では、claudeの位置にcodexが入り、状態と履歴の取得だけをAdapterで切り替える。
 
 ## セッション接続と通信
@@ -161,7 +161,7 @@ PermissionRequest hookでハブの回答を待つと、その間ローカルのT
 本体を薄く保ち、根幹以外はクライアントとして足す。公式のクライアントもこのリポジトリの `crates/` にRustで置くが、本体からはサードパーティと同じ扱いにする。
 
 - クライアントはcqdにプロトコル（cq-proto）で接続する。Rustなら `cq-client` を使う。
-- 本体はクライアントの存在を知らない。クライアント同士も直接やり取りしない。協調が必要な情報（セッション名、タグ、フォーカス）は本体の状態として持つ。
+- 本体はクライアントの存在を知らない。クライアント同士も直接やり取りしない。協調が必要な情報（セッション名、フォーカス）は本体の状態として持つ。
 - 当面はユーザーが各クライアントを起動する（`cq queen start` など）。自動起動や管理の仕組みは必要になってから足す。
 - **外部サブコマンド**：`cq NAME 引数…` は組み込みのサブコマンドでなければ `cq-NAME 引数…` を実行する（gitやcargoと同じ）。探す順はcq本体と同じディレクトリ、次に `PATH`。本体はクライアントの名前を持たない。
 - **エイリアス**：`~/.codequilt/config.toml` の `[aliases]`（例 `qs = "queen start main"`）で、サブコマンドの位置の語を置き換える。既定は `q = queen` だけで、ユーザーの定義が優先する。組み込みのサブコマンドとその別名（`a = attach`）は上書きできない。
@@ -170,7 +170,7 @@ PermissionRequest hookでハブの回答を待つと、その間ローカルのT
 
 | 種類 | 内容 |
 | --- | --- |
-| セッション | 一覧、状態、名前（`cq rename`、未設定なら表示名から自動）、タグ（例 `queen`、`frontend`）、新規起動・resume |
+| セッション | 一覧、状態、名前（`cq rename`。動いているセッションの中でマシンごとに一意。未設定なら表示名から自動）、新規起動・resume |
 | イベント | hooks（SessionStart / UserPromptSubmit / Stop / Notification）、承認プロンプトの出現と解消、statusLine、トークン集計、アカウント |
 | 操作 | 入力（ブラケットペースト）、承認（プロンプトIDを照合して回答）、アイドル時の注入（対象がアイドルで、ユーザー入力が一定時間ないときだけ入れる）、終了（エージェントに終了させ、猶予後に強制終了） |
 | フォーカス | UIが「いま入力先にしているセッション」を本体に知らせる。cq-whisperはそこへ送る |
@@ -278,6 +278,8 @@ command = "-ui.closeTile"   # removes the default binding of this key (all of it
 - 無ければboardの起動時に既定の内容を書き出す。効いている設定はすべてファイルに見える（見えない既定値を持たない）。
 
 ```toml
+pinned = ["queen"]   # sessions pinned to the top by name
+
 # Commands run in order when the board starts; failures are shown as notifications.
 [[on_start]]
 command = "queen.start"
@@ -288,6 +290,7 @@ font_family = []   # tried before the built-in fallbacks
 font_size = 13
 ```
 
+- **`pinned`**：名前で指定したセッションを一覧の上部（PINNED）にも出す。一覧の📌で個別に外せる（外した状態はセッションごとに覚える）。Queenは起動し直すとidが変わるが名前は同じなので、ピン留めが続く。
 - **`on_start`**：boardの起動時、設定を読み、ローカルのcqdにつながってから順に実行する。既定はQueenの起動（board を開くとQueenが仲介する、という想定の使い方）。`queen.start` は同名のQueenが動いていれば何もせず成功を返すので、boardを開き直しても重複しない。Queenを使わないなら行を消す。
 - **通知**：コマンドやhookが正常に終わらなかったときは、すべて右下の通知で知らせる（失敗は長めに残し、クリックで消える）。
 - `font_family` の後ろに組み込みのフォールバック（`Cascadia Mono`、`BIZ UDGothic`、`Consolas`、`DejaVu Sans Mono`、`Noto Sans Mono CJK JP`、`monospace`）を連結する。指定したフォントが無くても表示は崩れない。
@@ -301,7 +304,7 @@ font_size = 13
 
 ## cq-queen（公式オーケストレーター）
 
-Queenは「他のセッションを仲介してくれるセッション」である。本体から見れば `queen` タグの付いた普通のセッションで、cq-queenの常駐プロセスが他セッションの出来事をQueenに届ける。Queenを置かなければCodeQuiltはマルチプレクサとして動き、置くかどうか、何体置くかはユーザーが選ぶ。
+Queenは「他のセッションを仲介してくれるセッション」である。本体から見ればQueenの名前（例 `queen`）を持つ普通のセッションで、cq-queenの常駐プロセスが他セッションの出来事をQueenに届ける。Queenを置かなければCodeQuiltはマルチプレクサとして動き、置くかどうか、何体置くかはユーザーが選ぶ。
 
 ### 想定する流れ
 
@@ -344,7 +347,7 @@ sequenceDiagram
 agent    = "claude"            # claude | codex
 model    = "sonnet"
 persona  = "default"           # or a path to a prompt file
-scope    = ["machine:devbox"]  # tags or machines; empty means all sessions
+scope    = ["machine:devbox"]  # machines; empty means all sessions
 delivery = "channels"          # channels (claude default) | pty
 wake_on  = ["permission", "question", "stop"]
 ```
@@ -365,7 +368,7 @@ wake_on  = ["permission", "question", "stop"]
 - **一覧**：SessionStart hookからclaudeのセッションIDを取得してcq-hostのメタデータに記録する。終了後も「終了」状態で残す。保存先はcqd側のSQLite。
 - **resume**：cqdがそのcwdで `claude --resume <id>` をcq-host経由で起動する。
 - **新規起動**：リモートマシンの任意のディレクトリで新規セッションを起動できる。cqdがローカルターミナルなしのcq-hostを起動する。ディレクトリ選択は許可済みルート配下に限る。
-- **後から手元で掴む**：`cq attach <名前|id>`（`cq a`）で、ハブから起動したセッションを手元のターミナルから使える。宛先は名前の完全一致、idの完全一致、idの前方一致の順に解決する（`rename` / `tag` / `inject` / `kill` と `cq mcp` も同じ）。
+- **後から手元で掴む**：`cq attach <名前|id>`（`cq a`）で、ハブから起動したセッションを手元のターミナルから使える。宛先は名前の完全一致、idの完全一致、idの前方一致の順に解決する（`rename` / `inject` / `kill` と `cq mcp` も同じ）。名前は動いているセッションの中でマシンごとに一意で、重複する名前での起動や改名は断る。
 - **終了**：`cq kill <名前|id>` かダッシュボードの「End session」で、エージェント自身に終了させる（Esc → Ctrl+C → 終了コマンドの順）。猶予（既定10秒）内に終わらなければ強制終了する。タイルを閉じる操作はデタッチであり、セッションは終わらない。
 - **レイアウト**：タブとタイルの配置はクライアント側に保存する。
 
@@ -427,7 +430,7 @@ Rustの弱点はUI開発の速さと、TauriがUbuntuでWebKitGTKになりxterm.
 M0〜M4（音声を除く）を実装した後、本体とクライアントを分ける構成に改めた。次の順で移行する。
 
 1. **R1 集約をcqdへ**：ローカルのcqdが登録済みリモートへsshで接続し、全マシンを集約する。ダッシュボードはローカルcqdだけに接続する薄いクライアントにする。
-2. **R2 本体の状態と操作**：セッション名・タグ、承認のプロンプトID照合、フォーカス、アイドル時の注入。
+2. **R2 本体の状態と操作**：セッション名、承認のプロンプトID照合、フォーカス、アイドル時の注入。
 3. **R3 `cq mcp`**：セッション一覧・ターン内容・送信・承認をMCPツールとして公開。
 4. **R4 UIの整理**：現在のQueenパネルと `claude -p` による要約・宛先推定を撤去し、Queenセッションのピン留めを足す。使用量は `cq usage` でも見られるようにする。
 5. **R5 cq-queen**：Channelsの試作 → 常駐プロセスとプロファイル → PTY注入（Codex・代替用）。

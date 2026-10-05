@@ -136,7 +136,6 @@ async fn launch_detached(name: &str, cwd: &std::path::Path, args: Vec<String>) -
         args,
         resume: None,
         name: Some(name.into()),
-        tags: vec!["queen".into()],
         settings_extra: Some(write_settings(name)?.to_string_lossy().into_owned()),
         cols: 120,
         rows: 36,
@@ -152,7 +151,7 @@ async fn launch_detached(name: &str, cwd: &std::path::Path, args: Vec<String>) -
     bail!("daemon connection closed")
 }
 
-/// The running local session of the Queen `name`, if any.
+/// The running local session of the Queen `name`, if any (session names are unique).
 async fn running_queen(name: &str) -> Result<Option<String>> {
     let mut conn = cq_client::DaemonClient::open(false).await?;
     conn.send(&Message::ListSessions).await?;
@@ -161,7 +160,7 @@ async fn running_queen(name: &str) -> Result<Option<String>> {
             return Ok(l
                 .sessions
                 .into_iter()
-                .find(|s| s.status == SessionStatus::Running && s.name.as_deref() == Some(name) && s.tags.iter().any(|t| t == "queen"))
+                .find(|s| s.status == SessionStatus::Running && s.name.as_deref() == Some(name))
                 .map(|s| s.id));
         }
     }
@@ -188,7 +187,7 @@ async fn start(name: &str, detach: bool, extra: Vec<String>) -> Result<i32> {
         return Ok(0);
     }
     let status = std::process::Command::new(cq_client::cq_binary())
-        .args(["claude", "--cq-name", name, "--cq-tag", "queen"])
+        .args(["claude", "--cq-name", name])
         .arg("--cq-settings")
         .arg(write_settings(name)?)
         .args(&args)

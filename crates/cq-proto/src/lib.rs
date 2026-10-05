@@ -71,12 +71,10 @@ pub struct SessionMeta {
     pub ended_at_ms: Option<u64>,
     /// Agent-side session id (Claude Code `session_id`), learned from the SessionStart hook.
     pub agent_session_id: Option<String>,
-    /// User-given name, used by clients to address the session (e.g. `@name`).
+    /// User-given name, unique among the machine's running sessions, used to address the session
+    /// (e.g. `cq attach NAME`, `@name`).
     #[serde(default)]
     pub name: Option<String>,
-    /// Free-form labels such as `queen` or `frontend`.
-    #[serde(default)]
-    pub tags: Vec<String>,
 }
 
 /// Lifecycle status of a session.
@@ -167,19 +165,11 @@ fn default_grace_ms() -> u64 {
     10_000
 }
 
-/// Change of a session's name and tags.
+/// New name of a session; `None` removes it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetMeta {
-    /// New name; `None` leaves it unchanged.
+pub struct Rename {
     #[serde(default)]
     pub name: Option<String>,
-    /// Remove the name.
-    #[serde(default)]
-    pub clear_name: bool,
-    #[serde(default)]
-    pub add_tags: Vec<String>,
-    #[serde(default)]
-    pub remove_tags: Vec<String>,
 }
 
 /// A command: declared in a plugin manifest, or registered at run time by a client that
@@ -297,8 +287,6 @@ pub struct Launch {
     pub resume: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
     /// Extra Claude Code settings file whose hooks run alongside CodeQuilt's own.
     #[serde(default)]
     pub settings_extra: Option<String>,
@@ -394,8 +382,8 @@ pub enum Message {
     Inject(Inject),
     /// Client to host: end the session gracefully.
     Terminate(Terminate),
-    /// Client to host: change name and tags.
-    SetMeta(SetMeta),
+    /// Client to host: change the name.
+    Rename(Rename),
     /// Client to daemon: the session the user is typing into on this desktop.
     SetFocus(Option<SessionRef>),
     /// Daemon to client: current focus.
@@ -434,7 +422,7 @@ mod kind {
     pub const REQUEST_FAILED: u8 = 0x3a;
     pub const SHUTDOWN: u8 = 0x3b;
     pub const INJECT: u8 = 0x23;
-    pub const SET_META: u8 = 0x24;
+    pub const RENAME: u8 = 0x24;
     pub const TERMINATE: u8 = 0x25;
     pub const SET_FOCUS: u8 = 0x40;
     pub const FOCUS: u8 = 0x41;
@@ -494,7 +482,7 @@ impl Message {
             Message::RequestFailed(v) => (kind::REQUEST_FAILED, serde_json::to_vec(v)?),
             Message::Shutdown(v) => (kind::SHUTDOWN, serde_json::to_vec(v)?),
             Message::Inject(v) => (kind::INJECT, serde_json::to_vec(v)?),
-            Message::SetMeta(v) => (kind::SET_META, serde_json::to_vec(v)?),
+            Message::Rename(v) => (kind::RENAME, serde_json::to_vec(v)?),
             Message::Terminate(v) => (kind::TERMINATE, serde_json::to_vec(v)?),
             Message::SetFocus(v) => (kind::SET_FOCUS, serde_json::to_vec(v)?),
             Message::Focus(v) => (kind::FOCUS, serde_json::to_vec(v)?),
@@ -552,7 +540,7 @@ impl Message {
             kind::REQUEST_FAILED => Message::RequestFailed(serde_json::from_slice(&payload)?),
             kind::SHUTDOWN => Message::Shutdown(serde_json::from_slice(&payload)?),
             kind::INJECT => Message::Inject(serde_json::from_slice(&payload)?),
-            kind::SET_META => Message::SetMeta(serde_json::from_slice(&payload)?),
+            kind::RENAME => Message::Rename(serde_json::from_slice(&payload)?),
             kind::TERMINATE => Message::Terminate(serde_json::from_slice(&payload)?),
             kind::SET_FOCUS => Message::SetFocus(serde_json::from_slice(&payload)?),
             kind::FOCUS => Message::Focus(serde_json::from_slice(&payload)?),

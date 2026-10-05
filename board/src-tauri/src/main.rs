@@ -134,7 +134,6 @@ async fn launch(
         args,
         resume,
         name: None,
-        tags: vec![],
         settings_extra: None,
         cols: 120,
         rows: 36,
