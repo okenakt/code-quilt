@@ -22,7 +22,8 @@ const newId = (prefix: string): string => `${prefix}${Date.now().toString(36)}${
 
 const emptyPane = (): PaneNode => ({ kind: "pane", id: newId("p"), session: null });
 
-const newTab = (name: string): Tab => {
+/** A tab with one empty pane, named after its position (`tab N`) unless a name is given. */
+const newTab = (tabs: Tab[], name = `tab ${tabs.length + 1}`): Tab => {
   const pane = emptyPane();
   return { id: newId("t"), name, root: pane, focus: pane.id, zoom: null };
 };
@@ -144,7 +145,7 @@ const load = (): Layout => {
   } catch {
     // Fall back to a fresh layout.
   }
-  const tab = newTab("main");
+  const tab = newTab([]);
   return { tabs: [tab], active: tab.id };
 };
 
@@ -195,12 +196,16 @@ export const splitFocused = (side: Side) =>
   });
 
 /** Closes a pane of the active tab (its session is only detached). */
-export const closePane = (paneId: string) =>
-  updateTab(activeTab().id, (t) => {
+export const closePane = (paneId: string) => {
+  const tab = activeTab();
+  // Closing a tab's only pane when it is already empty closes the tab.
+  if (tab.root.kind === "pane" && tab.root.id === paneId && tab.root.session === null) return closeTab(tab.id);
+  updateTab(tab.id, (t) => {
     const root = removePane(t.root, paneId);
     const focus = findPane(root, t.focus) ? t.focus : panesOf(root)[0].id;
     return { ...t, root, focus, zoom: t.zoom === paneId ? null : t.zoom };
   });
+};
 
 export const moveFocus = (side: Side) => {
   const t = activeTab();
@@ -251,7 +256,7 @@ export const dropSessions = (gone: (session: string) => boolean) => {
 };
 
 export const addTab = (name?: string) => {
-  const tab = newTab(name ?? `tab ${layout.tabs.length + 1}`);
+  const tab = newTab(layout.tabs, name);
   commit({ tabs: [...layout.tabs, tab], active: tab.id });
 };
 
@@ -259,7 +264,7 @@ export const addTab = (name?: string) => {
 export const closeTab = (id: string) => {
   const index = layout.tabs.findIndex((t) => t.id === id);
   const tabs = layout.tabs.filter((t) => t.id !== id);
-  if (tabs.length === 0) tabs.push(newTab("main"));
+  if (tabs.length === 0) tabs.push(newTab(tabs));
   const active = layout.active === id ? tabs[Math.min(index, tabs.length - 1)].id : layout.active;
   commit({ tabs, active });
 };
@@ -303,7 +308,7 @@ export const movePane = (srcTab: string, src: string, to: MoveTarget) => {
   let tabs = layout.tabs;
   let dst = to.tab;
   if (dst === null) {
-    const tab = newTab(`tab ${tabs.length + 1}`);
+    const tab = newTab(tabs);
     tabs = [...tabs, tab];
     dst = tab.id;
   }

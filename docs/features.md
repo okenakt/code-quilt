@@ -103,7 +103,7 @@
 | `tab.goTo` | 番号のタブ（引数 `index`） | Alt+1〜9 |
 | `pane.splitLeft` / `Right` / `Up` / `Down` | その方向に空のペインを作る | なし / Ctrl+Shift+\ / なし / Ctrl+Shift+- |
 | `pane.focusLeft` / `Right` / `Up` / `Down` | その方向のペインへフォーカス | Ctrl+Shift+← / → / ↑ / ↓ |
-| `pane.close` | ペインを閉じる（セッションはデタッチ） | Ctrl+Shift+W |
+| `pane.close` | ペインを閉じる（セッションはデタッチ。空のペイン1つだけのタブではタブを閉じる） | Ctrl+Shift+W |
 | `pane.zoom` | ペインを最大化 / 戻す | Ctrl+Shift+Z |
 | `session.end` / `session.pin` / `session.copyId` | フォーカス中のセッションを終了 / ピン留めの切り替え / idのコピー | なし |
 | `daemon.restart` | daemonを再起動（引数 `machine`） | なし |
