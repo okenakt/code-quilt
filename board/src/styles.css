@@ -382,7 +382,7 @@ kbd {
   font-family: "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace;
   font-size: 11px;
   color: var(--muted);
-  cursor: copy;
+  cursor: var(--cursor-copy, copy);
   flex-shrink: 0;
 }
 
