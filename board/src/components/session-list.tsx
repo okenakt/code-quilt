@@ -227,7 +227,7 @@ const TabsSection = ({ prefs, sessions, machineOf, pinOf, onPin }: ListProps) =>
               </button>
             </div>
             {open && (
-              // Sessions sit as deep as in Machines (machine > Active > session) so rows have the same width.
+              // Sessions line up with Machines (machine > Active > session) so rows have the same width.
               <div className="tree deep">
                 {panes.map((p) => {
                   if (p.session === null) return null;
@@ -299,8 +299,10 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
   return (
     <nav className="session-list">
       <SidebarSection title="Pinned" foldKey="pinned" prefs={prefs}>
-        {pinned.length === 0 && <div className="empty">No pinned sessions</div>}
-        {pinned.map((s) => item(s, "pinned"))}
+        <div className="tree deep">
+          {pinned.length === 0 && <div className="empty">No pinned sessions</div>}
+          {pinned.map((s) => item(s, "pinned"))}
+        </div>
       </SidebarSection>
       <SidebarSection title="Tabs" foldKey="tabs" prefs={prefs}>
         <TabsSection prefs={prefs} sessions={new Map(sessions.map((s) => [s.key, s]))} machineOf={machineOf} pinOf={pinOf} onPin={onPin} />

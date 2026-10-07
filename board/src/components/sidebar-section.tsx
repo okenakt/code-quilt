@@ -24,7 +24,7 @@ export const SidebarSection = ({ title, foldKey, prefs, children }: Props) => {
           <Fold open={open} /> {title}
         </button>
       </header>
-      {open && children}
+      {open && <div className="sidebar-section-body">{children}</div>}
     </section>
   );
 };

@@ -1,4 +1,6 @@
 :root {
+  /* One level of indentation in the sidebars' trees. */
+  --indent: 8px;
   --bg: #0f1114;
   --panel: #171a1f;
   --panel-2: #1e2229;
@@ -47,7 +49,7 @@ kbd {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto 1fr;
   height: 100%;
 }
 
@@ -55,7 +57,7 @@ kbd {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
@@ -70,16 +72,6 @@ kbd {
 
 .brand span {
   color: var(--accent);
-}
-
-.toolbar {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 8px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
 }
 
 .topbar-spacer {
@@ -1314,7 +1306,7 @@ kbd {
 
 .main-overlay {
   grid-column: main;
-  grid-row: 3;
+  grid-row: 2;
   z-index: 30;
   display: flex;
   min-width: 0;
@@ -1415,10 +1407,11 @@ kbd {
   color: var(--accent);
 }
 
+.session-list .sidebar-section-body,
 .tree {
-  margin-left: 12px;
+  margin-left: var(--indent);
 }
 
 .tree.deep {
-  margin-left: 24px;
+  margin-left: calc(2 * var(--indent));
 }

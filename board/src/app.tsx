@@ -310,8 +310,12 @@ export const App = () => {
         <div className="brand">
           Code<span>Quilt</span>
         </div>
-      </header>
-      <div className="toolbar">
+        <div className="topbar-spacer" />
+        {waiting > 0 && (
+          <button className="approval-chip" onClick={() => runCommand("ui.approvals", {})}>
+            {waiting} approval{waiting > 1 ? "s" : ""}
+          </button>
+        )}
         <button
           className={`sidebar-toggle ${prefs.leftOpen ? "on" : ""}`}
           title={prefs.leftOpen ? "Hide left sidebar" : "Show left sidebar"}
@@ -320,12 +324,6 @@ export const App = () => {
         >
           <PanelLeft size={16} />
         </button>
-        <div className="topbar-spacer" />
-        {waiting > 0 && (
-          <button className="approval-chip" onClick={() => runCommand("ui.approvals", {})}>
-            {waiting} approval{waiting > 1 ? "s" : ""}
-          </button>
-        )}
         <button
           className={`sidebar-toggle ${prefs.rightOpen ? "on" : ""}`}
           title={prefs.rightOpen ? "Hide right sidebar" : "Show right sidebar"}
@@ -334,7 +332,7 @@ export const App = () => {
         >
           <PanelRight size={16} />
         </button>
-      </div>
+      </header>
       {prefs.leftOpen && (
         <aside className="sidebar">
           <SessionList
