@@ -1381,8 +1381,8 @@ kbd {
 }
 
 .main-overlay {
-  grid-column: main;
-  grid-row: 2;
+  position: absolute;
+  inset: 0;
   z-index: 30;
   display: flex;
   min-width: 0;

@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Plus, X } from "lucide-react";
 import {
   addTab,
@@ -254,10 +254,12 @@ type Props = {
   onGone: (session: string) => void;
   /** Tells the user why a drop was refused. */
   onRefuse: (message: string) => void;
+  /** A view covering the whole main area (e.g. the keybindings view). */
+  overlay?: ReactNode;
 };
 
 /** Main area: the tab bar and the active tab's panes. Only the active tab is rendered. */
-export const Workspace = ({ sessions, onNewSession, onGone, onRefuse }: Props) => {
+export const Workspace = ({ sessions, onNewSession, onGone, onRefuse, overlay }: Props) => {
   const { tabs, active } = useLayout();
   const tab = tabs.find((t) => t.id === active) ?? tabs[0];
   const rootRef = useRef<HTMLElement>(null);
@@ -351,6 +353,7 @@ export const Workspace = ({ sessions, onNewSession, onGone, onRefuse }: Props) =
       <div className="tab-body" key={tab.id}>
         {zoomed ? <PaneView pane={zoomed} ctx={ctx} /> : <NodeView node={tab.root} ctx={ctx} />}
       </div>
+      {overlay && <div className="main-overlay">{overlay}</div>}
       {preview && <div className="drop-preview" style={preview} />}
       {drag && (
         <div className="drag-ghost" style={{ left: drag.x + 12, top: drag.y + 12 }}>

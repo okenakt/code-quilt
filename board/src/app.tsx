@@ -313,7 +313,7 @@ export const App = () => {
     <div
       className="app"
       style={{
-        gridTemplateColumns: `${prefs.leftOpen ? `${prefs.leftWidth}px 4px ` : ""}[main-start] 1fr [main-end]${prefs.rightOpen ? ` 4px ${prefs.rightWidth}px` : ""}`,
+        gridTemplateColumns: `${prefs.leftOpen ? `${prefs.leftWidth}px 4px ` : ""}1fr${prefs.rightOpen ? ` 4px ${prefs.rightWidth}px` : ""}`,
       }}
     >
       <header className="topbar">
@@ -364,18 +364,18 @@ export const App = () => {
         onNewSession={() => setNewSessionFor("local")}
         onGone={(key) => dropSessions((k) => k === key)}
         onRefuse={(m) => showToast(false, m)}
+        overlay={
+          keybindingsOpen && (
+            <KeybindingsView
+              commands={allCommands.filter((c) => c.palette)}
+              keymap={keymap}
+              warnings={warnings}
+              onError={(m) => showToast(false, m)}
+              onClose={() => setKeybindingsOpen(false)}
+            />
+          )
+        }
       />
-      {keybindingsOpen && (
-        <div className="main-overlay">
-          <KeybindingsView
-            commands={allCommands.filter((c) => c.palette)}
-            keymap={keymap}
-            warnings={warnings}
-            onError={(m) => showToast(false, m)}
-            onClose={() => setKeybindingsOpen(false)}
-          />
-        </div>
-      )}
       {prefs.rightOpen && <SidebarResizer side="right" />}
       {prefs.rightOpen && <RightSidebar sessions={sessions} machines={machines} onShowApproval={showApproval} />}
       <ConfirmDialog />
