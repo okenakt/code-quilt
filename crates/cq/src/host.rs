@@ -510,7 +510,13 @@ pub async fn run(args: HostArgs) -> Result<()> {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
                         let mut st = state.lock().unwrap();
-                        st.parser.process(&buf[..n]);
+                        // vt100 can panic on some output (a wide character in the last column).
+                        // Panicking here would poison the lock and wedge the session, so start a
+                        // fresh screen instead; the agent's next redraw fills it again.
+                        let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| st.parser.process(&buf[..n])));
+                        if parsed.is_err() {
+                            st.parser = vt100::Parser::new_with_callbacks(st.size.rows, st.size.cols, 0, ExtraModes::default());
+                        }
                         let replies = std::mem::take(&mut st.parser.callbacks_mut().replies);
                         if !replies.is_empty() {
                             let _ = st.pty_tx.send(replies);
