@@ -798,17 +798,21 @@ kbd {
   color: var(--muted);
   cursor: pointer;
   padding: 0 2px;
-  opacity: 0.25;
+  opacity: 0;
 }
 
 .session:hover .pin {
-  opacity: 0.6;
+  opacity: 0.7;
 }
 
 .pin:hover,
 .pin.on {
   opacity: 1;
   color: var(--working);
+}
+
+.pin.on svg {
+  transform: rotate(90deg);
 }
 
 .machine.pinned .machine-header {
