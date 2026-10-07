@@ -1,6 +1,5 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { LogOut, Plus, Trash2, X } from "lucide-react";
-import { terminate } from "../api";
+import { Plus, X } from "lucide-react";
 import {
   addTab,
   closePane,
@@ -221,26 +220,12 @@ const PaneView = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
         <span className="pane-header-spacer" />
         <button
           className="pane-button"
-          title={pane.session ? "Detach (close the pane; the session keeps running)" : "Close pane"}
+          title={pane.session ? "Close pane (the session keeps running)" : "Close pane"}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => closePane(pane.id)}
         >
-          {pane.session ? <LogOut size={13} /> : <X size={13} />}
+          <X size={13} />
         </button>
-        {s && (
-          <button
-            className="pane-button trash"
-            title="End session"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => {
-              if (confirm(`End session "${displayName(s)}" (${s.meta.id.slice(0, 8)})?`)) {
-                terminate(s.machine, s.meta.id).catch((e: unknown) => alert(String(e)));
-              }
-            }}
-          >
-            <Trash2 size={13} />
-          </button>
-        )}
       </div>
       <div className="pane-body">
         {pane.session ? (
