@@ -6,15 +6,16 @@ import { Fold, isExpanded } from "./sidebar-section";
 const PERIOD_MS: Record<TokenPeriod, number> = { "24h": 24 * 3600_000, "7d": 7 * 24 * 3600_000, all: Infinity };
 const AGENT_LABEL: Record<string, string> = { claude: "Claude", codex: "Codex" };
 
-type DirUsage = {
+/** Tokens one agent used in one directory of one machine. */
+type Usage = {
   machine: string;
   machineLabel: string;
   cwd: string;
+  agent: string;
   counts: TokenCounts;
   total: number;
   sessions: number;
-  /** Account labels per agent. */
-  accounts: Map<string, Set<string>>;
+  accounts: Set<string>;
 };
 
 const zero = (): TokenCounts => ({ input: 0, output: 0, cache_read: 0, cache_creation: 0 });
@@ -37,10 +38,10 @@ const inPeriod = (hour: string, period: TokenPeriod, now: number) => {
 };
 
 /**
- * Sums each directory's hourly tokens within the period. Sessions resumed from the same agent
- * session report the same hours, so those are merged by keeping the larger reading per hour.
+ * Sums the hourly tokens within the period per machine, directory and agent. Sessions resumed from
+ * the same agent session report the same hours, so those are merged by keeping the larger reading.
  */
-const dirUsage = (sessions: SessionState[], machines: MachineInfo[], period: TokenPeriod, now: number): DirUsage[] => {
+const usages = (sessions: SessionState[], machines: MachineInfo[], period: TokenPeriod, now: number): Usage[] => {
   const byAgentSession = new Map<string, { s: SessionState; hours: Map<string, TokenCounts> }>();
   for (const s of sessions) {
     const key = `${s.machine}\n${s.meta.agent_session_id ?? s.meta.id}`;
@@ -52,67 +53,67 @@ const dirUsage = (sessions: SessionState[], machines: MachineInfo[], period: Tok
     if (s.meta.started_at_ms >= entry.s.meta.started_at_ms) entry.s = s;
     byAgentSession.set(key, entry);
   }
-  const dirs = new Map<string, DirUsage>();
+  const out = new Map<string, Usage>();
   for (const { s, hours } of byAgentSession.values()) {
     const counts = zero();
     for (const [hour, c] of hours) if (inPeriod(hour, period, now)) add(counts, c);
     if (sum(counts) === 0) continue;
-    const key = `${s.machine}\n${s.meta.cwd}`;
-    const d = dirs.get(key) ?? {
+    const key = `${s.machine}\n${s.meta.cwd}\n${s.meta.agent}`;
+    const u = out.get(key) ?? {
       machine: s.machine,
       machineLabel: machines.find((m) => m.id === s.machine)?.label ?? s.machine,
       cwd: s.meta.cwd,
+      agent: s.meta.agent,
       counts: zero(),
       total: 0,
       sessions: 0,
-      accounts: new Map<string, Set<string>>(),
+      accounts: new Set<string>(),
     };
-    add(d.counts, counts);
-    d.total = sum(d.counts);
-    d.sessions += 1;
+    add(u.counts, counts);
+    u.total = sum(u.counts);
+    u.sessions += 1;
     const account = s.account?.label ?? s.meta.account;
-    if (account) d.accounts.set(s.meta.agent, (d.accounts.get(s.meta.agent) ?? new Set()).add(account));
-    dirs.set(key, d);
+    if (account) u.accounts.add(account);
+    out.set(key, u);
   }
-  return [...dirs.values()];
+  return [...out.values()];
 };
 
 const baseName = (cwd: string) => cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
 
-const tooltip = (d: DirUsage) =>
+/** Groups items by a key, keeping the order of first appearance. */
+const groupBy = <T,>(items: T[], key: (item: T) => string): T[][] => {
+  const groups = new Map<string, T[]>();
+  for (const item of items) groups.set(key(item), [...(groups.get(key(item)) ?? []), item]);
+  return [...groups.values()];
+};
+
+const tooltip = (u: Usage) =>
   [
-    `${d.machineLabel}: ${d.cwd}`,
-    `input: ${d.counts.input.toLocaleString()}`,
-    `output: ${d.counts.output.toLocaleString()}`,
-    `cache read: ${d.counts.cache_read.toLocaleString()}`,
-    `cache write: ${d.counts.cache_creation.toLocaleString()}`,
-    `sessions: ${d.sessions}`,
+    `${u.machineLabel}: ${u.cwd}`,
+    `input: ${u.counts.input.toLocaleString()}`,
+    `output: ${u.counts.output.toLocaleString()}`,
+    `cache read: ${u.counts.cache_read.toLocaleString()}`,
+    `cache write: ${u.counts.cache_creation.toLocaleString()}`,
+    `sessions: ${u.sessions}`,
   ].join("\n");
 
-const DirRow = ({ d, label, max }: { d: DirUsage; label: string; max: number }) => (
-  <div className="token-row" title={tooltip(d)}>
-    <div className="token-row-head">
-      <span className="token-row-name">{label}</span>
-      <span className="token-row-total">{formatTokens(d.total)}</span>
+/** One agent's usage: the agent and its accounts, then a bar with the total. */
+const AgentUsage = ({ u, max }: { u: Usage; max: number }) => (
+  <div className="token-agent" title={tooltip(u)}>
+    <div className="token-agent-label">
+      {AGENT_LABEL[u.agent] ?? u.agent}: {u.accounts.size > 0 ? [...u.accounts].join(", ") : "unknown account"}
     </div>
-    <span className="meter-track">
-      <span className="meter-fill" style={{ width: `${(d.total / max) * 100}%` }} />
-    </span>
-    {d.accounts.size > 0 && (
-      <div className="token-row-accounts">
-        {[...d.accounts.entries()]
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([agent, labels]) => (
-            <span key={agent}>
-              {AGENT_LABEL[agent] ?? agent}: {[...labels].join(", ")}
-            </span>
-          ))}
-      </div>
-    )}
+    <div className="token-bar">
+      <span className="meter-track">
+        <span className="meter-fill" style={{ width: `${(u.total / max) * 100}%` }} />
+      </span>
+      <span className="token-total">{formatTokens(u.total)}</span>
+    </div>
   </div>
 );
 
-/** Tokens used per machine and directory, as a tree or ranked by usage. */
+/** Tokens used per machine, directory and agent, as a tree or ranked by usage. */
 export const TokenUsage = ({ sessions, machines }: { sessions: SessionState[]; machines: MachineInfo[] }) => {
   const prefs = usePrefs();
   const [now, setNow] = useState(Date.now());
@@ -120,11 +121,9 @@ export const TokenUsage = ({ sessions, machines }: { sessions: SessionState[]; m
     const t = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(t);
   }, []);
-  const dirs = dirUsage(sessions, machines, prefs.tokenPeriod, now).sort((a, b) => b.total - a.total);
-  const max = Math.max(1, ...dirs.map((d) => d.total));
-  const byMachine = new Map<string, DirUsage[]>();
-  for (const d of [...dirs].sort((a, b) => a.cwd.localeCompare(b.cwd))) byMachine.set(d.machine, [...(byMachine.get(d.machine) ?? []), d]);
-  const tree = [...byMachine.values()].sort((a, b) => a[0].machineLabel.localeCompare(b[0].machineLabel));
+  const all = usages(sessions, machines, prefs.tokenPeriod, now);
+  const max = Math.max(1, ...all.map((u) => u.total));
+  const byName = [...all].sort((a, b) => a.machineLabel.localeCompare(b.machineLabel) || a.cwd.localeCompare(b.cwd) || a.agent.localeCompare(b.agent));
   return (
     <div className="token-usage">
       <div className="token-controls">
@@ -141,20 +140,41 @@ export const TokenUsage = ({ sessions, machines }: { sessions: SessionState[]; m
           <option value="all">all</option>
         </select>
       </div>
-      {dirs.length === 0 && <div className="usage-empty">no token usage in this period</div>}
+      {all.length === 0 && <div className="usage-empty">no token usage in this period</div>}
       {prefs.tokenView === "rank"
-        ? dirs.map((d) => <DirRow key={`${d.machine}\n${d.cwd}`} d={d} label={`${d.machineLabel} · ${baseName(d.cwd)}`} max={max} />)
-        : tree.map((ds) => {
-            const foldKey = `tokens:${ds[0].machine}`;
+        ? [...all]
+            .sort((a, b) => b.total - a.total)
+            .map((u) => (
+              <div key={`${u.machine}\n${u.cwd}\n${u.agent}`} className="token-entry">
+                <div className="token-entry-place" title={u.cwd}>
+                  {u.machineLabel} {baseName(u.cwd)}
+                </div>
+                <AgentUsage u={u} max={max} />
+              </div>
+            ))
+        : groupBy(byName, (u) => u.machine).map((ofMachine) => {
+            const foldKey = `tokens:${ofMachine[0].machine}`;
             const open = isExpanded(prefs, foldKey, true);
             return (
-              <div key={ds[0].machine} className="token-machine">
+              <div key={ofMachine[0].machine} className="token-machine">
                 <button className="token-machine-head" onClick={() => toggleFold(foldKey)}>
                   <Fold open={open} />
-                  <span className="token-row-name">{ds[0].machineLabel}</span>
-                  <span className="token-row-total">{formatTokens(ds.reduce((n, d) => n + d.total, 0))}</span>
+                  <span className="token-name">{ofMachine[0].machineLabel}</span>
+                  <span className="token-total">{formatTokens(ofMachine.reduce((n, u) => n + u.total, 0))}</span>
                 </button>
-                {open && ds.map((d) => <DirRow key={d.cwd} d={d} label={baseName(d.cwd)} max={max} />)}
+                {open &&
+                  groupBy(ofMachine, (u) => u.cwd).map((ofDir) => (
+                    <div key={ofDir[0].cwd} className="token-dir">
+                      <div className="token-name" title={ofDir[0].cwd}>
+                        {baseName(ofDir[0].cwd)}
+                      </div>
+                      <div className="token-agents">
+                        {ofDir.map((u) => (
+                          <AgentUsage key={u.agent} u={u} max={max} />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
               </div>
             );
           })}

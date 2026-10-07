@@ -243,21 +243,16 @@ kbd {
   cursor: pointer;
 }
 
-.token-machine .token-row {
-  padding-left: 16px;
+.token-dir {
+  margin: 6px 0 0 calc(2 * var(--indent));
 }
 
-.token-row {
-  margin-top: 6px;
+.token-agents {
+  margin-left: var(--indent);
 }
 
-.token-row-head {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 2px;
-}
-
-.token-row-name {
+.token-name,
+.token-entry-place {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -266,17 +261,33 @@ kbd {
   text-align: left;
 }
 
-.token-row-total {
-  font-variant-numeric: tabular-nums;
+.token-entry + .token-entry {
+  margin-top: 10px;
 }
 
-.token-row-accounts {
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: 8px;
-  margin-top: 2px;
+.token-agent {
+  margin-top: 4px;
+}
+
+.token-agent-label {
   color: var(--muted);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.token-total {
+  flex: none;
+  min-width: 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .approval-chip {
