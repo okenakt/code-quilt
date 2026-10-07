@@ -17,7 +17,7 @@ const AGENT_LABEL: Record<string, string> = { claude: "Claude", codex: "Codex" }
 /** An agent and its account(s), as both the Limits and Tokens sections show them. */
 export const AgentHeading = ({ agent, account }: { agent: string; account: string }) => (
   <header className="agent-heading">
-    <strong>{AGENT_LABEL[agent] ?? agent}</strong>
+    <span className="agent-name">{AGENT_LABEL[agent] ?? agent}</span>
     <span className="agent-account">{account}</span>
   </header>
 );

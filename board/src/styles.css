@@ -129,7 +129,7 @@ kbd {
   margin-bottom: 8px;
 }
 
-.agent-heading strong {
+.agent-name {
   font-size: 14px;
 }
 
@@ -554,11 +554,16 @@ kbd {
   flex-direction: column;
   gap: 10px;
   background: var(--panel);
-  border: 1px solid var(--approval);
+  /* Dimmed unless the card has the focus, so it is clear which card keys answer. */
+  border: 1px solid color-mix(in srgb, var(--approval) 40%, var(--panel));
   border-radius: 10px;
   padding: 16px;
   outline: none;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.approval-card:focus-within {
+  border-color: var(--approval);
 }
 
 .approval-card header {
