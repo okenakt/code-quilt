@@ -47,7 +47,7 @@ kbd {
 
 .app {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   height: 100%;
 }
 
@@ -72,11 +72,21 @@ kbd {
   color: var(--accent);
 }
 
+.toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
 .topbar-spacer {
   flex: 1;
 }
 
-.usage-toggle {
+.sidebar-toggle {
   display: grid;
   place-items: center;
   border: 1px solid transparent;
@@ -87,12 +97,12 @@ kbd {
   cursor: pointer;
 }
 
-.usage-toggle:hover {
+.sidebar-toggle:hover {
   color: var(--text);
   border-color: var(--line);
 }
 
-.usage-toggle.on {
+.sidebar-toggle.on {
   color: var(--text);
   background: var(--panel-2);
 }
@@ -1207,28 +1217,6 @@ kbd {
   min-height: 0;
 }
 
-.section-switches {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-
-.section-switches button {
-  flex: 1;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 11px;
-  padding: 2px 4px;
-  cursor: pointer;
-}
-
-.section-switches button.on {
-  color: var(--text);
-  background: var(--panel-2);
-}
-
 .sidebar-section + .sidebar-section {
   margin-top: 10px;
 }
@@ -1251,19 +1239,6 @@ kbd {
   letter-spacing: 0.06em;
   padding: 2px 0;
   cursor: pointer;
-}
-
-.section-hide {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  font-size: 10px;
-  cursor: pointer;
-  opacity: 0;
-}
-
-.sidebar-section-header:hover .section-hide {
-  opacity: 1;
 }
 
 .fold {
@@ -1307,35 +1282,6 @@ kbd {
   background: var(--panel-2);
 }
 
-.tab-group-panes {
-  list-style: none;
-  margin: 0 0 4px 14px;
-  padding: 0;
-}
-
-.tab-group-panes button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  text-align: left;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  padding: 2px 4px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.tab-group-panes button:hover,
-.tab-group-panes button.focused {
-  background: var(--panel-2);
-}
-
-.tab-group-panes .empty {
-  font-size: 11px;
-}
-
 .approval-list {
   list-style: none;
   margin: 0;
@@ -1367,8 +1313,8 @@ kbd {
 }
 
 .main-overlay {
-  grid-column: 3;
-  grid-row: 2;
+  grid-column: main;
+  grid-row: 3;
   z-index: 30;
   display: flex;
   min-width: 0;
@@ -1467,4 +1413,12 @@ kbd {
 
 .key-add.recording {
   color: var(--accent);
+}
+
+.tree {
+  margin-left: 12px;
+}
+
+.tree.deep {
+  margin-left: 24px;
 }

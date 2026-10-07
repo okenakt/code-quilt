@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, X } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { toggleFold, type Prefs } from "../prefs";
 
@@ -11,13 +11,11 @@ type Props = {
   title: string;
   foldKey: string;
   prefs: Prefs;
-  /** Hides the section; without it the section can only be folded. */
-  onHide?: () => void;
   children: ReactNode;
 };
 
 /** A foldable section of a sidebar. */
-export const SidebarSection = ({ title, foldKey, prefs, onHide, children }: Props) => {
+export const SidebarSection = ({ title, foldKey, prefs, children }: Props) => {
   const open = isExpanded(prefs, foldKey, true);
   return (
     <section className="sidebar-section">
@@ -25,11 +23,6 @@ export const SidebarSection = ({ title, foldKey, prefs, onHide, children }: Prop
         <button className="section-title" onClick={() => toggleFold(foldKey)}>
           <Fold open={open} /> {title}
         </button>
-        {onHide && (
-          <button className="section-hide" title="Hide this section" onClick={onHide}>
-            <X size={12} />
-          </button>
-        )}
       </header>
       {open && children}
     </section>

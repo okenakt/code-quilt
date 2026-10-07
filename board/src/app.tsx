@@ -1,4 +1,4 @@
-import { PanelRight } from "lucide-react";
+import { PanelLeft, PanelRight } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, restartDaemon, sessionKey, terminate, type Agent } from "./api";
 import { ApprovalCards, pendingApprovals, promptKey } from "./components/approvals";
@@ -30,7 +30,7 @@ import { CommandPalette } from "./components/command-palette";
 import { KeybindingsView } from "./components/keybindings-view";
 import { chordOfEvent } from "./keys";
 import { togglePin, usePins } from "./pins";
-import { toggleRight, toggleSection, usePrefs } from "./prefs";
+import { toggleSidebar, usePrefs } from "./prefs";
 import { applyEvent, displayName, markExited, onSignal, setMachines, setSessions, useStore } from "./store";
 import type { SessionState } from "./types";
 
@@ -210,13 +210,9 @@ export const App = () => {
           if (newest) showApproval(promptKey(newest));
           return;
         }
+        case "ui.toggleLeftSidebar":
         case "ui.toggleRightSidebar":
-          toggleRight();
-          return;
-        case "ui.togglePinned":
-        case "ui.toggleTabs":
-        case "ui.toggleMachines":
-          toggleSection(name === "ui.togglePinned" ? "pinned" : name === "ui.toggleTabs" ? "tabs" : "machines");
+          toggleSidebar(name === "ui.toggleLeftSidebar" ? "left" : "right");
           return;
         case "ui.newSession":
           setNewSessionFor(args.machine || "local");
@@ -307,13 +303,23 @@ export const App = () => {
     <div
       className="app"
       style={{
-        gridTemplateColumns: `${prefs.leftWidth}px 4px 1fr${prefs.rightOpen ? ` 4px ${prefs.rightWidth}px` : ""}`,
+        gridTemplateColumns: `${prefs.leftOpen ? `${prefs.leftWidth}px 4px ` : ""}[main-start] 1fr [main-end]${prefs.rightOpen ? ` 4px ${prefs.rightWidth}px` : ""}`,
       }}
     >
       <header className="topbar">
         <div className="brand">
           Code<span>Quilt</span>
         </div>
+      </header>
+      <div className="toolbar">
+        <button
+          className={`sidebar-toggle ${prefs.leftOpen ? "on" : ""}`}
+          title={prefs.leftOpen ? "Hide left sidebar" : "Show left sidebar"}
+          aria-label="Toggle left sidebar"
+          onClick={() => toggleSidebar("left")}
+        >
+          <PanelLeft size={16} />
+        </button>
         <div className="topbar-spacer" />
         {waiting > 0 && (
           <button className="approval-chip" onClick={() => runCommand("ui.approvals", {})}>
@@ -321,27 +327,29 @@ export const App = () => {
           </button>
         )}
         <button
-          className={`usage-toggle ${prefs.rightOpen ? "on" : ""}`}
+          className={`sidebar-toggle ${prefs.rightOpen ? "on" : ""}`}
           title={prefs.rightOpen ? "Hide right sidebar" : "Show right sidebar"}
           aria-label="Toggle right sidebar"
-          onClick={toggleRight}
+          onClick={() => toggleSidebar("right")}
         >
           <PanelRight size={16} />
         </button>
-      </header>
-      <aside className="sidebar">
-        <SessionList
-          machines={machines}
-          sessions={sessions}
-          activeKey={activeKey}
-          onOpen={openSession}
-          onNew={setNewSessionFor}
-          onResume={resumeSession}
-          pins={pins}
-          pinNames={pinNames}
-        />
-      </aside>
-      <SidebarResizer side="left" />
+      </div>
+      {prefs.leftOpen && (
+        <aside className="sidebar">
+          <SessionList
+            machines={machines}
+            sessions={sessions}
+            activeKey={activeKey}
+            onOpen={openSession}
+            onNew={setNewSessionFor}
+            onResume={resumeSession}
+            pins={pins}
+            pinNames={pinNames}
+          />
+        </aside>
+      )}
+      {prefs.leftOpen && <SidebarResizer side="left" />}
       <Workspace
         sessions={sessions}
         onNewSession={() => setNewSessionFor("local")}
