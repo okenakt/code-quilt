@@ -105,22 +105,21 @@ const userBindings = (raw: unknown[], errors: string[]): { add: Binding[]; remov
   return { add, remove };
 };
 
-/** The effective key map and any conflicts or errors to show to the user. */
-export type Keymap = { byChord: Map<string, Binding>; byCommand: Map<string, string[]>; sources: Map<string, BindingLayer>; warnings: string[] };
+/** Identifies what a key runs: a command with fixed arguments (e.g. `tab.goTo` with `index=1`). */
+export const targetKey = (command: string, args: Record<string, string>): string =>
+  command + JSON.stringify(Object.entries(args).sort(([a], [b]) => a.localeCompare(b)));
 
-/** Merges built-in, plugin and user bindings (user > plugin > built-in). */
+/** The effective key map and any errors to show to the user. `byTarget` is keyed by `targetKey`. */
+export type Keymap = { byChord: Map<string, Binding>; byTarget: Map<string, string[]>; sources: Map<string, BindingLayer>; warnings: string[] };
+
+/** Merges built-in, plugin and user bindings (user > plugin > built-in); a key runs one target. */
 export const resolveKeymap = (builtin: Binding[], plugin: Binding[], userRaw: unknown[], known: Set<string>): Keymap => {
   const warnings: string[] = [];
   const user = userBindings(userRaw, warnings);
   const byChord = new Map<string, Binding>();
   const layer = new Map<string, BindingLayer>();
+  // A later layer takes the key over; binding from the keybindings view removes the old owner.
   const put = (b: Binding, from: BindingLayer) => {
-    const prev = byChord.get(b.chord);
-    if (prev && prev.command !== b.command && layer.get(b.chord) === from && from !== "builtin") {
-      warnings.push(`${b.chord} is bound to both ${prev.command} and ${b.command}; using ${b.command}`);
-    } else if (prev && prev.command !== b.command && from === "user") {
-      warnings.push(`${b.chord} now runs ${b.command} instead of ${prev.command}`);
-    }
     byChord.set(b.chord, b);
     layer.set(b.chord, from);
   };
@@ -135,9 +134,12 @@ export const resolveKeymap = (builtin: Binding[], plugin: Binding[], userRaw: un
     if (!known.has(b.command)) warnings.push(`keybindings.toml: unknown command ${b.command}`);
     put(b, "user");
   });
-  const byCommand = new Map<string, string[]>();
-  for (const [chord, b] of byChord) byCommand.set(b.command, [...(byCommand.get(b.command) ?? []), chord]);
-  return { byChord, byCommand, sources: layer, warnings };
+  const byTarget = new Map<string, string[]>();
+  for (const [chord, b] of byChord) {
+    const key = targetKey(b.command, b.args);
+    byTarget.set(key, [...(byTarget.get(key) ?? []), chord]);
+  }
+  return { byChord, byTarget, sources: layer, warnings };
 };
 
 /** Fallback fonts appended after the user's choice so missing fonts never break the terminal. */

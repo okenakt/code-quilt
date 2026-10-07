@@ -106,8 +106,8 @@ fn restart_daemon(hub: State<'_, HubState>, machine: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-fn bind_key(key: String, command: String) -> Result<(), String> {
-    settings::bind_key(&key, &command)
+fn bind_key(key: String, command: String, args: std::collections::BTreeMap<String, String>, unbind: Vec<settings::KeyOf>) -> Result<(), String> {
+    settings::bind_key(&key, &command, &args, &unbind)
 }
 
 #[tauri::command]

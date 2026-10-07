@@ -1,7 +1,8 @@
 //! User interface settings (`~/.codequilt/ui.toml`) and key bindings
 //! (`~/.codequilt/keybindings.toml`), watched and pushed to the frontend as `ui-config`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter};
@@ -97,30 +98,54 @@ fn is_binding(t: &toml_edit::Table, key: &str, command: &str) -> bool {
     t.get("key").and_then(|v| v.as_str()) == Some(key) && t.get("command").and_then(|v| v.as_str()) == Some(command)
 }
 
-/// Binds `key` to `command`, replacing what the user had bound to that key before.
-pub fn bind_key(key: &str, command: &str) -> Result<(), String> {
-    edit_bindings(|bindings| {
-        bindings.retain(|t| t.get("key").and_then(|v| v.as_str()) != Some(key));
-        let mut t = toml_edit::Table::new();
-        t["key"] = toml_edit::value(key);
-        t["command"] = toml_edit::value(command);
-        bindings.push(t);
-    })
+/// A key to take away from a command.
+#[derive(Deserialize)]
+pub struct KeyOf {
+    pub key: String,
+    pub command: String,
 }
 
 /// Unbinds `key` from `command`: deletes the user's own binding, or for a default binding adds
 /// a `-command` entry that removes it.
-pub fn unbind_key(key: &str, command: &str) -> Result<(), String> {
+fn unbind(bindings: &mut toml_edit::ArrayOfTables, key: &str, command: &str) {
+    let before = bindings.len();
+    bindings.retain(|t| !is_binding(t, key, command));
+    if bindings.len() == before {
+        let mut t = toml_edit::Table::new();
+        t["key"] = toml_edit::value(key);
+        t["command"] = toml_edit::value(format!("-{command}"));
+        bindings.push(t);
+    }
+}
+
+/// Binds `key` to `command` with `args` after taking away the keys in `unbind` (the command's
+/// old keys, and the key's previous command), in one edit of the file.
+pub fn bind_key(key: &str, command: &str, args: &BTreeMap<String, String>, unbind_first: &[KeyOf]) -> Result<(), String> {
     edit_bindings(|bindings| {
-        let before = bindings.len();
-        bindings.retain(|t| !is_binding(t, key, command));
-        if bindings.len() == before {
-            let mut t = toml_edit::Table::new();
-            t["key"] = toml_edit::value(key);
-            t["command"] = toml_edit::value(format!("-{command}"));
-            bindings.push(t);
+        for k in unbind_first {
+            unbind(bindings, &k.key, &k.command);
         }
+        // Drop the user's other bindings of this key, but keep `-command` entries removing defaults.
+        bindings.retain(|t| {
+            t.get("key").and_then(|v| v.as_str()) != Some(key) || t.get("command").and_then(|v| v.as_str()).is_some_and(|c| c.starts_with('-'))
+        });
+        let mut t = toml_edit::Table::new();
+        t["key"] = toml_edit::value(key);
+        t["command"] = toml_edit::value(command);
+        if !args.is_empty() {
+            let mut a = toml_edit::InlineTable::new();
+            for (k, v) in args {
+                a.insert(k, v.as_str().into());
+            }
+            t["args"] = toml_edit::value(a);
+        }
+        bindings.push(t);
     })
+}
+
+/// Takes `key` away from `command` (see `unbind`).
+pub fn unbind_key(key: &str, command: &str) -> Result<(), String> {
+    edit_bindings(|bindings| unbind(bindings, key, command))
 }
 
 fn stamp() -> [Option<SystemTime>; 2] {

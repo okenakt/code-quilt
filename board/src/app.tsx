@@ -25,7 +25,7 @@ import {
 } from "./layout";
 import { notify } from "./notify";
 import { BUILTIN_COMMANDS, BUILTIN_KEYS } from "./builtins";
-import { invokePluginCommand, isRecording, onStartCommands, pinnedNames, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
+import { invokePluginCommand, isRecording, targetKey, onStartCommands, pinnedNames, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
 import { CommandPalette } from "./components/command-palette";
 import { ConfirmDialog, askConfirm } from "./components/confirm-dialog";
 import { KeybindingsView } from "./components/keybindings-view";
@@ -382,7 +382,7 @@ export const App = () => {
       {paletteOpen && (
         <CommandPalette
           commands={allCommands.filter((c) => c.palette)}
-          keysOf={(name) => keymap.byCommand.get(name) ?? []}
+          keysOf={(name) => keymap.byTarget.get(targetKey(name, {})) ?? []}
           warnings={warnings}
           onRun={(c, args) => {
             setPaletteOpen(false);
