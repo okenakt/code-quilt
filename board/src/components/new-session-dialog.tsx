@@ -1,3 +1,4 @@
+import { ArrowLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { listDir, type Agent, type DirList } from "../api";
 import type { MachineInfo } from "../types";
@@ -110,7 +111,7 @@ export const NewSessionDialog = ({ machines, initialMachine, onLaunch, onClose }
             {known.length > 0 && (
               <li>
                 <button className="dir-other" onClick={() => setBrowser(null)}>
-                  ← Trusted folders
+                  <ArrowLeft size={12} /> Trusted folders
                 </button>
               </li>
             )}

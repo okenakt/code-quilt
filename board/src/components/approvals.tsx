@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Minus } from "lucide-react";
 import { approve } from "../api";
 import { displayName } from "../store";
 import type { MachineInfo, SessionState } from "../types";
@@ -41,7 +42,7 @@ const Card = ({ s, machine, focusToken, onMinimize }: { s: SessionState; machine
       <header>
         <div className="approval-title">{prompt.kind === "dialog" ? "Confirmation needed" : "Permission requested"}</div>
         <button className="pane-button" title="Minimize (stays in the Approvals list)" onClick={onMinimize}>
-          –
+          <Minus size={14} />
         </button>
       </header>
       <dl className="approval-meta">

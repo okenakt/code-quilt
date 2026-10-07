@@ -1,4 +1,5 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { LogOut, Plus, Trash2, X } from "lucide-react";
 import { terminate } from "../api";
 import {
   addTab,
@@ -128,12 +129,12 @@ const TabBar = ({ tabs, active, ctx }: { tabs: Tab[]; active: string; ctx: Ctx }
               closeTab(t.id);
             }}
           >
-            ✕
+            <X size={12} />
           </button>
         </div>
       ))}
       <button className={`tab-add ${target === null ? "drop-target" : ""}`} data-tab-new title="New tab (drop a pane here to move it to a new tab)" onClick={() => addTab()}>
-        +
+        <Plus size={14} />
       </button>
     </nav>
   );
@@ -222,16 +223,16 @@ const PaneView = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
               }
             }}
           >
-            ⏻
+            <Trash2 size={13} />
           </button>
         )}
         <button
           className="pane-button"
-          title={pane.session ? "Close pane (detach)" : "Close pane"}
+          title={pane.session ? "Detach (close the pane; the session keeps running)" : "Close pane"}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => closePane(pane.id)}
         >
-          ✕
+          {pane.session ? <LogOut size={13} /> : <X size={13} />}
         </button>
       </div>
       <div className="pane-body">

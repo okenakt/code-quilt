@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Plus, X } from "lucide-react";
 import { bindKey, unbindKey } from "../api";
 import { setRecording, type Command, type Keymap } from "../commands";
 import { chordOfEvent, formatChord } from "../keys";
@@ -52,7 +53,7 @@ export const KeybindingsView = ({ commands, keymap, warnings, onError, onClose }
         <span className="keybindings-title">Keyboard shortcuts</span>
         <input autoFocus placeholder="Search commands or keys" value={query} onChange={(e) => setQuery(e.target.value)} spellCheck={false} />
         <button className="pane-button" title="Close" onClick={onClose}>
-          ✕
+          <X size={14} />
         </button>
       </header>
       {warnings.length > 0 && (
@@ -77,12 +78,16 @@ export const KeybindingsView = ({ commands, keymap, warnings, onError, onClose }
                 <span key={chord} className={`key-chip ${keymap.sources.get(chord) ?? "builtin"}`} title={SOURCE_LABEL[keymap.sources.get(chord) ?? "builtin"]}>
                   <kbd>{formatChord(chord)}</kbd>
                   <button title="Remove this key" onClick={() => unbindKey(chord, c.name).catch((err: unknown) => onError(String(err)))}>
-                    ✕
+                    <X size={11} />
                   </button>
                 </span>
               ))}
               <button className={`key-add ${recordingFor === c.name ? "recording" : ""}`} onClick={() => setRecordingFor(recordingFor === c.name ? null : c.name)}>
-                {recordingFor === c.name ? "Press keys… (Esc to cancel)" : "+ key"}
+                {recordingFor === c.name ? "Press keys… (Esc to cancel)" : (
+                  <>
+                    <Plus size={11} /> key
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -1,10 +1,11 @@
+import { ChevronDown, ChevronRight, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { toggleFold, type Prefs } from "../prefs";
 
 /** Whether a foldable part is expanded: `folded` lists the keys toggled away from their default. */
 export const isExpanded = (prefs: Prefs, key: string, byDefault: boolean) => byDefault !== prefs.folded.includes(key);
 
-export const Fold = ({ open }: { open: boolean }) => <span className="fold">{open ? "▾" : "▸"}</span>;
+export const Fold = ({ open }: { open: boolean }) => <span className="fold">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>;
 
 type Props = {
   title: string;
@@ -26,7 +27,7 @@ export const SidebarSection = ({ title, foldKey, prefs, onHide, children }: Prop
         </button>
         {onHide && (
           <button className="section-hide" title="Hide this section" onClick={onHide}>
-            ✕
+            <X size={12} />
           </button>
         )}
       </header>

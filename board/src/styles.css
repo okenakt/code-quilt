@@ -713,11 +713,10 @@ kbd {
 .pin {
   border: 0;
   background: transparent;
+  color: var(--muted);
   cursor: pointer;
-  font-size: 11px;
   padding: 0 2px;
   opacity: 0.25;
-  filter: grayscale(1);
 }
 
 .session:hover .pin {
@@ -726,7 +725,7 @@ kbd {
 
 .pin.on {
   opacity: 1;
-  filter: none;
+  color: var(--accent);
 }
 
 .machine.pinned .machine-header {
@@ -1253,10 +1252,15 @@ kbd {
 }
 
 .fold {
-  display: inline-block;
+  display: inline-flex;
   width: 12px;
   color: var(--muted);
-  font-size: 10px;
+}
+
+/* Icons sit on the text's center line inside buttons and labels. */
+.lucide {
+  flex: none;
+  vertical-align: -2px;
 }
 
 .fold-button {

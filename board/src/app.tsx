@@ -1,3 +1,4 @@
+import { PanelRight } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, restartDaemon, sessionKey, terminate, type Agent } from "./api";
 import { ApprovalCards, pendingApprovals, promptKey } from "./components/approvals";
@@ -325,11 +326,7 @@ export const App = () => {
           aria-label="Toggle right sidebar"
           onClick={toggleRight}
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-            <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
-            <line x1="10" y1="2.5" x2="10" y2="13.5" />
-            {prefs.rightOpen && <rect x="10" y="2.5" width="4.5" height="11" fill="currentColor" stroke="none" opacity="0.5" />}
-          </svg>
+          <PanelRight size={16} />
         </button>
       </header>
       <aside className="sidebar">

@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronRight, Pin, Plus, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { focusPane, panesOf, selectTab, useLayout } from "../layout";
 import { toggleFold, toggleSection, usePrefs, type LeftSection, type Prefs } from "../prefs";
@@ -116,7 +117,7 @@ const ActiveItem = ({ s, machine, active, pinned, onPin, onOpen }: ActiveProps) 
             toggleFold(detailsKey);
           }}
         >
-          {open ? "▾" : "▸"}
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </button>
         <span className="session-name">{displayName(s)}</span>
         <SessionId id={s.meta.id} />
@@ -129,7 +130,7 @@ const ActiveItem = ({ s, machine, active, pinned, onPin, onOpen }: ActiveProps) 
             onPin(s);
           }}
         >
-          📌
+          <Pin size={12} />
         </button>
         <button
           className="end-session"
@@ -141,7 +142,7 @@ const ActiveItem = ({ s, machine, active, pinned, onPin, onOpen }: ActiveProps) 
             }
           }}
         >
-          ✕
+          <Trash2 size={12} />
         </button>
       </div>
       {open && <SessionDetails s={s} machine={machine} />}
@@ -308,7 +309,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
                   {!m.online && <span className="machine-offline">offline</span>}
                   {m.online && (
                     <button className="machine-new" title="New session" onClick={() => onNew(m.id)}>
-                      +
+                      <Plus size={12} />
                     </button>
                   )}
                 </header>
