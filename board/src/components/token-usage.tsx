@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { setTokenPrefs, toggleFold, usePrefs, type TokenPeriod } from "../prefs";
 import type { MachineInfo, SessionState, TokenCounts } from "../types";
+import { AgentHeading } from "./limits-panel";
 import { Fold, isExpanded } from "./sidebar-section";
 
 const PERIOD_MS: Record<TokenPeriod, number> = { "24h": 24 * 3600_000, "7d": 7 * 24 * 3600_000, all: Infinity };
-const AGENT_LABEL: Record<string, string> = { claude: "Claude", codex: "Codex" };
 
 /** Tokens one agent used in one directory of one machine. */
 type Usage = {
@@ -101,9 +101,7 @@ const tooltip = (u: Usage) =>
 /** One agent's usage: the agent and its accounts, then a bar with the total. */
 const AgentUsage = ({ u, max }: { u: Usage; max: number }) => (
   <div className="token-agent" title={tooltip(u)}>
-    <div className="token-agent-label">
-      {AGENT_LABEL[u.agent] ?? u.agent}: {u.accounts.size > 0 ? [...u.accounts].join(", ") : "unknown account"}
-    </div>
+    <AgentHeading agent={u.agent} account={u.accounts.size > 0 ? [...u.accounts].join(", ") : "unknown account"} />
     <div className="token-bar">
       <span className="meter-track">
         <span className="meter-fill" style={{ width: `${(u.total / max) * 100}%` }} />

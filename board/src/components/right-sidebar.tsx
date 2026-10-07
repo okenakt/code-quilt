@@ -5,7 +5,7 @@ import type { MachineInfo, SessionState } from "../types";
 import { ApprovalList } from "./approvals";
 import { SidebarSection } from "./sidebar-section";
 import { TokenUsage } from "./token-usage";
-import { UsagePanel } from "./usage-panel";
+import { LimitsPanel } from "./limits-panel";
 
 /** Narrowest and widest a sidebar may be dragged to. */
 const WIDTH_RANGE = [180, 640] as const;
@@ -32,7 +32,7 @@ type Props = {
   onShowApproval: (key: string) => void;
 };
 
-/** Right sidebar: pending approvals, rate limits and token usage. */
+/** Right sidebar: pending approvals, rate limits (Limits) and token usage (Tokens). */
 export const RightSidebar = ({ sessions, machines, onShowApproval }: Props) => {
   const prefs = usePrefs();
   return (
@@ -40,8 +40,8 @@ export const RightSidebar = ({ sessions, machines, onShowApproval }: Props) => {
       <SidebarSection title="Approvals" foldKey="approvals" prefs={prefs}>
         <ApprovalList sessions={sessions} onShow={onShowApproval} />
       </SidebarSection>
-      <SidebarSection title="Usage" foldKey="usage" prefs={prefs}>
-        <UsagePanel sessions={sessions} machines={machines} />
+      <SidebarSection title="Limits" foldKey="limits" prefs={prefs}>
+        <LimitsPanel sessions={sessions} machines={machines} />
       </SidebarSection>
       <SidebarSection title="Tokens" foldKey="tokens" prefs={prefs}>
         <TokenUsage sessions={sessions} machines={machines} />

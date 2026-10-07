@@ -14,6 +14,14 @@ type AgentGroup = { agent: string; accounts: AccountUsage[] };
 
 const AGENT_LABEL: Record<string, string> = { claude: "Claude", codex: "Codex" };
 
+/** An agent and its account(s), as both the Limits and Tokens sections show them. */
+export const AgentHeading = ({ agent, account }: { agent: string; account: string }) => (
+  <header className="agent-heading">
+    <strong>{AGENT_LABEL[agent] ?? agent}</strong>
+    <span className="agent-account">{account}</span>
+  </header>
+);
+
 /** Groups sessions by agent, then by account, keeping the latest rate limit reading of each. */
 const agentGroups = (sessions: SessionState[], machines: MachineInfo[]): AgentGroup[] => {
   const groups = new Map<string, Map<string, AccountUsage>>();
@@ -82,7 +90,7 @@ const Limit = ({ label, w, now }: { label: string; w: RateWindow | null; now: nu
 };
 
 /** Rate limits grouped by agent and account, similar to Claude Code's `/status`. */
-export const UsagePanel = ({ sessions, machines }: { sessions: SessionState[]; machines: MachineInfo[] }) => {
+export const LimitsPanel = ({ sessions, machines }: { sessions: SessionState[]; machines: MachineInfo[] }) => {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30_000);
@@ -90,15 +98,12 @@ export const UsagePanel = ({ sessions, machines }: { sessions: SessionState[]; m
   }, []);
   const groups = agentGroups(sessions, machines);
   return (
-    <div className="usage-panel">
+    <div className="limits-panel">
       {groups.length === 0 && <div className="usage-empty">no usage data yet</div>}
       {groups.flatMap((g) =>
         g.accounts.map((a) => (
           <section key={a.key} className="usage-account" title={a.machines.length ? `machines: ${a.machines.join(", ")}` : undefined}>
-            <header>
-              <strong>{AGENT_LABEL[g.agent] ?? g.agent}</strong>
-              <span className="usage-account-label">{a.label}</span>
-            </header>
+            <AgentHeading agent={g.agent} account={a.label} />
             <Limit label="5h limit" w={a.fiveHour} now={now} />
             <Limit label="Weekly limit" w={a.sevenDay} now={now} />
             {a.updatedAt > 0 && <div className="usage-updated">{ago(a.updatedAt, now)}</div>}
