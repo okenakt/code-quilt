@@ -3,7 +3,6 @@ import { useState, type ReactNode } from "react";
 import { focusPane, panesOf, selectTab, useLayout } from "../layout";
 import { toggleFold, usePrefs, type Prefs } from "../prefs";
 import { Fold, SidebarSection, isExpanded } from "./sidebar-section";
-import { terminate } from "../api";
 import { isPinned, togglePin, type Pins } from "../pins";
 import { displayName } from "../store";
 import type { Activity, MachineInfo, SessionState } from "../types";
@@ -95,11 +94,12 @@ type ItemProps = {
   active: boolean;
   pinned: boolean;
   onPin: (s: SessionState) => void;
+  onEnd: (s: SessionState) => void;
   onOpen: () => void;
 };
 
 /** A running session: name, id and state, with pin and end buttons and foldable details. */
-const SessionItem = ({ s, machine, detailsKey, active, pinned, onPin, onOpen }: ItemProps) => {
+const SessionItem = ({ s, machine, detailsKey, active, pinned, onPin, onEnd, onOpen }: ItemProps) => {
   const open = isExpanded(usePrefs(), detailsKey, false);
   return (
     <div
@@ -139,9 +139,7 @@ const SessionItem = ({ s, machine, detailsKey, active, pinned, onPin, onOpen }: 
           title="end session (the agent exits; killed after 10s)"
           onClick={(e) => {
             e.stopPropagation();
-            if (confirm(`End session "${displayName(s)}" (${s.meta.id.slice(0, 8)})?`)) {
-              terminate(s.machine, s.meta.id).catch((err: unknown) => alert(String(err)));
-            }
+            onEnd(s);
           }}
         >
           <Trash2 size={12} />
@@ -204,10 +202,11 @@ type ListProps = {
   machineOf: (s: SessionState) => MachineInfo | undefined;
   pinOf: (s: SessionState) => boolean;
   onPin: (s: SessionState) => void;
+  onEnd: (s: SessionState) => void;
 };
 
 /** Each tab with the sessions shown in it; selecting one switches to its tab and pane. */
-const TabsSection = ({ prefs, sessions, machineOf, pinOf, onPin }: ListProps) => {
+const TabsSection = ({ prefs, sessions, machineOf, pinOf, onPin, onEnd }: ListProps) => {
   const { tabs, active } = useLayout();
   return (
     <>
@@ -247,6 +246,7 @@ const TabsSection = ({ prefs, sessions, machineOf, pinOf, onPin }: ListProps) =>
                       active={t.id === active && t.focus === p.id}
                       pinned={pinOf(s)}
                       onPin={onPin}
+                      onEnd={onEnd}
                       onOpen={() => {
                         selectTab(t.id);
                         focusPane(p.id);
@@ -271,13 +271,14 @@ type Props = {
   onOpen: (s: SessionState) => void;
   onNew: (machine: string) => void;
   onResume: (s: SessionState) => void;
+  onEnd: (s: SessionState) => void;
   pins: Pins;
   /** Names pinned by default (`pinned` in ui.toml). */
   pinNames: string[];
 };
 
 /** Left sidebar: Pinned, Tabs and Machines, each of which can be folded. */
-export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume, pins, pinNames }: Props) => {
+export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume, onEnd, pins, pinNames }: Props) => {
   const prefs = usePrefs();
   const running = sessions.filter((s) => s.activity !== "exited");
   const pinOf = (s: SessionState) => isPinned(s, pins, pinNames);
@@ -292,6 +293,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
       active={s.key === activeKey}
       pinned={pinOf(s)}
       onPin={onPin}
+      onEnd={onEnd}
       onOpen={() => onOpen(s)}
     />
   );
@@ -305,7 +307,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
         </div>
       </SidebarSection>
       <SidebarSection title="Tabs" foldKey="tabs" prefs={prefs}>
-        <TabsSection prefs={prefs} sessions={new Map(sessions.map((s) => [s.key, s]))} machineOf={machineOf} pinOf={pinOf} onPin={onPin} />
+        <TabsSection prefs={prefs} sessions={new Map(sessions.map((s) => [s.key, s]))} machineOf={machineOf} pinOf={pinOf} onPin={onPin} onEnd={onEnd} />
       </SidebarSection>
       <SidebarSection title="Machines" foldKey="machines" prefs={prefs}>
         {machines.map((m) => {

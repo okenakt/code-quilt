@@ -105,7 +105,7 @@
 | `pane.focusLeft` / `Right` / `Up` / `Down` | その方向のペインへフォーカス | Ctrl+Shift+← / → / ↑ / ↓ |
 | `pane.close` | ペインを閉じる（セッションはデタッチ。空のペイン1つだけのタブではタブを閉じる） | Ctrl+Shift+W |
 | `pane.zoom` | ペインを最大化 / 戻す | Ctrl+Shift+Z |
-| `session.end` / `session.pin` / `session.copyId` | フォーカス中のセッションを終了 / ピン留めの切り替え / idのコピー | なし |
+| `session.end` / `session.pin` / `session.copyId` | フォーカス中のセッションを終了（確認のモーダルを出す） / ピン留めの切り替え / idのコピー | なし |
 | `daemon.restart` | daemonを再起動（引数 `machine`） | なし |
 
 ### プラグインのコマンド

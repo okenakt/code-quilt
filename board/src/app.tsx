@@ -27,6 +27,7 @@ import { notify } from "./notify";
 import { BUILTIN_COMMANDS, BUILTIN_KEYS } from "./builtins";
 import { invokePluginCommand, isRecording, onStartCommands, pinnedNames, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
 import { CommandPalette } from "./components/command-palette";
+import { ConfirmDialog, askConfirm } from "./components/confirm-dialog";
 import { KeybindingsView } from "./components/keybindings-view";
 import { chordOfEvent } from "./keys";
 import { togglePin, usePins } from "./pins";
@@ -154,6 +155,17 @@ export const App = () => {
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), ok ? 4000 : 10000);
   }, []);
 
+  /** Ends a session after the user confirms; the agent exits and is killed if it has not exited after 10s. */
+  const endSession = useCallback(
+    (s: SessionState) =>
+      void askConfirm("End session", `End "${displayName(s)}" (${s.meta.id.slice(0, 8)})? The agent is asked to exit and is killed if it has not exited after 10 seconds.`, "End session").then(
+        (ok) => {
+          if (ok) terminate(s.machine, s.meta.id).catch((e: unknown) => showToast(false, String(e)));
+        },
+      ),
+    [showToast],
+  );
+
   /** The session of the focused pane, which session commands act on. */
   const focusedSession = (): SessionState | null => {
     const key = focusedSessionKey();
@@ -234,9 +246,7 @@ export const App = () => {
             void navigator.clipboard.writeText(s.meta.id).then(() => showToast(true, `Copied ${s.meta.id}`));
             return;
           }
-          if (confirm(`End session "${displayName(s)}" (${s.meta.id.slice(0, 8)})?`)) {
-            terminate(s.machine, s.meta.id).catch((e: unknown) => showToast(false, String(e)));
-          }
+          endSession(s);
           return;
         }
       }
@@ -342,6 +352,7 @@ export const App = () => {
             onOpen={openSession}
             onNew={setNewSessionFor}
             onResume={resumeSession}
+            onEnd={endSession}
             pins={pins}
             pinNames={pinNames}
           />
@@ -367,6 +378,7 @@ export const App = () => {
       )}
       {prefs.rightOpen && <SidebarResizer side="right" />}
       {prefs.rightOpen && <RightSidebar sessions={sessions} machines={machines} onShowApproval={showApproval} />}
+      <ConfirmDialog />
       {paletteOpen && (
         <CommandPalette
           commands={allCommands.filter((c) => c.palette)}

@@ -713,6 +713,23 @@ kbd {
   color: var(--accent);
 }
 
+.modal.confirm {
+  width: min(440px, 92vw);
+}
+
+.confirm-message {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.modal-actions .danger {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--bg);
+  font-weight: 600;
+}
+
 .modal-actions button:disabled {
   opacity: 0.5;
   cursor: default;
