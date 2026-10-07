@@ -111,11 +111,6 @@ export const App = () => {
     [],
   );
 
-  const resumeSession = useCallback(
-    (s: SessionState) => void launch(s.machine, s.meta.agent === "codex" ? "codex" : "claude", s.meta.cwd, [], s.meta.agent_session_id).catch((e: unknown) => alert(String(e))),
-    [launch],
-  );
-
   const pins = usePins();
   const uiConfig = useCommandState().config;
   const pinNames = useMemo(() => pinnedNames(uiConfig), [uiConfig]);
@@ -154,6 +149,14 @@ export const App = () => {
     setToasts((ts) => [...ts, { id, ok, text }]);
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), ok ? 4000 : 10000);
   }, []);
+
+  const resumeSession = useCallback(
+    (s: SessionState) =>
+      void launch(s.machine, s.meta.agent === "codex" ? "codex" : "claude", s.meta.cwd, [], s.meta.agent_session_id).catch((e: unknown) =>
+        showToast(false, `Resume: ${String(e)}`),
+      ),
+    [launch, showToast],
+  );
 
   /** Ends a session after the user confirms; the agent exits and is killed if it has not exited after 10s. */
   const endSession = useCallback(
