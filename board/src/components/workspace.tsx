@@ -6,8 +6,9 @@ import {
   closePane,
   closeTab,
   focusPane,
+  currentLayout,
+  holdsSessionOf,
   movePane,
-  movePaneToTab,
   moveTab,
   openInActiveTab,
   panesOf,
@@ -15,7 +16,8 @@ import {
   resizeSplit,
   selectTab,
   useLayout,
-  type DropZone,
+  type MoveTarget,
+  type Side,
   type LayoutNode,
   type PaneNode,
   type SplitNode,
@@ -37,16 +39,20 @@ const ACTIVITY_LABEL: Record<Activity, string> = {
 const MIN_SHARE = 0.08;
 /** Pointer travel before a press on a handle becomes a drag. */
 const DRAG_THRESHOLD = 5;
+/** How long a dragged pane rests on a tab before that tab is shown. */
+const HOLD_MS = 500;
 
 type Box = { left: number; top: number; width: number; height: number };
 
 /** What a drag would do if released now. */
 type DropTarget =
-  | { kind: "pane"; id: string; zone: DropZone; preview: Box }
+  | { kind: "pane"; id: string; side: Side; preview: Box }
   | { kind: "tab"; id: string | null }
+  | { kind: "self" }
   | null;
 
-type Drag = { kind: "pane" | "tab"; id: string; label: string; x: number; y: number; target: DropTarget };
+/** A drag in progress; `index` is where a dragged tab would land. */
+type Drag = { kind: "pane" | "tab"; id: string; label: string; x: number; y: number; target: DropTarget; index: number };
 
 type Ctx = {
   tab: Tab;
@@ -57,26 +63,25 @@ type Ctx = {
   onGone: (pane: PaneNode) => void;
 };
 
-/** The zone of a pane under the pointer: an edge within a quarter of the size, else the center. */
-const zoneAt = (r: DOMRect, x: number, y: number): DropZone => {
+/** The edge of a pane nearest to the pointer, so the diagonals split the pane into four zones. */
+const sideAt = (r: DOMRect, x: number, y: number): Side => {
   const fx = (x - r.left) / r.width;
   const fy = (y - r.top) / r.height;
-  const edges: [DropZone, number][] = [
+  const edges: [Side, number][] = [
     ["left", fx],
     ["right", 1 - fx],
     ["up", fy],
     ["down", 1 - fy],
   ];
-  const [zone, dist] = edges.reduce((a, b) => (b[1] < a[1] ? b : a));
-  return dist < 0.25 ? zone : "center";
+  return edges.reduce((a, b) => (b[1] < a[1] ? b : a))[0];
 };
 
-/** The part of a pane a drop into `zone` would occupy, relative to `origin`. */
-const previewBox = (r: DOMRect, zone: DropZone, origin: DOMRect): Box => {
+/** The half of a pane a drop towards `side` would occupy, relative to `origin`. */
+const previewBox = (r: DOMRect, side: Side, origin: DOMRect): Box => {
   const left = r.left - origin.left;
   const top = r.top - origin.top;
   const half = { width: r.width / 2, height: r.height / 2 };
-  switch (zone) {
+  switch (side) {
     case "left":
       return { left, top, width: half.width, height: r.height };
     case "right":
@@ -85,21 +90,23 @@ const previewBox = (r: DOMRect, zone: DropZone, origin: DOMRect): Box => {
       return { left, top, width: r.width, height: half.height };
     case "down":
       return { left, top: top + half.height, width: r.width, height: half.height };
-    case "center":
-      return { left, top, width: r.width, height: r.height };
   }
 };
 
 const TabBar = ({ tabs, active, ctx }: { tabs: Tab[]; active: string; ctx: Ctx }) => {
   const [editing, setEditing] = useState<string | null>(null);
-  const target = ctx.drag?.target?.kind === "tab" ? ctx.drag.target.id : undefined;
+  const drag = ctx.drag;
+  const target = drag?.kind === "pane" && drag.target?.kind === "tab" ? drag.target.id : undefined;
+  const dragged = drag?.kind === "tab" ? tabs.find((t) => t.id === drag.id) : undefined;
+  const others = tabs.filter((t) => t !== dragged);
+  const shown = dragged && drag ? [...others.slice(0, drag.index), dragged, ...others.slice(drag.index)] : tabs;
   return (
     <nav className="tab-bar">
-      {tabs.map((t) => (
+      {shown.map((t) => (
         <div
           key={t.id}
           data-tab={t.id}
-          className={`tab ${t.id === active ? "active" : ""} ${target === t.id ? "drop-target" : ""}`}
+          className={`tab ${t.id === active ? "active" : ""} ${target === t.id ? "drop-target" : ""} ${t === dragged ? "dragging" : ""}`}
           onClick={() => selectTab(t.id)}
           onDoubleClick={() => setEditing(t.id)}
           onPointerDown={(e) => editing !== t.id && ctx.startDrag(e, "tab", t.id, t.name)}
@@ -264,53 +271,84 @@ type Props = {
   sessions: SessionState[];
   onNewSession: () => void;
   onGone: (session: string) => void;
+  /** Tells the user why a drop was refused. */
+  onRefuse: (message: string) => void;
 };
 
 /** Main area: the tab bar and the active tab's panes. Only the active tab is rendered. */
-export const Workspace = ({ sessions, onNewSession, onGone }: Props) => {
+export const Workspace = ({ sessions, onNewSession, onGone, onRefuse }: Props) => {
   const { tabs, active } = useLayout();
   const tab = tabs.find((t) => t.id === active) ?? tabs[0];
   const rootRef = useRef<HTMLElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
 
-  /** Starts tracking a press on a pane header or tab; it becomes a drag once the pointer moves. */
+  /**
+   * Starts tracking a press on a pane header or tab; it becomes a drag once the pointer moves.
+   * A pane resting on another tab shows that tab, so the pane can be placed there.
+   */
   const startDrag = (e: ReactPointerEvent, kind: Drag["kind"], id: string, label: string) => {
     if (e.button !== 0) return;
     const sx = e.clientX;
     const sy = e.clientY;
+    const srcTab = currentLayout().active;
     let current: Drag | null = null;
+    let hold: { tab: string | null; timer?: number } = { tab: null };
+    const alreadyOpen = (tabId: string) =>
+      `"${label}" is already open in tab "${currentLayout().tabs.find((t) => t.id === tabId)?.name ?? tabId}"`;
     const hit = (x: number, y: number): DropTarget => {
       const el = document.elementFromPoint(x, y);
       const tabEl = el?.closest<HTMLElement>("[data-tab]");
       if (tabEl) return { kind: "tab", id: tabEl.dataset.tab ?? null };
       if (el?.closest("[data-tab-new]")) return { kind: "tab", id: null };
-      if (kind !== "pane") return null;
       const paneEl = el?.closest<HTMLElement>("[data-pane]");
       const origin = rootRef.current?.getBoundingClientRect();
-      if (!paneEl || !origin || paneEl.dataset.pane === id) return null;
+      if (!paneEl || !origin) return null;
+      if (paneEl.dataset.pane === id) return { kind: "self" };
       const r = paneEl.getBoundingClientRect();
-      const zone = zoneAt(r, x, y);
-      return { kind: "pane", id: paneEl.dataset.pane ?? "", zone, preview: previewBox(r, zone, origin) };
+      const side = sideAt(r, x, y);
+      return { kind: "pane", id: paneEl.dataset.pane ?? "", side, preview: previewBox(r, side, origin) };
+    };
+    const tabIndex = (x: number) =>
+      [...document.querySelectorAll<HTMLElement>("[data-tab]")].filter((el) => {
+        const r = el.getBoundingClientRect();
+        return el.dataset.tab !== id && r.left + r.width / 2 < x;
+      }).length;
+    const armHold = (t: DropTarget) => {
+      const tabId = t?.kind === "tab" ? t.id : null;
+      if (tabId === hold.tab) return;
+      clearTimeout(hold.timer);
+      hold = { tab: tabId };
+      if (!tabId || tabId === currentLayout().active) return;
+      hold.timer = window.setTimeout(() => (holdsSessionOf(srcTab, id, tabId) ? onRefuse(alreadyOpen(tabId)) : selectTab(tabId)), HOLD_MS);
     };
     const move = (ev: PointerEvent) => {
       if (!current && Math.hypot(ev.clientX - sx, ev.clientY - sy) < DRAG_THRESHOLD) return;
       ev.preventDefault();
-      current = { kind, id, label, x: ev.clientX, y: ev.clientY, target: hit(ev.clientX, ev.clientY) };
+      if (kind === "tab") {
+        current = { kind, id, label, x: ev.clientX, y: ev.clientY, target: null, index: tabIndex(ev.clientX) };
+      } else {
+        current = { kind, id, label, x: ev.clientX, y: ev.clientY, target: hit(ev.clientX, ev.clientY), index: 0 };
+        armHold(current.target);
+      }
       setDrag(current);
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      const t = current?.target;
+      clearTimeout(hold.timer);
       setDrag(null);
-      if (!t) return;
-      if (kind === "tab") {
-        if (t.kind === "tab" && t.id) moveTab(id, tabs.findIndex((x) => x.id === t.id));
-      } else if (t.kind === "pane") {
-        movePane(id, t.id, t.zone);
-      } else {
-        movePaneToTab(id, t.id);
-      }
+      if (!current) return;
+      if (kind === "tab") return moveTab(id, current.index);
+      const t = current.target;
+      const refuse = (message: string) => {
+        selectTab(srcTab);
+        onRefuse(message);
+      };
+      if (!t) return refuse("Drop the pane on a pane or a tab to move it");
+      if (t.kind === "self") return selectTab(srcTab);
+      const to: MoveTarget = t.kind === "pane" ? { tab: currentLayout().active, pane: t.id, side: t.side } : { tab: t.id };
+      if (to.tab && holdsSessionOf(srcTab, id, to.tab)) return refuse(alreadyOpen(to.tab));
+      movePane(srcTab, id, to);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);

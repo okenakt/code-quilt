@@ -342,7 +342,12 @@ export const App = () => {
         />
       </aside>
       <SidebarResizer side="left" />
-      <Workspace sessions={sessions} onNewSession={() => setNewSessionFor("local")} onGone={(key) => dropSessions((k) => k === key)} />
+      <Workspace
+        sessions={sessions}
+        onNewSession={() => setNewSessionFor("local")}
+        onGone={(key) => dropSessions((k) => k === key)}
+        onRefuse={(m) => showToast(false, m)}
+      />
       {keybindingsOpen && (
         <div className="main-overlay">
           <KeybindingsView

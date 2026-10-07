@@ -1153,7 +1153,8 @@ kbd {
   cursor: grab;
 }
 
-.pane.dragging {
+.pane.dragging,
+.tab.dragging {
   opacity: 0.5;
 }
 

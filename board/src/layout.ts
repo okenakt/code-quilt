@@ -171,6 +171,9 @@ export const useLayout = (): Layout =>
     () => layout,
   );
 
+/** The current layout, for code outside React (e.g. a drag in progress). */
+export const currentLayout = (): Layout => layout;
+
 /** The active tab. */
 export const activeTab = (): Tab => layout.tabs.find((t) => t.id === layout.active) ?? layout.tabs[0];
 
@@ -280,44 +283,44 @@ export const moveTab = (id: string, index: number) => {
   commit({ ...layout, tabs });
 };
 
-/** Where a dragged pane lands on a target pane: one of its edges, or swapped into it. */
-export type DropZone = Side | "center";
+/** Where a dragged pane goes: beside a pane, or into a tab (a new tab for `null`) by the `showIn` rule. */
+export type MoveTarget = { tab: string; pane: string; side: Side } | { tab: string | null };
 
-/** Moves the session of pane `src` next to pane `target` in the active tab, or swaps the two. */
-export const movePane = (src: string, target: string, zone: DropZone) =>
-  updateTab(activeTab().id, (t) => {
-    if (src === target) return t;
-    const from = findPane(t.root, src);
-    const to = findPane(t.root, target);
-    if (!from || !to) return t;
-    if (zone === "center") {
-      let root = setSession(t.root, from.id, to.session);
-      root = setSession(root, to.id, from.session);
-      return { ...t, root, focus: to.id };
-    }
-    const { root, pane } = splitPane(removePane(t.root, src), target, zone, from.session);
-    return { ...t, root, focus: pane.id, zoom: null };
-  });
+/** Whether tab `tabId` already shows the session of pane `src` in another tab `srcTab`. */
+export const holdsSessionOf = (srcTab: string, src: string, tabId: string): boolean => {
+  const from = layout.tabs.find((t) => t.id === srcTab);
+  const session = from && findPane(from.root, src)?.session;
+  const dst = layout.tabs.find((t) => t.id === tabId);
+  return tabId !== srcTab && !!session && !!dst && panesOf(dst.root).some((p) => p.session === session);
+};
 
-/** Moves the session of pane `src` from the active tab into tab `tabId` (a new tab for `null`). */
-export const movePaneToTab = (src: string, tabId: string | null) => {
-  const from = activeTab();
-  const pane = findPane(from.root, src);
-  if (!pane || tabId === from.id) return;
+/** Moves pane `src` of tab `srcTab` and shows the destination tab. A tab left without panes is closed. */
+export const movePane = (srcTab: string, src: string, to: MoveTarget) => {
+  const from = layout.tabs.find((t) => t.id === srcTab);
+  const pane = from && findPane(from.root, src);
+  if (!from || !pane) return;
+  if ("pane" in to ? to.pane === src : to.tab === srcTab) return selectTab(srcTab);
   let tabs = layout.tabs;
-  let target = tabId;
-  if (target === null) {
+  let dst = to.tab;
+  if (dst === null) {
     const tab = newTab(`tab ${tabs.length + 1}`);
     tabs = [...tabs, tab];
-    target = tab.id;
+    dst = tab.id;
   }
-  tabs = tabs.map((t) => {
-    if (t.id === from.id) {
-      const root = removePane(t.root, src);
-      const focus = findPane(root, t.focus) ? t.focus : panesOf(root)[0].id;
-      return { ...t, root, focus, zoom: t.zoom === src ? null : t.zoom };
-    }
-    return t.id === target && pane.session !== null ? showIn(t, pane.session) : t;
+  const remove = (t: Tab): Tab => {
+    const root = removePane(t.root, src);
+    return { ...t, root, focus: findPane(root, t.focus) ? t.focus : panesOf(root)[0].id, zoom: t.zoom === src ? null : t.zoom };
+  };
+  const place = (t: Tab): Tab => {
+    if (!("pane" in to)) return pane.session === null ? t : showIn(t, pane.session);
+    const { root, pane: placed } = splitPane(t.root, to.pane, to.side, pane.session);
+    return { ...t, root, focus: placed.id, zoom: null };
+  };
+  const emptied = panesOf(from.root).length === 1;
+  tabs = tabs.flatMap((t) => {
+    if (t.id === srcTab && emptied) return [];
+    const removed = t.id === srcTab ? remove(t) : t;
+    return [t.id === dst ? place(removed) : removed];
   });
-  commit({ ...layout, tabs });
+  commit({ tabs, active: dst });
 };
