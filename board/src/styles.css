@@ -723,14 +723,10 @@ kbd {
   opacity: 0.6;
 }
 
-.pin:hover {
-  opacity: 1;
-  color: var(--danger);
-}
-
+.pin:hover,
 .pin.on {
   opacity: 1;
-  color: var(--danger);
+  color: var(--working);
 }
 
 .machine.pinned .machine-header {
@@ -1153,9 +1149,18 @@ kbd {
   cursor: grab;
 }
 
-.pane.dragging,
-.tab.dragging {
+.pane.dragging {
   opacity: 0.5;
+}
+
+.tab.dragging {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* While dragging, only the drop preview marks where the pane goes. */
+.workspace.dragging .pane.focused {
+  border-color: var(--line);
 }
 
 .drop-preview {
