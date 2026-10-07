@@ -85,7 +85,12 @@ fn agent_args(name: &str, cfg: &QueenConfig) -> Result<Vec<String>> {
     if cfg.delivery == Delivery::Channels {
         mcp_args.push("--channel".into());
     }
-    let mcp = json!({ "mcpServers": { "cq": { "command": cq_client::cq_binary(), "args": mcp_args } } });
+    // A bare name would let Claude Code pick up whatever cq is on PATH, possibly an older one.
+    let cq = cq_client::cq_binary();
+    if !cq.is_file() {
+        bail!("cq was not found next to cq-queen; build or install cq, or set CQ_BIN");
+    }
+    let mcp = json!({ "mcpServers": { "cq": { "command": cq, "args": mcp_args } } });
     let mcp_path = dir.join(format!("{name}.mcp.json"));
     std::fs::write(&mcp_path, serde_json::to_vec_pretty(&mcp)?)?;
 
