@@ -22,6 +22,7 @@ import {
   type SplitNode,
   type Tab,
 } from "../layout";
+import { trackPointer } from "../drag";
 import { displayName } from "../store";
 import type { Activity, SessionState } from "../types";
 import { TerminalView } from "./terminal-view";
@@ -164,12 +165,7 @@ const Splitter = ({ split, index }: { split: SplitNode; index: number }) => {
       sizes[index + 1] = pair - a;
       resizeSplit(split.id, sizes);
     };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    trackPointer(move);
   };
   return <div className={`splitter ${split.dir}`} onPointerDown={onPointerDown} />;
 };

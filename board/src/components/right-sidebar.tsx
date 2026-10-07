@@ -1,4 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { trackPointer } from "../drag";
 import { setWidth, usePrefs } from "../prefs";
 import type { MachineInfo, SessionState } from "../types";
 import { ApprovalList } from "./approvals";
@@ -20,12 +21,7 @@ export const SidebarResizer = ({ side }: { side: "left" | "right" }) => {
       const delta = side === "left" ? ev.clientX - start : start - ev.clientX;
       setWidth(side, Math.min(WIDTH_RANGE[1], Math.max(WIDTH_RANGE[0], width + delta)));
     };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    trackPointer(move);
   };
   return <div className="sidebar-resizer" onPointerDown={onPointerDown} />;
 };

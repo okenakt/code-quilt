@@ -1,7 +1,8 @@
 import { ChevronDown, ChevronRight, Pin, Plus, Trash2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { trackPointer } from "../drag";
 import { focusPane, panesOf, selectTab, useLayout } from "../layout";
-import { toggleFold, usePrefs, type Prefs } from "../prefs";
+import { setColumn, toggleFold, usePrefs, type Column, type Prefs } from "../prefs";
 import { Fold, SidebarSection, isExpanded } from "./sidebar-section";
 import { isPinned, togglePin, type Pins } from "../pins";
 import { displayName } from "../store";
@@ -86,6 +87,27 @@ const SessionId = ({ id }: { id: string }) => {
   );
 };
 
+/** Drag handle on a column's right edge; the width is shared by every row. */
+const ColResizer = ({ col }: { col: Column }) => {
+  const prefs = usePrefs();
+  const onPointerDown = (e: ReactPointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const start = e.clientX;
+    const width = prefs.columns[col];
+    trackPointer((ev) => setColumn(col, width + ev.clientX - start));
+  };
+  return <span className="col-resizer" title="Drag to resize this column" onPointerDown={onPointerDown} onClick={(e) => e.stopPropagation()} />;
+};
+
+/** A fixed-width cell of a session row, so state changes never shift the columns. */
+const Col = ({ col, children }: { col: Column; children: ReactNode }) => (
+  <span className={`col col-${col}`}>
+    {children}
+    <ColResizer col={col} />
+  </span>
+);
+
 type ItemProps = {
   s: SessionState;
   machine: MachineInfo | undefined;
@@ -121,9 +143,19 @@ const SessionItem = ({ s, machine, detailsKey, active, pinned, onPin, onEnd, onO
         >
           {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </button>
-        <span className="session-name">{displayName(s)}</span>
-        <SessionId id={s.meta.id} />
-        {s.activity !== "exited" && <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>}
+        <Col col="name">
+          <span className="session-name">{displayName(s)}</span>
+        </Col>
+        <Col col="id">
+          <SessionId id={s.meta.id} />
+        </Col>
+        <span className="session-state">
+          {s.activity !== "exited" && (
+            <span className={`badge ${s.activity}`} title={ACTIVITY_LABEL[s.activity]}>
+              {ACTIVITY_LABEL[s.activity]}
+            </span>
+          )}
+        </span>
         <button
           className={`pin ${pinned ? "on" : ""}`}
           title={pinned ? "unpin" : "pin to the front"}
@@ -152,8 +184,13 @@ const SessionItem = ({ s, machine, detailsKey, active, pinned, onPin, onEnd, onO
 
 const EndedItem = ({ s, canResume, onResume }: { s: SessionState; canResume: boolean; onResume: (s: SessionState) => void }) => (
   <div className="ended" title={s.meta.cwd}>
-    <span className="session-name">{displayName(s)}</span>
-    <SessionId id={s.meta.id} />
+    <span className="session-expand" />
+    <Col col="name">
+      <span className="session-name">{displayName(s)}</span>
+    </Col>
+    <Col col="id">
+      <SessionId id={s.meta.id} />
+    </Col>
     <span className="ended-when">{ago(s.meta.ended_at_ms ?? s.meta.started_at_ms)}</span>
     {canResume && s.meta.agent_session_id && (
       <button className="session-resume" onClick={() => onResume(s)}>
@@ -299,7 +336,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
   );
   const pinned = running.filter(pinOf);
   return (
-    <nav className="session-list">
+    <nav className="session-list" style={{ "--col-name": `${prefs.columns.name}px`, "--col-id": `${prefs.columns.id}px` } as CSSProperties}>
       <SidebarSection title="Pinned" foldKey="pinned" prefs={prefs}>
         <div className="tree deep">
           {pinned.length === 0 && <div className="empty">No pinned sessions</div>}
