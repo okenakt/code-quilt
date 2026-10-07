@@ -10,6 +10,26 @@ type Props = {
   onClose: () => void;
 };
 
+const RECENT_KEY = "cq.recent.v1";
+const RECENT_MAX = 5;
+
+const loadRecent = (): string[] => {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveRecent = (name: string) => {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify([name, ...loadRecent().filter((n) => n !== name)].slice(0, RECENT_MAX)));
+  } catch {
+    // Recently used commands are a per-viewer convenience.
+  }
+};
+
 /** Scores `text` against a subsequence query; higher is better, `null` means no match. */
 const fuzzyScore = (query: string, text: string): number | null => {
   const q = query.toLowerCase();
@@ -35,15 +55,22 @@ export const CommandPalette = ({ commands, keysOf, warnings, onRun, onClose }: P
   const [picked, setPicked] = useState<Command | null>(null);
   const [args, setArgs] = useState<Record<string, string>>({});
   const inputRef = useRef<HTMLInputElement>(null);
+  const [recent] = useState(loadRecent);
+
+  // Recently used commands come first, newest first; the rest keep their search order.
+  const rank = useMemo(() => (c: Command) => {
+    const i = recent.indexOf(c.name);
+    return i < 0 ? RECENT_MAX : i;
+  }, [recent]);
 
   const matches = useMemo(
     () =>
       commands
         .map((c) => ({ c, score: Math.max(fuzzyScore(query, c.title) ?? -Infinity, fuzzyScore(query, c.name) ?? -Infinity) }))
         .filter((m) => m.score > -Infinity)
-        .sort((a, b) => b.score - a.score || a.c.title.localeCompare(b.c.title))
+        .sort((a, b) => rank(a.c) - rank(b.c) || b.score - a.score || a.c.title.localeCompare(b.c.title))
         .map((m) => m.c),
-    [commands, query],
+    [commands, query, rank],
   );
 
   const argIndex = picked ? Object.keys(args).length : 0;
@@ -53,8 +80,13 @@ export const CommandPalette = ({ commands, keysOf, warnings, onRun, onClose }: P
     inputRef.current?.focus();
   }, [picked, argIndex]);
 
+  const run = (c: Command, values: Record<string, string>) => {
+    saveRecent(c.name);
+    onRun(c, values);
+  };
+
   const choose = (c: Command) => {
-    if (c.args.length === 0) return onRun(c, {});
+    if (c.args.length === 0) return run(c, {});
     setPicked(c);
     setArgs({});
     setQuery(c.args[0].default ?? "");
@@ -64,7 +96,7 @@ export const CommandPalette = ({ commands, keysOf, warnings, onRun, onClose }: P
     if (!picked || !currentArg) return;
     const value = query.trim() === "" ? (currentArg.default ?? "") : query.trim();
     const next = { ...args, [currentArg.name]: value };
-    if (Object.keys(next).length === picked.args.length) return onRun(picked, next);
+    if (Object.keys(next).length === picked.args.length) return run(picked, next);
     setArgs(next);
     setQuery(picked.args[Object.keys(next).length].default ?? "");
   };
@@ -117,6 +149,7 @@ export const CommandPalette = ({ commands, keysOf, warnings, onRun, onClose }: P
               >
                 <span className="palette-title">{c.title}</span>
                 <span className="palette-meta">
+                  {recent.includes(c.name) && <span className="palette-recent">recently used</span>}
                   {c.plugin && <span className="palette-plugin">{c.plugin}</span>}
                   {keysOf(c.name).slice(0, 2).map((k) => (
                     <kbd key={k}>{formatChord(k)}</kbd>

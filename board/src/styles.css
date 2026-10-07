@@ -818,6 +818,11 @@ kbd {
   flex-shrink: 0;
 }
 
+.palette-recent {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .palette-plugin {
   color: var(--muted);
   font-size: 11px;
