@@ -212,9 +212,17 @@ const PaneView = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
         {pane.session && <span className="session-id">{id.slice(0, 8)}</span>}
         {s && <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>}
         <span className="pane-header-spacer" />
+        <button
+          className="pane-button"
+          title={pane.session ? "Detach (close the pane; the session keeps running)" : "Close pane"}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => closePane(pane.id)}
+        >
+          {pane.session ? <LogOut size={13} /> : <X size={13} />}
+        </button>
         {s && (
           <button
-            className="pane-button"
+            className="pane-button trash"
             title="End session"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => {
@@ -226,14 +234,6 @@ const PaneView = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
             <Trash2 size={13} />
           </button>
         )}
-        <button
-          className="pane-button"
-          title={pane.session ? "Detach (close the pane; the session keeps running)" : "Close pane"}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => closePane(pane.id)}
-        >
-          {pane.session ? <LogOut size={13} /> : <X size={13} />}
-        </button>
       </div>
       <div className="pane-body">
         {pane.session ? (

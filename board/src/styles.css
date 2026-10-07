@@ -723,9 +723,14 @@ kbd {
   opacity: 0.6;
 }
 
+.pin:hover {
+  opacity: 1;
+  color: var(--danger);
+}
+
 .pin.on {
   opacity: 1;
-  color: var(--accent);
+  color: var(--danger);
 }
 
 .machine.pinned .machine-header {
@@ -749,6 +754,10 @@ kbd {
 .end-session:hover {
   color: var(--danger);
   opacity: 1;
+}
+
+.pane-button.trash:hover {
+  color: var(--danger);
 }
 
 .palette-backdrop {
