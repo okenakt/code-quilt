@@ -1092,6 +1092,20 @@ kbd {
   padding: 12px;
 }
 
+.pane-empty .primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+  padding: 5px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.pane-empty .primary:hover {
+  filter: brightness(1.1);
+}
+
 .pane-empty ul {
   list-style: none;
   margin: 0;
@@ -1266,7 +1280,7 @@ kbd {
 }
 
 .tab-group.active .tab-group-name {
-  color: var(--accent);
+  background: var(--panel-2);
 }
 
 .tab-group-panes {
