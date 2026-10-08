@@ -294,6 +294,20 @@ impl DaemonClient {
         cq_proto::write_message(&mut self.wr, msg).await
     }
 
+    /// Launches a session through the daemon and returns its id.
+    pub async fn launch(&mut self, launch: cq_proto::Launch) -> Result<String> {
+        let id = launch.id;
+        self.send(&Message::Launch(launch)).await?;
+        while let Some(msg) = self.msgs.recv().await {
+            match msg? {
+                Message::Launched(l) if l.id == id => return Ok(l.session),
+                Message::RequestFailed(f) if f.id == id => anyhow::bail!(f.error),
+                _ => {}
+            }
+        }
+        anyhow::bail!("daemon connection closed")
+    }
+
     /// Connects again after the daemon went away (e.g. `cq daemon restart`), starting it if
     /// needed and retrying every second until it succeeds.
     pub async fn reconnect(&mut self) {
@@ -323,7 +337,7 @@ impl Scope {
         Ok(Self { machines })
     }
 
-    pub fn admits(&self, s: &Session) -> bool {
-        self.machines.is_empty() || self.machines.contains(&s.machine)
+    pub fn admits(&self, machine: &str) -> bool {
+        self.machines.is_empty() || self.machines.iter().any(|m| m == machine)
     }
 }

@@ -34,7 +34,7 @@ fn snippet(s: &str, n: usize) -> String {
 
 impl Server {
     fn visible(&self, s: &Session) -> bool {
-        self.scope.admits(s) && self.own.as_deref() != Some(&s.meta.id)
+        self.scope.admits(&s.machine) && self.own.as_deref() != Some(&s.meta.id)
     }
 
     /// Resolves `machine:id`, a session name, or an id prefix to one visible session.
@@ -118,6 +118,56 @@ impl Server {
         Ok(json!({ "sent_to": s.key(), "name": s.meta.name, "submitted": submit }))
     }
 
+    /// Starts a session and queues the first prompt, which is typed once the session is idle
+    /// (after any startup dialogs).
+    async fn launch(&self, args: &Value) -> Result<Value> {
+        let cwd = str_arg(args, "cwd")?.to_owned();
+        let agent = args.get("agent").and_then(Value::as_str).unwrap_or("claude");
+        if !matches!(agent, "claude" | "codex") {
+            bail!("unknown agent '{agent}' (claude or codex)");
+        }
+        let machine = args.get("machine").and_then(Value::as_str).unwrap_or(LOCAL_MACHINE).to_owned();
+        if !self.scope.admits(&machine) {
+            bail!("machine '{machine}' is outside this server's scope");
+        }
+        let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
+        let mut conn = cq_client::DaemonClient::open(machine != LOCAL_MACHINE).await?;
+        let launch = cq_proto::Launch {
+            id: 1,
+            machine: machine.clone(),
+            agent: agent.to_owned(),
+            cwd,
+            args: Vec::new(),
+            resume: None,
+            name: name.clone(),
+            settings_extra: None,
+            cols: 120,
+            rows: 36,
+        };
+        let session = tokio::time::timeout(Duration::from_secs(30), conn.launch(launch))
+            .await
+            .map_err(|_| anyhow!("the session did not start within 30s"))??;
+        let mut out = json!({ "session": format!("{machine}:{session}"), "name": name });
+        if let Some(prompt) = args.get("prompt").and_then(Value::as_str) {
+            let inject = cq_proto::Inject { id: crate::session::now_ms(), text: prompt.to_owned(), submit: true, quiet_ms: 3000 };
+            conn.send(&Message::Routed { machine: machine.clone(), session: session.clone(), inner: Box::new(Message::Inject(inject)) }).await?;
+            let queued = async {
+                while let Some(msg) = conn.msgs.recv().await {
+                    if let Message::Routed { session: s, inner, .. } = msg?
+                        && s == session
+                        && matches!(&*inner, Message::Event(ev) if ev.payload.get("type").and_then(Value::as_str) == Some("inject_queued"))
+                    {
+                        return Ok(());
+                    }
+                }
+                bail!("daemon connection closed")
+            };
+            tokio::time::timeout(Duration::from_secs(20), queued).await.map_err(|_| anyhow!("the session started but did not accept the prompt"))??;
+            out["prompt"] = json!("queued; it is typed once the session is idle");
+        }
+        Ok(out)
+    }
+
     async fn approve(&self, args: &Value) -> Result<Value> {
         let s = self.resolve(str_arg(args, "session")?)?;
         let option = args.get("option").and_then(Value::as_u64).ok_or_else(|| anyhow!("missing 'option'"))? as u8;
@@ -157,6 +207,17 @@ fn tools() -> Value {
             "name": "send",
             "description": "Type a message into a session as if the user typed it. Presses Enter unless submit is false.",
             "inputSchema": { "type": "object", "properties": { "session": session, "text": { "type": "string" }, "submit": { "type": "boolean" } }, "required": ["session", "text"] }
+        },
+        {
+            "name": "launch",
+            "description": "Start a new coding agent session in a directory. The directory must be inside the allowed roots of ~/.codequilt/config.toml or trusted in the agent. Give it a name to address it later. The optional prompt is typed once the session is idle, after any startup dialogs.",
+            "inputSchema": { "type": "object", "properties": {
+                "cwd": { "type": "string", "description": "Working directory on the target machine" },
+                "agent": { "type": "string", "enum": ["claude", "codex"] },
+                "machine": { "type": "string", "description": "Machine id; the local machine by default" },
+                "name": { "type": "string" },
+                "prompt": { "type": "string", "description": "First instruction for the new session" }
+            }, "required": ["cwd"] }
         },
         {
             "name": "approve",
@@ -308,6 +369,7 @@ async fn handle(server: &Server, req: &Value) -> Result<Value> {
                 "get_turns" => server.get_turns(&args),
                 "send" => server.send(&args),
                 "approve" => server.approve(&args).await,
+                "launch" => server.launch(&args).await,
                 other => Err(anyhow!("unknown tool '{other}'")),
             };
             Ok(match result {

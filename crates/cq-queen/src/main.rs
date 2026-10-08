@@ -94,7 +94,7 @@ fn agent_args(name: &str, cfg: &QueenConfig) -> Result<Vec<String>> {
     let mcp_path = dir.join(format!("{name}.mcp.json"));
     std::fs::write(&mcp_path, serde_json::to_vec_pretty(&mcp)?)?;
 
-    let mut tools = vec!["mcp__cq__list_sessions", "mcp__cq__get_turns", "mcp__cq__send"];
+    let mut tools = vec!["mcp__cq__list_sessions", "mcp__cq__get_turns", "mcp__cq__send", "mcp__cq__launch"];
     if cfg.allow_approve {
         tools.push("mcp__cq__approve");
     }
@@ -145,15 +145,7 @@ async fn launch_detached(name: &str, cwd: &std::path::Path, args: Vec<String>) -
         cols: 120,
         rows: 36,
     };
-    conn.send(&Message::Launch(launch)).await?;
-    while let Some(msg) = conn.msgs.recv().await {
-        match msg? {
-            Message::Launched(l) if l.id == 1 => return Ok(l.session),
-            Message::RequestFailed(f) if f.id == 1 => bail!(f.error),
-            _ => {}
-        }
-    }
-    bail!("daemon connection closed")
+    conn.launch(launch).await
 }
 
 /// The running local session of the Queen `name`, if any (session names are unique).

@@ -100,6 +100,8 @@ When the user gives instructions:
 user's intent faithfully; do not add work they did not ask for.
 - Answer a permission prompt with the cq `approve` tool only when the user explicitly says so, \
 using the prompt_id from the update. If the prompt may have changed, check with `get_turns` first.
+- When the user asks for a new session, start it with the cq `launch` tool in the directory they \
+name, with a short name and their instruction as the prompt.
 - If it is unclear which session is meant, ask, listing the candidates.
 
 Use `list_sessions` and `get_turns` when you need more context. Do not do the sessions' work \

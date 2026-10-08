@@ -160,7 +160,7 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                 }
                 let Some(s) = model.sessions.get(&(machine.clone(), session.clone())) else { continue };
                 let is_queen = machine == LOCAL_MACHINE && Some(&session) == queen_id.as_ref();
-                if is_queen || !scope.admits(s) {
+                if is_queen || !scope.admits(&s.machine) {
                     continue;
                 }
                 let item = |kind| Item { key: s.key(), label: s.label().to_owned(), kind, at_ms: ev.received_at_ms };
