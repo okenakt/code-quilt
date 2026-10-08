@@ -219,13 +219,11 @@ export const App = () => {
         case "ui.newSession":
           setNewSessionFor(args.machine || "local");
           return;
-        case "daemon.restart": {
-          const machine = args.machine || "local";
-          restartDaemon(machine)
-            .then(() => showToast(true, `Restarting the daemon on ${machine}`))
+        case "daemon.restart":
+          restartDaemon()
+            .then(() => showToast(true, "Restarting the daemon"))
             .catch((e: unknown) => showToast(false, `daemon.restart: ${String(e)}`));
           return;
-        }
         case "session.end":
         case "session.pin":
         case "session.copyId": {

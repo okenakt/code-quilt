@@ -96,8 +96,8 @@ async fn invoke_command(hub: State<'_, HubState>, name: String, args: serde_json
 }
 
 #[tauri::command]
-fn restart_daemon(hub: State<'_, HubState>, machine: String) -> Result<(), String> {
-    hub.restart_daemon(machine).map_err(err)
+fn restart_daemon(hub: State<'_, HubState>) -> Result<(), String> {
+    hub.restart_daemon().map_err(err)
 }
 
 #[tauri::command]

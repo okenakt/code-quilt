@@ -60,7 +60,7 @@
 | `cq plugin list \| add NAME \| remove NAME \| refresh` | プラグインの一覧・導入・削除・manifestの再読込 |
 | `cq machine list \| add [HOST] [--label L] [--cq-path P] [--login-shell] \| remove ID` | リモートマシンの一覧・登録・削除。HOSTを省くと `~/.ssh/config` から選ぶ |
 | `cq daemon` | daemonを動かす（通常は自動で起動される） |
-| `cq daemon status \| stop \| restart [--machine ID]` | daemonの状態・停止・再起動。止めてもセッションは動き続ける |
+| `cq daemon status \| stop \| restart` | daemonの状態（ローカルと各リモートマシン）、ローカルのdaemonの停止・再起動。止めてもセッションは動き続ける。リモートのdaemonはそのマシンで `cq daemon restart` する |
 | `cq mcp [--scope machine:ID]… [--channel]` | MCPサーバー（stdio）。`--channel` はClaude Codeのチャネルとしても動く |
 | `cq bridge` | 標準入出力をこのマシンのdaemonにつなぐ（`ssh HOST cq bridge` 用） |
 | `cq NAME …` | 組み込みにない名前は `cq-NAME …` を実行する（例 `cq queen`、`cq board`） |
@@ -108,7 +108,7 @@
 | `pane.close` | ペインを閉じる（セッションはデタッチ。空のペイン1つだけのタブではタブを閉じる） | Ctrl+Shift+W |
 | `pane.zoom` | ペインを最大化 / 戻す | Ctrl+Shift+Z |
 | `session.end` / `session.pin` / `session.copyId` | フォーカス中のセッションを終了（確認のモーダルを出す） / ピン留めの切り替え / idのコピー | なし |
-| `daemon.restart` | daemonを再起動（引数 `machine`） | なし |
+| `daemon.restart` | ローカルのdaemonを再起動 | なし |
 
 ### プラグインのコマンド
 

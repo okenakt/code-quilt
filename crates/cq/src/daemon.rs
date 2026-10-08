@@ -249,7 +249,6 @@ fn target_machine(msg: &Message) -> Option<&str> {
         Message::Routed { machine, .. } => Some(machine),
         Message::Launch(l) => Some(&l.machine),
         Message::ListDir(l) => Some(&l.machine),
-        Message::Shutdown(s) => Some(&s.machine),
         _ => None,
     }
 }
@@ -543,7 +542,7 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                 let Some(msg) = handle_desktop(client_id, msg) else { continue };
                 match target_machine(&msg) {
                     None | Some(LOCAL_MACHINE) => {
-                        if matches!(msg, Message::Shutdown(_)) {
+                        if matches!(msg, Message::Shutdown) {
                             ipc::cleanup(&paths::daemon_endpoint()?);
                             std::process::exit(0);
                         }

@@ -35,7 +35,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   builtin("session.end", "End Focused Session"),
   builtin("session.pin", "Pin or Unpin Focused Session"),
   builtin("session.copyId", "Copy Focused Session Id"),
-  builtin("daemon.restart", "Restart Daemon (sessions keep running)", [{ name: "machine", title: "Machine id", default: "local" }]),
+  builtin("daemon.restart", "Restart Daemon"),
 ];
 
 const key = (chord: string, command: string, args: Record<string, string> = {}): Binding => ({ chord, command, args });

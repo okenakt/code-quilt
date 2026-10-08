@@ -21,7 +21,7 @@ mod usage;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
-use cq_proto::{LOCAL_MACHINE, SessionStatus, Size};
+use cq_proto::{SessionStatus, Size};
 use std::ffi::OsString;
 use std::time::Duration;
 
@@ -166,16 +166,11 @@ enum Cmd {
 enum DaemonCmd {
     /// Show whether the local daemon and the remote machines are running.
     Status,
-    /// Stop a daemon.
-    Stop {
-        #[arg(long, default_value = LOCAL_MACHINE)]
-        machine: String,
-    },
-    /// Stop a daemon and start it again (e.g. after updating cq).
-    Restart {
-        #[arg(long, default_value = LOCAL_MACHINE)]
-        machine: String,
-    },
+    /// Stop the local daemon.
+    Stop,
+    /// Stop the local daemon and start it again (e.g. after updating cq). For a remote machine,
+    /// run this there.
+    Restart,
 }
 
 #[derive(Subcommand)]
@@ -329,8 +324,8 @@ async fn run(cmd: Cmd) -> Result<i32> {
             match action {
                 None => daemon::run().await?,
                 Some(DaemonCmd::Status) => cli::daemon_status().await?,
-                Some(DaemonCmd::Stop { machine }) => cli::daemon_stop(&machine, false).await?,
-                Some(DaemonCmd::Restart { machine }) => cli::daemon_stop(&machine, true).await?,
+                Some(DaemonCmd::Stop) => cli::daemon_stop(false).await?,
+                Some(DaemonCmd::Restart) => cli::daemon_stop(true).await?,
             }
             Ok(0)
         }
