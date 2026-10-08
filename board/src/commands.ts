@@ -14,8 +14,6 @@ export type Command = {
   /** Plugin that declares it; built-in UI commands have none. */
   plugin?: string | null;
   args: CommandArg[];
-  /** Distinguishes press and release (push-to-talk). */
-  hold: boolean;
   palette: boolean;
 };
 
@@ -28,7 +26,6 @@ export type BindingLayer = "builtin" | "plugin" | "user";
 type PluginCommand = {
   name: string;
   title: string;
-  hold?: boolean;
   palette?: boolean;
   plugin?: string | null;
   args?: CommandArg[];
@@ -51,7 +48,7 @@ const applyCommands = (list: PluginCommand[]) => {
   set({
     plugins: list
       .filter((c) => c.palette)
-      .map((c) => ({ name: c.name, title: c.title, plugin: c.plugin, args: c.args ?? [], hold: c.hold ?? false, palette: true })),
+      .map((c) => ({ name: c.name, title: c.title, plugin: c.plugin, args: c.args ?? [], palette: true })),
     pluginKeys: list.flatMap((c) => {
       const chord = c.keybinding ? parseChord(c.keybinding) : null;
       return chord ? [{ chord, command: c.name, args: {} }] : [];
@@ -81,8 +78,8 @@ export const useCommandState = (): State =>
   );
 
 /** Runs a plugin command through the daemon; resolves to its message. */
-export const invokePluginCommand = (name: string, args: Record<string, string>, phase = "invoke"): Promise<string> =>
-  invoke("invoke_command", { name, args, phase });
+export const invokePluginCommand = (name: string, args: Record<string, string>): Promise<string> =>
+  invoke("invoke_command", { name, args });
 
 /** Bindings from `keybindings.toml`, with problems reported. A command prefixed with `-`
  * removes that key's binding (or all of the command's default bindings without a key). */

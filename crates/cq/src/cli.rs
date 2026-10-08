@@ -267,7 +267,6 @@ pub async fn run_command(name: &str, args: &[String]) -> Result<i32> {
     let mut conn = cq_client::DaemonClient::open(false).await?;
     let inv = cq_proto::InvokeCommand {
         name: name.to_owned(),
-        phase: "invoke".into(),
         args: serde_json::Value::Object(map),
         id: Some(1),
         context: None,

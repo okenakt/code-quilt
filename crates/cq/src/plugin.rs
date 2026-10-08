@@ -97,8 +97,6 @@ pub struct ManifestCommand {
     pub name: String,
     pub title: String,
     #[serde(default)]
-    pub hold: bool,
-    #[serde(default)]
     pub args: Vec<CommandArg>,
     #[serde(default)]
     pub keybinding: Option<String>,
@@ -132,7 +130,6 @@ impl ManifestCommand {
         CommandInfo {
             name: self.name.clone(),
             title: self.title.clone(),
-            hold: self.hold,
             palette: true,
             plugin: Some(plugin.to_owned()),
             args: self.args.clone(),

@@ -258,44 +258,21 @@ export const App = () => {
     list.forEach((c) => runCommand(c.command, c.args));
   }, [loaded, localOnline, config, runCommand, showToast]);
 
-  // Keys bound to commands are handled here, before the terminal sees them. Hold commands
-  // (push-to-talk) get press on key down and release on key up.
-  const held = useRef(new Map<string, string>());
+  // Keys bound to commands are handled here, before the terminal sees them.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // The keybindings view is recording a new key; it handles the press itself.
-      if (isRecording()) return;
-      if (e.type === "keyup") {
-        const command = held.current.get(e.code);
-        if (command) {
-          held.current.delete(e.code);
-          void invokePluginCommand(command, {}, "release").catch(() => undefined);
-        }
-        return;
-      }
-      if (e.isComposing) return;
+      if (isRecording() || e.isComposing) return;
       const chord = chordOfEvent(e);
       const b = chord ? keymap.byChord.get(chord) : undefined;
       if (!b) return;
       e.preventDefault();
       e.stopPropagation();
-      const cmd = allCommands.find((c) => c.name === b.command);
-      if (cmd?.hold) {
-        if (!e.repeat) {
-          held.current.set(e.code, cmd.name);
-          void invokePluginCommand(cmd.name, b.args, "press").catch(() => undefined);
-        }
-        return;
-      }
       if (!e.repeat) runCommand(b.command, b.args);
     };
     window.addEventListener("keydown", onKey, true);
-    window.addEventListener("keyup", onKey, true);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("keyup", onKey, true);
-    };
-  }, [keymap, allCommands, runCommand]);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [keymap, runCommand]);
 
   const waiting = pendingApprovals(sessions).length;
 

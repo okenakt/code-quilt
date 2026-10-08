@@ -91,13 +91,8 @@ fn commands(hub: State<'_, HubState>) -> Vec<CommandInfo> {
 }
 
 #[tauri::command]
-async fn invoke_command(
-    hub: State<'_, HubState>,
-    name: String,
-    args: serde_json::Value,
-    phase: String,
-) -> Result<String, String> {
-    hub.invoke_command(name, args, phase).await.map_err(err)
+async fn invoke_command(hub: State<'_, HubState>, name: String, args: serde_json::Value) -> Result<String, String> {
+    hub.invoke_command(name, args).await.map_err(err)
 }
 
 #[tauri::command]

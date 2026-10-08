@@ -200,14 +200,11 @@ pub struct Rename {
 }
 
 /// A command: declared in a plugin manifest, or registered at run time by a client that
-/// handles it (e.g. `whisper.pushToTalk`).
+/// handles it (e.g. `channel:<session>`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandInfo {
     pub name: String,
     pub title: String,
-    /// The command distinguishes press and release (push-to-talk).
-    #[serde(default)]
-    pub hold: bool,
     /// Shown in the command palette and bindable to keys. Commands only registered at run time
     /// (e.g. `channel:<session>`) are for programs and stay hidden.
     #[serde(default)]
@@ -237,9 +234,6 @@ pub struct CommandArg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvokeCommand {
     pub name: String,
-    /// `invoke`, or `press` / `release` for hold commands.
-    #[serde(default = "default_phase")]
-    pub phase: String,
     #[serde(default)]
     pub args: serde_json::Value,
     /// Caller-chosen id echoed in the `CommandResult`; none means no result is wanted.
@@ -257,10 +251,6 @@ pub struct CommandResult {
     pub ok: bool,
     #[serde(default)]
     pub message: String,
-}
-
-fn default_phase() -> String {
-    "invoke".into()
 }
 
 /// Request to open a relayed connection to a session through the daemon.

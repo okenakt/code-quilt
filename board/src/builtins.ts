@@ -5,7 +5,6 @@ const builtin = (name: string, title: string, args: Command["args"] = []): Comma
   title,
   plugin: null,
   args,
-  hold: false,
   palette: true,
 });
 

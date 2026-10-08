@@ -225,7 +225,6 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                         }
                         Message::InvokeCommand(InvokeCommand {
                             name: channel,
-                            phase: "invoke".into(),
                             args: json!({ "content": content, "meta": { "kind": "update", "items": pending.len().to_string() } }),
                             id: None,
                             context: None,

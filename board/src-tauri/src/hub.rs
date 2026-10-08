@@ -187,16 +187,11 @@ impl Hub {
         self.cache.lock().unwrap().commands.clone()
     }
 
-    /// Runs a command through the daemon. Plain invocations wait for the outcome (plugins may
-    /// run for up to two minutes); press and release of hold commands are sent without waiting.
-    pub async fn invoke_command(&self, name: String, args: serde_json::Value, phase: String) -> Result<String> {
-        let wait = phase == "invoke";
-        let id = wait.then(|| self.next_id());
-        let inv = InvokeCommand { name, phase, args, id, context: None };
-        let Some(id) = id else {
-            self.send(Message::InvokeCommand(inv))?;
-            return Ok(String::new());
-        };
+    /// Runs a command through the daemon and waits for the outcome (plugins may run for up to
+    /// two minutes).
+    pub async fn invoke_command(&self, name: String, args: serde_json::Value) -> Result<String> {
+        let id = self.next_id();
+        let inv = InvokeCommand { name, args, id: Some(id), context: None };
         match self.call_within(id, Message::InvokeCommand(inv), Duration::from_secs(130)).await? {
             Message::CommandResult(r) => Ok(r.message),
             _ => Ok(String::new()),
