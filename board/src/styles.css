@@ -638,7 +638,10 @@ kbd {
   border-radius: 4px;
   width: 20px;
   height: 18px;
-  line-height: 14px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   color: var(--text);
 }
