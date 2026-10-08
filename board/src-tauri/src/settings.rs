@@ -44,7 +44,7 @@ const DEFAULT_UI: &str = r#"# CodeQuilt board settings (docs/design.md, "UI sett
 # Sessions pinned to the top of the list by name (each can still be unpinned in the list).
 pinned = ["queen"]
 
-# Commands run in order when the board starts; failures are shown as notifications.
+# Commands run in order when the board starts; failures are shown as toasts.
 # The Queen uses Claude and asks you to confirm its channel when it starts.
 [[on_start]]
 command = "queen.start"

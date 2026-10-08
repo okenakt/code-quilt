@@ -18,19 +18,10 @@ type Snapshot = {
   sessions: SessionState[];
 };
 
-/** Something the UI should react to once (notifications), produced by live (non-replayed) events. */
-export type Signal =
-  | { type: "approval"; session: SessionState }
-  | { type: "turn-done"; session: SessionState; message: string | null };
-
 let machines: MachineInfo[] = [];
 const sessions = new Map<string, SessionState>();
 let snapshot: Snapshot = { machines, sessions: [] };
 const listeners = new Set<() => void>();
-const signalListeners = new Set<(s: Signal) => void>();
-
-/** Events older than this were replayed from host history and must not trigger notifications. */
-const startedAt = Date.now();
 
 const emit = () => {
   snapshot = {
@@ -40,14 +31,6 @@ const emit = () => {
     ),
   };
   listeners.forEach((l) => l());
-};
-
-const signal = (s: Signal) => signalListeners.forEach((l) => l(s));
-
-/** Subscribes to one-shot UI signals; returns an unsubscribe function. */
-export const onSignal = (l: (s: Signal) => void): (() => void) => {
-  signalListeners.add(l);
-  return () => signalListeners.delete(l);
 };
 
 /** React hook returning the current machines and sessions. */
@@ -149,7 +132,6 @@ const parseTokens = (v: unknown): TokenUsage | null => {
 export const applyEvent = (machine: string, session: string, ev: AgentEvent): void => {
   const s = sessions.get(sessionKey(machine, session));
   if (!s) return;
-  const live = ev.received_at_ms >= startedAt;
   let activity: Activity = s.activity;
   let prompt = s.prompt;
   let status = s.status;
@@ -167,7 +149,6 @@ export const applyEvent = (machine: string, session: string, ev: AgentEvent): vo
         break;
       case "Stop":
         activity = "idle";
-        if (live) signal({ type: "turn-done", session: s, message: str(ev.payload, "last_assistant_message") });
         break;
       case "Notification":
         if (str(ev.payload, "notification_type") === "permission_prompt") activity = "approval";
@@ -191,7 +172,6 @@ export const applyEvent = (machine: string, session: string, ev: AgentEvent): vo
   if (s.meta.status === "exited") activity = "exited";
   const next = { ...s, activity, prompt, status, account, tokens, lastActivityAt: Math.max(s.lastActivityAt, ev.received_at_ms) };
   sessions.set(s.key, next);
-  if (live && prompt && prompt !== s.prompt) signal({ type: "approval", session: next });
   emit();
 };
 

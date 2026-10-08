@@ -23,7 +23,6 @@ import {
   useLayout,
   type Side,
 } from "./layout";
-import { notify } from "./notify";
 import { BUILTIN_COMMANDS, BUILTIN_KEYS } from "./builtins";
 import { invokePluginCommand, isRecording, targetKey, onStartCommands, pinnedNames, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
 import { CommandPalette } from "./components/command-palette";
@@ -32,7 +31,7 @@ import { KeybindingsView } from "./components/keybindings-view";
 import { chordOfEvent } from "./keys";
 import { togglePin, usePins } from "./pins";
 import { toggleSidebar, usePrefs } from "./prefs";
-import { applyEvent, displayName, markExited, onSignal, setMachines, setSessions, useStore } from "./store";
+import { applyEvent, displayName, markExited, setMachines, setSessions, useStore } from "./store";
 import type { SessionState } from "./types";
 
 const sideOf = (command: string): Side => {
@@ -40,7 +39,7 @@ const sideOf = (command: string): Side => {
   return dir === "left" || dir === "right" || dir === "up" ? dir : "down";
 };
 
-/** Root component: session list, tabs of panes, usage, approvals and notifications. */
+/** Root component: session list, tabs of panes, usage, approvals and toasts. */
 export const App = () => {
   const { machines, sessions } = useStore();
   const layout = useLayout();
@@ -60,8 +59,6 @@ export const App = () => {
   }, []);
   const sessionsRef = useRef<SessionState[]>(sessions);
   sessionsRef.current = sessions;
-  const activeKeyRef = useRef(activeKey);
-  activeKeyRef.current = activeKey;
 
   useEffect(() => {
     let off: (() => void) | null = null;
@@ -91,16 +88,6 @@ export const App = () => {
     };
   }, []);
 
-  useEffect(
-    () =>
-      onSignal((s) => {
-        const name = displayName(s.session);
-        const visible = document.hasFocus() && activeKeyRef.current === s.session.key;
-        if (s.type === "approval") void notify(`Approval needed · ${name}`, s.session.prompt?.text.split("\n")[0] ?? "");
-        else if (!visible) void notify(`Turn finished · ${name}`, (s.message ?? "").slice(0, 160));
-      }),
-    [],
-  );
   const openSession = useCallback((s: SessionState) => openInActiveTab(s.key), []);
 
   const launch = useCallback(

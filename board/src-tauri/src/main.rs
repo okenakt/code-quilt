@@ -192,7 +192,6 @@ fn main() {
         return;
     }
     tauri::Builder::default()
-        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let hub = Hub::start(app.handle().clone());
             app.manage(hub);
