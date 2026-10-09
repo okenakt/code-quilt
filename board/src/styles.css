@@ -1553,3 +1553,8 @@ kbd {
 .session-name-input.invalid {
   border-color: var(--danger);
 }
+
+/* Machines read as the outer level, as in the left sidebar's Machines section. */
+.token-machine-name {
+  color: var(--muted);
+}

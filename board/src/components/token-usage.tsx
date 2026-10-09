@@ -144,7 +144,7 @@ export const TokenUsage = ({ sessions, machines }: { sessions: SessionState[]; m
             .map((u) => (
               <div key={`${u.machine}\n${u.cwd}\n${u.agent}`} className="token-entry">
                 <div className="token-entry-place" title={u.cwd}>
-                  {u.machineLabel} {baseName(u.cwd)}
+                  <span className="token-machine-name">{u.machineLabel}</span> {baseName(u.cwd)}
                 </div>
                 <AgentUsage u={u} max={max} />
               </div>
@@ -156,7 +156,7 @@ export const TokenUsage = ({ sessions, machines }: { sessions: SessionState[]; m
               <div key={ofMachine[0].machine} className="token-machine">
                 <button className="token-machine-head" onClick={() => toggleFold(foldKey)}>
                   <Fold open={open} />
-                  <span className="token-name">{ofMachine[0].machineLabel}</span>
+                  <span className="token-name token-machine-name">{ofMachine[0].machineLabel}</span>
                   <span className="token-total">{formatTokens(ofMachine.reduce((n, u) => n + u.total, 0))}</span>
                 </button>
                 {open &&
