@@ -2,6 +2,7 @@ import { ArrowLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { listDir, type Agent, type DirList } from "../api";
 import type { MachineInfo } from "../types";
+import { DirName } from "./dir-name";
 
 type Props = {
   machines: MachineInfo[];
@@ -88,14 +89,14 @@ export const NewSessionDialog = ({ machines, initialMachine, onLaunch, onClose }
         </label>
         <div className="field">
           <span>folder</span>
-          <div className="dir-current">{cwd ?? "choose a folder"}</div>
+          <div className="dir-current">{cwd ? <DirName path={cwd} /> : "choose a folder"}</div>
         </div>
         {!browser && (
           <ul className="dir-list">
             {known.map((dir) => (
               <li key={dir}>
                 <button className={dir === cwd ? "selected" : ""} onClick={() => setCwd(dir)}>
-                  {dir}
+                  <DirName path={dir} />
                 </button>
               </li>
             ))}
@@ -122,7 +123,9 @@ export const NewSessionDialog = ({ machines, initialMachine, onLaunch, onClose }
             )}
             {browser.entries.map((name) => (
               <li key={name}>
-                <button onClick={() => browse(browser.path ? join(browser.path, name) : name)}>{name}</button>
+                <button onClick={() => browse(browser.path ? join(browser.path, name) : name)}>
+                  <DirName path={name} />
+                </button>
               </li>
             ))}
           </ul>

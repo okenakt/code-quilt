@@ -7,6 +7,7 @@ import { Fold, SidebarSection, isExpanded } from "./sidebar-section";
 import { baseName } from "../path";
 import { isPinned, togglePin, type Pins } from "../pins";
 import { AgentBadge } from "./agent-badge";
+import { DirName } from "./dir-name";
 import { SessionName } from "./session-name";
 import { displayName } from "../store";
 import type { Activity, MachineInfo, SessionState } from "../types";
@@ -39,7 +40,7 @@ const SessionDetails = ({ s, machine }: { s: SessionState; machine: MachineInfo 
   const ctx = st?.contextPercent ?? null;
   const rows: [string, ReactNode][] = [
     ["machine", machine?.label ?? s.machine],
-    ["cwd", s.meta.cwd],
+    ["cwd", <DirName path={s.meta.cwd} />],
     ...(st?.model ? [["model", st.model] as [string, ReactNode]] : []),
     ...(ctx !== null
       ? [

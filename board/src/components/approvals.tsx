@@ -3,6 +3,7 @@ import { Minus } from "lucide-react";
 import { approve } from "../api";
 import { displayName } from "../store";
 import type { MachineInfo, SessionState } from "../types";
+import { DirName } from "./dir-name";
 
 /** Identifies one prompt of one session, so a newer prompt shows up again after minimizing. */
 export const promptKey = (s: SessionState): string => `${s.key}#${s.prompt?.id ?? ""}`;
@@ -51,7 +52,9 @@ const Card = ({ s, machine, focusToken, onMinimize }: { s: SessionState; machine
         <dt>machine</dt>
         <dd>{machine}</dd>
         <dt>cwd</dt>
-        <dd>{s.meta.cwd}</dd>
+        <dd>
+          <DirName path={s.meta.cwd} />
+        </dd>
       </dl>
       <pre className="approval-text">{prompt.text}</pre>
       <div className="approval-options">
