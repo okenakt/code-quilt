@@ -178,6 +178,8 @@ struct State {
     last_input: std::time::Instant,
     /// Text waiting for the session to become idle.
     injections: VecDeque<Inject>,
+    /// Injected text was submitted (first and latest Enter) and no prompt has been submitted since.
+    pending_submit: Option<(std::time::Instant, std::time::Instant)>,
     /// Codex: an answered prompt that may still need Enter to confirm the selection.
     pending_confirm: Option<(String, std::time::Instant)>,
     /// Kills the agent process; used when a graceful exit does not finish in time.
@@ -335,11 +337,7 @@ impl State {
         if self.last_input.elapsed() < Duration::from_millis(next.quiet_ms) {
             return;
         }
-        let input_empty = match self.meta.agent.as_str() {
-            "claude" => agent::claude_input_empty(self.parser.screen()),
-            _ => Some(true),
-        };
-        if input_empty != Some(true) {
+        if self.input_empty() != Some(true) {
             return;
         }
         let inj = self.injections.pop_front().expect("checked above");
@@ -347,12 +345,35 @@ impl State {
         if inj.submit {
             bytes.push(b'\r');
             self.agent_idle = false;
+            self.pending_submit = Some((std::time::Instant::now(), std::time::Instant::now()));
         }
         self.write_input(bytes);
         let ok = true;
         self.last_input = std::time::Instant::now();
         let payload = serde_json::json!({ "type": "inject_result", "id": inj.id, "ok": ok });
         self.publish(AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload });
+    }
+
+    fn input_empty(&self) -> Option<bool> {
+        match self.meta.agent.as_str() {
+            "claude" => agent::claude_input_empty(self.parser.screen()),
+            "codex" => agent::codex_input_empty(self.parser.screen()),
+            _ => Some(true),
+        }
+    }
+
+    /// Presses Enter again while injected text still sits in the input box without a prompt
+    /// having been submitted. Codex on Windows reads a long paste as fast typing and may take
+    /// the Enter after it as a line break.
+    fn confirm_submit(&mut self) {
+        let Some((first, latest)) = self.pending_submit else { return };
+        // Give up after a while, or once someone types (the text may be theirs now).
+        if first.elapsed() > Duration::from_secs(10) || self.last_input.duration_since(first) > Duration::from_millis(100) {
+            self.pending_submit = None;
+        } else if latest.elapsed() > Duration::from_millis(1500) && self.prompt.is_none() && self.input_empty() == Some(false) {
+            let _ = self.pty_tx.send(b"\r".to_vec());
+            self.pending_submit = Some((first, std::time::Instant::now()));
+        }
     }
 
     fn apply_size(&mut self, size: Size) {
@@ -480,6 +501,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
         agent_idle: args.agent == "codex",
         last_input: std::time::Instant::now(),
         injections: VecDeque::new(),
+        pending_submit: None,
         pending_confirm: None,
         killer,
         terminating: false,
@@ -494,6 +516,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
                 st.scan_prompt();
                 st.try_inject();
                 st.confirm_pending();
+                st.confirm_submit();
             }
         });
     }
@@ -832,7 +855,10 @@ fn handle_event(state: &Shared, ev: AgentEvent) {
     let hook = if ev.source == "hook" { ev.payload.get("hook_event_name").and_then(|v| v.as_str()) } else { None };
     match hook {
         Some("SessionStart" | "Stop") => st.agent_idle = true,
-        Some("UserPromptSubmit") => st.agent_idle = false,
+        Some("UserPromptSubmit") => {
+            st.agent_idle = false;
+            st.pending_submit = None;
+        }
         _ => {}
     }
     if hook == Some("SessionStart") {

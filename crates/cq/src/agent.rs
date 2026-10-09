@@ -70,10 +70,27 @@ pub fn claude_input_empty(screen: &vt100::Screen) -> Option<bool> {
     if next_is_rule && after.starts_with("Try \"") && after.ends_with('"') {
         return Some(true);
     }
+    input_empty_from(screen, row, '❯', |r| is_rule(&text(r)))
+}
+
+/// Whether Codex's composer is empty (only a dim placeholder after `›`). The composer is the last
+/// `›` line, continued by the following lines up to a blank one.
+pub fn codex_input_empty(screen: &vt100::Screen) -> Option<bool> {
+    let (rows, cols) = screen.size();
+    let text = |r: u16| screen.contents_between(r, 0, r, cols);
+    let row = (0..rows).rev().find(|&r| text(r).trim_start().starts_with('›'))?;
+    input_empty_from(screen, row, '›', |r| text(r).trim().is_empty())
+}
+
+/// Whether an input box starting at `row` after `marker` and ending before the first later row
+/// for which `end` holds shows only dim or hint-colored text.
+fn input_empty_from(screen: &vt100::Screen, row: u16, marker: char, end: impl Fn(u16) -> bool) -> Option<bool> {
+    let (rows, cols) = screen.size();
+    let first = screen.contents_between(row, 0, row, cols);
+    let start = first[..first.find(marker)?].chars().count() as u16 + 1;
     let mut r = row;
-    while r < rows && !(r > row && is_rule(&text(r))) {
-        let start = if r == row { text(r).find('❯').map(|i| text(r)[..i].chars().count() as u16 + 1)? } else { 0 };
-        for c in start..cols {
+    while r < rows && !(r > row && end(r)) {
+        for c in if r == row { start } else { 0 }..cols {
             let Some(cell) = screen.cell(r, c) else { continue };
             if cell.has_contents() && !cell.contents().trim().is_empty() && !cell.dim() && !is_hint_color(cell.fgcolor()) {
                 return Some(false);
@@ -89,7 +106,7 @@ pub fn debug_input_row(screen: &vt100::Screen) {
     let (rows, cols) = screen.size();
     for r in 0..rows {
         let line = screen.contents_between(r, 0, r, cols);
-        if !line.trim_start().starts_with('❯') {
+        if !line.trim_start().starts_with(['❯', '›']) {
             continue;
         }
         let above = if r > 0 { screen.contents_between(r - 1, 0, r - 1, cols) } else { String::new() };
@@ -294,6 +311,16 @@ mod tests {
         let p = screen_of(&format!("{rule}\r\n❯ \r\n  second line\r\n{rule}"));
         assert_eq!(claude_input_empty(p.screen()), Some(false));
         assert_eq!(claude_input_empty(screen_of("no box here").screen()), None);
+    }
+
+    #[test]
+    fn codex_composer_is_the_last_prompt_line() {
+        let history = "› earlier prompt\r\n  reply\r\n\r\n";
+        let footer = "\r\n\r\n  GPT medium · ~\\repo";
+        let p = screen_of(&format!("{history}› \x1b[2mAsk Codex to do anything\x1b[0m{footer}"));
+        assert_eq!(codex_input_empty(p.screen()), Some(true));
+        let p = screen_of(&format!("{history}› line one\r\n  line two{footer}"));
+        assert_eq!(codex_input_empty(p.screen()), Some(false));
     }
 
     #[test]

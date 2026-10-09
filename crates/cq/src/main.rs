@@ -146,9 +146,12 @@ enum Cmd {
     /// Agent hook endpoint (internal).
     #[command(hide = true)]
     Hook,
-    /// Developer aid: read raw terminal bytes on stdin and print what the screen adapters see.
+    /// Developer aid: print what the screen adapters see, from raw terminal bytes on stdin or
+    /// from the current screen of a local session (`--session ID`).
     #[command(hide = true)]
     DebugScreen {
+        #[arg(long)]
+        session: Option<String>,
         #[arg(long, default_value_t = 120)]
         cols: u16,
         #[arg(long, default_value_t = 36)]
@@ -337,11 +340,20 @@ async fn run(cmd: Cmd) -> Result<i32> {
                 .await?;
             Ok(0)
         }
-        Cmd::DebugScreen { cols, rows } => {
-            let mut raw = Vec::new();
-            std::io::Read::read_to_end(&mut std::io::stdin(), &mut raw)?;
+        Cmd::DebugScreen { session, cols, rows } => {
+            let raw = match session {
+                Some(id) => cli::screen_snapshot(&id).await?,
+                None => {
+                    let mut raw = Vec::new();
+                    std::io::Read::read_to_end(&mut std::io::stdin(), &mut raw)?;
+                    raw
+                }
+            };
             let mut p = vt100::Parser::new(rows, cols, 0);
             p.process(&raw);
+            for (i, line) in host::screen_lines(p.screen()).lines().enumerate() {
+                println!("{i:>3}| {line}");
+            }
             println!("input_empty: {:?}", agent::claude_input_empty(p.screen()));
             println!("prompt: {:?}", agent::find_choice_prompt(&host::screen_lines(p.screen())));
             agent::debug_input_row(p.screen());

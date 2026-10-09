@@ -159,7 +159,10 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                     continue;
                 }
                 let Some(s) = model.sessions.get(&(machine.clone(), session.clone())) else { continue };
-                let is_queen = machine == LOCAL_MACHINE && Some(&session) == queen_id.as_ref();
+                // Queens (this one and any other with a running courier) are not reported, or two
+                // Queens would keep answering each other's updates.
+                let is_queen = machine == LOCAL_MACHINE
+                    && (Some(&session) == queen_id.as_ref() || s.meta.name.as_ref().is_some_and(|n| commands.contains(&format!("queen:{n}"))));
                 if is_queen || !scope.admits(&s.machine) {
                     continue;
                 }

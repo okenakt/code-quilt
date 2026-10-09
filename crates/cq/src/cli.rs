@@ -343,3 +343,19 @@ pub async fn daemon_stop(restart: bool) -> Result<()> {
     }
     Ok(())
 }
+
+/// The escape sequences that redraw a local session's current screen, read like a dashboard
+/// does (without taking the input or changing the size).
+pub async fn screen_snapshot(target: &str) -> Result<Vec<u8>> {
+    let id = crate::session::pick(&crate::session::list()?, target)?.id.clone();
+    let stream = crate::ipc::connect(&crate::paths::session_endpoint(&id)?, Duration::from_secs(2)).await?;
+    let (mut rd, mut wr) = tokio::io::split(stream);
+    let hello = cq_proto::Hello { protocol_version: cq_proto::PROTOCOL_VERSION, kind: cq_proto::ClientKind::Hub, cols: 0, rows: 0, federate: false };
+    cq_proto::write_message(&mut wr, &Message::Hello(hello)).await?;
+    while let Some(msg) = cq_proto::read_message(&mut rd).await? {
+        if let Message::Snapshot(bytes) = msg {
+            return Ok(bytes);
+        }
+    }
+    bail!("session {id} closed before sending its screen")
+}
