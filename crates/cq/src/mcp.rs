@@ -20,6 +20,8 @@ struct Server {
     scope: cq_client::Scope,
     /// Declare the Claude Code channel capability.
     channel: bool,
+    /// Serve a worker session (only [`WORKER_TOOLS`]) rather than an orchestrator.
+    worker: bool,
     /// The session this server runs inside (the orchestrator itself), if any.
     own: Option<String>,
 }
@@ -104,6 +106,23 @@ impl Server {
         Ok(json!({ "session": s.key(), "name": s.meta.name, "state": s.activity.as_str(), "permission_prompt": s.prompt, "turns": turns }))
     }
 
+    /// Queues a message from this session for another one: it is typed in once that session is
+    /// idle and nobody is typing there, marked with who sent it.
+    fn message(&self, args: &Value) -> Result<Value> {
+        let s = self.resolve(str_arg(args, "session")?)?;
+        let text = str_arg(args, "text")?;
+        let from = {
+            let m = self.model.lock().unwrap();
+            let own = self.own.as_deref().and_then(|id| m.sessions.get(&(LOCAL_MACHINE.to_owned(), id.to_owned())));
+            own.map_or_else(|| "outside CodeQuilt".to_owned(), |o| format!("{} ({})", o.label(), o.key()))
+        };
+        let inject = cq_proto::Inject { id: crate::session::now_ms(), text: format!("[from {from}] {text}"), submit: true, quiet_ms: 3000 };
+        self.tx
+            .send(Message::Routed { machine: s.machine.clone(), session: s.meta.id.clone(), inner: Box::new(Message::Inject(inject)) })
+            .map_err(|_| anyhow!("daemon connection closed"))?;
+        Ok(json!({ "queued_for": s.key(), "name": s.meta.name }))
+    }
+
     fn send(&self, args: &Value) -> Result<Value> {
         let s = self.resolve(str_arg(args, "session")?)?;
         let text = str_arg(args, "text")?;
@@ -139,6 +158,7 @@ impl Server {
             cwd,
             args: Vec::new(),
             name: name.clone(),
+            no_mcp: false,
             cols: 120,
             rows: 36,
         };
@@ -188,9 +208,19 @@ fn str_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
     args.get(key).and_then(Value::as_str).ok_or_else(|| anyhow!("missing '{key}'"))
 }
 
-fn tools() -> Value {
+/// The tools a worker session gets: it can see the other sessions and leave them messages, but not
+/// type for the user, answer their prompts or start sessions.
+pub const WORKER_TOOLS: [&str; 3] = ["list_sessions", "get_turns", "message"];
+
+/// The tools of this server; a worker gets only [`WORKER_TOOLS`].
+fn tools(worker: bool) -> Value {
     let session = json!({ "type": "string", "description": "Session name, machine:id, or id prefix" });
-    json!([
+    let all = json!([
+        {
+            "name": "message",
+            "description": "Leave a message for another coding agent session. It is typed into that session as a prompt once the session is idle, starting with [from <your name> (<machine:id>)] so it can tell the message came from you and not from the user. Write it so it can be acted on without this conversation. When you receive such a message, reply with this tool only if a reply is needed.",
+            "inputSchema": { "type": "object", "properties": { "session": session, "text": { "type": "string" } }, "required": ["session", "text"] }
+        },
         {
             "name": "list_sessions",
             "description": "List coding agent sessions in scope: machine, name, directory, state (working / idle / approval / exited), any pending permission prompt, and the start of the last prompt and reply.",
@@ -222,7 +252,9 @@ fn tools() -> Value {
             "description": "Answer a session's permission prompt with one of its numbered options. Only on the user's explicit instruction. prompt_id must come from list_sessions or get_turns; the call fails if the prompt changed.",
             "inputSchema": { "type": "object", "properties": { "session": session, "prompt_id": { "type": "string" }, "option": { "type": "integer", "minimum": 1 } }, "required": ["session", "prompt_id", "option"] }
         }
-    ])
+    ]);
+    let keep = |t: &&Value| !worker || t["name"].as_str().is_some_and(|n| WORKER_TOOLS.contains(&n));
+    Value::Array(all.as_array().expect("array").iter().filter(keep).cloned().collect())
 }
 
 /// Name of the desktop command that delivers channel messages to the session `id`.
@@ -294,7 +326,7 @@ async fn daemon_loop(
 
 /// Runs the MCP server on stdin/stdout. With `channel`, the server is also a Claude Code channel:
 /// invoking the desktop command [`channel_command`] for this session pushes a message into it.
-pub async fn run(scope: cq_client::Scope, channel: bool) -> Result<()> {
+pub async fn run(scope: cq_client::Scope, channel: bool, worker: bool) -> Result<()> {
     let own = std::env::var("CQ_SESSION_ID").ok();
     if channel && own.is_none() {
         bail!("--channel needs to run inside a CodeQuilt session (CQ_SESSION_ID is not set)");
@@ -315,7 +347,7 @@ pub async fn run(scope: cq_client::Scope, channel: bool) -> Result<()> {
     let channel_cfg = if channel { own.as_deref().map(|id| (channel_command(id), out_tx.clone())) } else { None };
     let approvals: Approvals = Arc::default();
     tokio::spawn(daemon_loop(model.clone(), approvals.clone(), rx, channel_cfg));
-    let server = Arc::new(Server { model, approvals, tx, scope, channel, own });
+    let server = Arc::new(Server { model, approvals, tx, scope, channel, worker, own });
 
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     while let Some(line) = lines.next_line().await? {
@@ -351,7 +383,7 @@ async fn handle(server: &Server, req: &Value) -> Result<Value> {
             }))
         }
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tools() })),
+        "tools/list" => Ok(json!({ "tools": tools(server.worker) })),
         "tools/call" => {
             // Give the first session lists a moment to arrive after startup.
             for _ in 0..30 {
@@ -363,9 +395,11 @@ async fn handle(server: &Server, req: &Value) -> Result<Value> {
             let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
             let result = match name {
+                other if server.worker && !WORKER_TOOLS.contains(&other) => Err(anyhow!("tool '{other}' is not available to worker sessions")),
                 "list_sessions" => server.list_sessions(&args),
                 "get_turns" => server.get_turns(&args),
                 "send" => server.send(&args),
+                "message" => server.message(&args),
                 "approve" => server.approve(&args).await,
                 "launch" => server.launch(&args).await,
                 other => Err(anyhow!("unknown tool '{other}'")),

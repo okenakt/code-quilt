@@ -35,13 +35,14 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Run claude inside a detachable CodeQuilt session. `--cq-name NAME` names the session
-    /// (unique among running ones); other arguments go to claude.
+    /// (unique among running ones), `--cq-no-mcp` leaves out the cq MCP server that lets it see
+    /// and message the other sessions; other arguments go to claude.
     #[command(disable_help_flag = true)]
     Claude {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Run codex inside a detachable CodeQuilt session (same `--cq-name` option as `claude`).
+    /// Run codex inside a detachable CodeQuilt session (same `--cq-*` options as `claude`).
     #[command(disable_help_flag = true)]
     Codex {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -122,6 +123,9 @@ enum Cmd {
         /// Also act as a Claude Code channel that orchestrators can push messages into.
         #[arg(long)]
         channel: bool,
+        /// Serve a worker session: only list_sessions, get_turns and message.
+        #[arg(long)]
+        worker: bool,
     },
     /// Run the machine daemon that relays sessions to dashboards (started automatically), or
     /// manage it. Sessions keep running when it stops.
@@ -214,18 +218,20 @@ enum MachineCmd {
     Remove { id: String },
 }
 
-/// Takes `--cq-name NAME` out of the agent arguments.
-fn split_name(args: Vec<String>) -> (Option<String>, Vec<String>) {
-    let mut name = None;
+/// Takes `--cq-name NAME` and `--cq-no-mcp` out of the agent arguments: the session's name and
+/// whether it gets CodeQuilt's worker MCP server.
+fn split_labels(args: Vec<String>) -> (Option<String>, bool, Vec<String>) {
+    let (mut name, mut mcp) = (None, true);
     let mut rest = Vec::new();
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--cq-name" => name = it.next(),
+            "--cq-no-mcp" => mcp = false,
             _ => rest.push(a),
         }
     }
-    (name, rest)
+    (name, mcp, rest)
 }
 
 fn main() {
@@ -251,12 +257,12 @@ fn main() {
 async fn run(cmd: Cmd) -> Result<i32> {
     match cmd {
         Cmd::Claude { args } => {
-            let (name, args) = split_name(args);
-            launch::run_agent("claude", name, args).await
+            let (name, mcp, args) = split_labels(args);
+            launch::run_agent("claude", name, mcp, args).await
         }
         Cmd::Codex { args } => {
-            let (name, args) = split_name(args);
-            launch::run_agent("codex", name, args).await
+            let (name, mcp, args) = split_labels(args);
+            launch::run_agent("codex", name, mcp, args).await
         }
         Cmd::Rename { target, name, clear } => {
             if name.is_none() && !clear {
@@ -325,8 +331,8 @@ async fn run(cmd: Cmd) -> Result<i32> {
             cli::usage(local, json).await?;
             Ok(0)
         }
-        Cmd::Mcp { scope, channel } => {
-            mcp::run(cq_client::Scope::parse(&scope)?, channel).await?;
+        Cmd::Mcp { scope, channel, worker } => {
+            mcp::run(cq_client::Scope::parse(&scope)?, channel, worker).await?;
             Ok(0)
         }
         Cmd::Daemon { action } => {

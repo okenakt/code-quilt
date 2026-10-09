@@ -129,6 +129,7 @@ flowchart TB
 
 - Claude Codeは `claude --settings ~/.codequilt/claude.json` で起動し、hooksとstatusLineだけを注入する。`~/.claude` 配下には書き込まない。
 - Codexは `-c hooks.<Event>=[...]` で同じhooksを渡す。
+- **セッション同士のメッセージ**：cqで起動したセッションには、ワーカー用のcqのMCP（`cq mcp --worker`）を入れる。Claudeには `--mcp-config ~/.codequilt/worker.mcp.json` と `--allowedTools`、Codexには `-c mcp_servers.cq.*` とツールごとの `approval_mode = "approve"` で渡す。ワーカーが使えるのは `list_sessions` / `get_turns` / `message` だけで、人に代わる入力（`send`）・承認・起動はQueenに残す。`message` は相手のアイドル時の注入の待ち行列に入れ、先頭に送信元（名前と `machine:id`）を付けて、人からの指示ではないと分かるようにする。Queenは自分のcqのMCPを持つので入れない（起動要求の `no_mcp`、`cq claude --cq-no-mcp`）。
 - **hooksは何も出力しない**：標準出力はコンテキストに注入されるため。イベントをcq hostに送って正常終了するだけにし、トークン消費を増やさない。cq hostが不在でもすぐ終わる。
 - **statusLineはユーザー設定に連鎖させる**：`cq statusline` はデータをcq hostに送ったうえで、ユーザーの `settings.json` にある元のコマンドを呼び、その出力を表示する。ローカルの見た目は変わらない。
 
@@ -168,7 +169,7 @@ PermissionRequest hookでダッシュボードの回答を待つと、その間�
 | 操作 | 入力、承認（プロンプトIDを照合）、アイドル時の注入、名前の変更、終了（エージェントに終了させ、猶予後に強制終了） |
 | フォーカス | UIが「いま入力先にしているセッション」を本体に知らせる |
 | コマンド | プラグインがmanifestで宣言したコマンドを、パレットやキーやCLIから呼ぶ |
-| MCP | `cq mcp`：セッション一覧、ターン内容、送信、承認、起動をツールとして公開。Claude CodeとCodexの両方から使える |
+| MCP | `cq mcp`：セッション一覧、ターン内容、送信、メッセージ、承認、起動をツールとして公開。Claude CodeとCodexの両方から使える。cqで起動したセッションには、ワーカー用（一覧・ターン内容・メッセージだけ）を確認なしで入れる |
 
 ### コマンドとプラグイン
 

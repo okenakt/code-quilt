@@ -129,7 +129,7 @@ fn set_focus(hub: State<'_, HubState>, machine: Option<String>, session: Option<
 #[tauri::command]
 async fn launch(hub: State<'_, HubState>, machine: String, agent: String, cwd: String, args: Vec<String>) -> Result<String, String> {
     let id = hub.next_id();
-    let req = cq_proto::Launch { id, machine, agent, cwd, args, name: None, cols: 120, rows: 36 };
+    let req = cq_proto::Launch { id, machine, agent, cwd, args, name: None, no_mcp: false, cols: 120, rows: 36 };
     launched(&hub, id, cq_proto::Message::Launch(req)).await
 }
 

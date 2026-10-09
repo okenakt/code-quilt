@@ -12,6 +12,7 @@
 - 終了は `cq kill` かダッシュボードの「End session」。エージェント自身に終了させ、10秒で終わらなければ強制終了する。
 - ダッシュボードの「New session」では、そのマシンのClaude CodeやCodexで信頼済みのフォルダが一覧に出る。それ以外は「Choose another folder…」で `allowed_roots` の配下から選ぶ。
 - 終了したセッションはresumeできる（同じcqのIDのまま、同じディレクトリと名前で、エージェントの会話を引き継いで起動し直す）。boardのEndedの「Resume」か `cq resume ID`。最初のターンの前に終わったセッションはエージェント側に会話がない（Codexは最初のターンで会話を作る）ので、同じID・ディレクトリ・名前でエージェントを新しく起動する。
+- セッション同士でメッセージを送り合える。cqで起動したセッション（Queenを除く）には、cqのMCP（`cq mcp --worker`）が確認なしで使える形で入っていて、エージェントは `list_sessions` / `get_turns` でほかのセッションを見て、`message` で依頼や返事を残せる。メッセージは相手がアイドルになってから `[from 送信元の名前 (machine:id)]` を先頭に付けて入力される。入れたくないときは `--cq-no-mcp`。
 
 ### マシン
 
@@ -47,8 +48,8 @@
 
 | コマンド | 内容 |
 | --- | --- |
-| `cq claude [--cq-name NAME] [claudeの引数…]` | claudeをセッションとして起動し、この端末に付ける |
-| `cq codex [--cq-name NAME] [codexの引数…]` | codexをセッションとして起動し、この端末に付ける |
+| `cq claude [--cq-name NAME] [--cq-no-mcp] [claudeの引数…]` | claudeをセッションとして起動し、この端末に付ける。`--cq-no-mcp` はcqのMCPを入れない |
+| `cq codex [--cq-name NAME] [--cq-no-mcp] [codexの引数…]` | codexをセッションとして起動し、この端末に付ける |
 | `cq attach TARGET`（`cq a`） | 動いているセッションにこの端末を付ける。Ctrl+\ で切り離す |
 | `cq resume ID` | 終了したセッション（cqのIDか一意な前方一致）を同じIDのまま起動し直し、この端末に付ける。エージェント・ディレクトリ・名前は記録から引き、`claude --resume` / `codex resume` で会話を引き継ぐ |
 | `cq ls [-a | --all]` | このマシンの動いているセッションの一覧。`--all` は終了したものも出す |
@@ -61,7 +62,7 @@
 | `cq machine list \| add [HOST] [--label L] [--cq-path P] [--login-shell] \| remove ID` | リモートマシンの一覧・登録・削除。HOSTを省くと `~/.ssh/config` から選ぶ |
 | `cq daemon` | daemonを動かす（通常は自動で起動される） |
 | `cq daemon status \| stop \| restart` | daemonの状態（ローカルと各リモートマシン）、ローカルのdaemonの停止・再起動。止めてもセッションは動き続ける。リモートのdaemonはそのマシンで `cq daemon restart` する |
-| `cq mcp [--scope machine:ID]… [--channel]` | MCPサーバー（stdio）。`--channel` はClaude Codeのチャネルとしても動く |
+| `cq mcp [--scope machine:ID]… [--channel] [--worker]` | MCPサーバー（stdio）。`--channel` はClaude Codeのチャネルとしても動く。`--worker` はワーカー用（`list_sessions` / `get_turns` / `message` だけ） |
 | `cq bridge` | 標準入出力をこのマシンのdaemonにつなぐ（`ssh HOST cq bridge` 用） |
 | `cq NAME …` | 組み込みにない名前は `cq-NAME …` を実行する（例 `cq queen`、`cq board`） |
 
@@ -82,10 +83,13 @@
 
 ### MCPツール（`cq mcp`）
 
+Queenはすべてのツールを、ワーカー（`--worker`）は `list_sessions` / `get_turns` / `message` だけを使える。
+
 | ツール | 内容 |
 | --- | --- |
 | `list_sessions` | 範囲内のセッションの一覧（マシン、名前、cwd、状態、承認待ちのプロンプト、最後の発言と返答の冒頭） |
 | `get_turns` | セッションの直近のやり取り |
+| `message` | ほかのセッションにメッセージを残す。相手がアイドルになってから、送信元を先頭に付けて入力される（ワーカーも使える） |
 | `send` | セッションに文字を送る（名前で指定） |
 | `approve` | 承認のプロンプトに答える（プロンプトIDを照合） |
 | `launch` | 指定したディレクトリで新しいセッションを起動する（エージェント、マシン、名前、最初の指示を指定できる。ディレクトリは `allowed_roots` の配下かエージェントで信頼済みのものに限る。最初の指示はセッションがアイドルになってから入る） |

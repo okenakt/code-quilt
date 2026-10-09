@@ -301,6 +301,9 @@ pub struct Launch {
     pub args: Vec<String>,
     #[serde(default)]
     pub name: Option<String>,
+    /// Leave out CodeQuilt's worker MCP server, for a session that brings its own (a Queen).
+    #[serde(default)]
+    pub no_mcp: bool,
     pub cols: u16,
     pub rows: u16,
 }
