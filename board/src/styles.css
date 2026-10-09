@@ -9,6 +9,8 @@
   --bg: #0f1114;
   --panel: #171a1f;
   --panel-2: #1e2229;
+  /* The chosen row of a list (palette, folders, focused session); brighter than hover. */
+  --selected: #2d3646;
   --line: #2a2f38;
   --text: #d8dde6;
   --muted: #8a93a3;
@@ -367,7 +369,7 @@ kbd {
 
 .session.active {
   border-color: var(--line);
-  background: var(--panel-2);
+  background: var(--selected);
 }
 
 .session.approval {
@@ -436,11 +438,14 @@ kbd {
   font-family: "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace;
   font-size: 11px;
   color: var(--muted);
-  cursor: var(--cursor-copy, copy);
   flex-shrink: 0;
 }
 
-.session-id:hover {
+.session-id.copyable {
+  cursor: var(--cursor-copy, copy);
+}
+
+.session-id.copyable:hover {
   color: var(--text);
 }
 
@@ -738,7 +743,7 @@ kbd {
 }
 
 .dir-list button.selected {
-  background: var(--panel-2);
+  background: var(--selected);
   color: var(--accent);
 }
 
@@ -893,7 +898,7 @@ kbd {
 }
 
 .palette-list li.selected {
-  background: var(--panel-2);
+  background: var(--selected);
 }
 
 .palette-meta {

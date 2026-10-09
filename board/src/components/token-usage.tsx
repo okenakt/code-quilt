@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { baseName } from "../path";
 import { setTokenPrefs, toggleFold, usePrefs, type TokenPeriod } from "../prefs";
 import type { MachineInfo, SessionState, TokenCounts } from "../types";
 import { AgentHeading } from "./limits-panel";
@@ -78,8 +79,6 @@ const usages = (sessions: SessionState[], machines: MachineInfo[], period: Token
   }
   return [...out.values()];
 };
-
-const baseName = (cwd: string) => cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
 
 /** Groups items by a key, keeping the order of first appearance. */
 const groupBy = <T,>(items: T[], key: (item: T) => string): T[][] => {

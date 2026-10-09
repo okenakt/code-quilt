@@ -4,6 +4,7 @@ import { trackPointer } from "../drag";
 import { focusPane, panesOf, selectTab, useLayout } from "../layout";
 import { setColumn, toggleFold, usePrefs, type Column, type Prefs } from "../prefs";
 import { Fold, SidebarSection, isExpanded } from "./sidebar-section";
+import { baseName } from "../path";
 import { isPinned, togglePin, type Pins } from "../pins";
 import { AgentBadge } from "./agent-badge";
 import { SessionName } from "./session-name";
@@ -74,7 +75,7 @@ const SessionId = ({ id }: { id: string }) => {
     <span
       role="button"
       tabIndex={-1}
-      className={`session-id ${copied ? "copied" : ""}`}
+      className={`session-id copyable ${copied ? "copied" : ""}`}
       title={copied ? "copied" : `${id} (click to copy)`}
       onClick={(e) => {
         e.stopPropagation();
@@ -204,12 +205,14 @@ const EndedItem = ({ s, canResume, onResume }: { s: SessionState; canResume: boo
   </div>
 );
 
-/** A foldable group inside a machine (Active, Ended). */
-const Group = ({ title, foldKey, byDefault, prefs, children }: { title: string; foldKey: string; byDefault: boolean; prefs: Prefs; children: ReactNode }) => {
+type GroupProps = { title: string; hint?: string; foldKey: string; byDefault: boolean; prefs: Prefs; children: ReactNode };
+
+/** A foldable group inside a machine (Active, Ended, and Ended's directories). */
+const Group = ({ title, hint, foldKey, byDefault, prefs, children }: GroupProps) => {
   const open = isExpanded(prefs, foldKey, byDefault);
   return (
     <div className="group">
-      <button className="section-toggle" onClick={() => toggleFold(foldKey)}>
+      <button className="section-toggle" title={hint} onClick={() => toggleFold(foldKey)}>
         <Fold open={open} /> {title}
       </button>
       {open && <div className="tree">{children}</div>}
@@ -217,12 +220,27 @@ const Group = ({ title, foldKey, byDefault, prefs, children }: { title: string; 
   );
 };
 
-/** Ended sessions of a machine, newest first. */
-const EndedList = ({ machine, sessions, onResume }: { machine: MachineInfo; sessions: SessionState[]; onResume: (s: SessionState) => void }) => {
+type EndedProps = { machine: MachineInfo; sessions: SessionState[]; onResume: (s: SessionState) => void };
+
+const endedAt = (s: SessionState) => s.meta.ended_at_ms ?? s.meta.started_at_ms;
+
+/** Ended sessions of a machine by working directory; the most recently used directory first. */
+const EndedByDir = ({ prefs, ...props }: EndedProps & { prefs: Prefs }) => {
+  const dirs = new Map<string, SessionState[]>();
+  for (const s of [...props.sessions].sort((a, b) => endedAt(b) - endedAt(a))) {
+    dirs.set(s.meta.cwd, [...(dirs.get(s.meta.cwd) ?? []), s]);
+  }
+  return [...dirs].map(([cwd, sessions]) => (
+    <Group key={cwd} title={`${baseName(cwd)} (${sessions.length})`} hint={cwd} foldKey={`ended:${props.machine.id}:${cwd}`} byDefault={false} prefs={prefs}>
+      <EndedList {...props} sessions={sessions} />
+    </Group>
+  ));
+};
+
+/** Ended sessions, newest first, the older ones behind "show all". */
+const EndedList = ({ machine, sessions, onResume }: EndedProps) => {
   const [all, setAll] = useState(false);
-  const sorted = [...sessions].sort(
-    (a, b) => (b.meta.ended_at_ms ?? b.meta.started_at_ms) - (a.meta.ended_at_ms ?? a.meta.started_at_ms),
-  );
+  const sorted = [...sessions].sort((a, b) => endedAt(b) - endedAt(a));
   return (
     <>
       {(all ? sorted : sorted.slice(0, ENDED_LIMIT)).map((s) => (
@@ -379,7 +397,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
                   </Group>
                   {ended.length > 0 && (
                     <Group title={`Ended (${ended.length})`} foldKey={`ended:${m.id}`} byDefault={false} prefs={prefs}>
-                      <EndedList machine={m} sessions={ended} onResume={onResume} />
+                      <EndedByDir machine={m} sessions={ended} onResume={onResume} prefs={prefs} />
                     </Group>
                   )}
                 </div>
