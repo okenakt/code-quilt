@@ -225,18 +225,21 @@ type EndedProps = { machine: MachineInfo; sessions: SessionState[]; onResume: (s
 
 const endedAt = (s: SessionState) => s.meta.ended_at_ms ?? s.meta.started_at_ms;
 
-/** Ended sessions of a machine by working directory; the most recently used directory first. */
-const EndedByDir = ({ prefs, ...props }: EndedProps & { prefs: Prefs }) => {
+type ByDirProps = { prefs: Prefs; foldKey: string; byDefault: boolean; sessions: SessionState[]; children: (sessions: SessionState[]) => ReactNode };
+
+/** Sessions grouped by working directory (the full path), in the order the directories first appear. */
+const ByDir = ({ prefs, foldKey, byDefault, sessions, children }: ByDirProps) => {
   const dirs = new Map<string, SessionState[]>();
-  for (const s of [...props.sessions].sort((a, b) => endedAt(b) - endedAt(a))) {
-    dirs.set(s.meta.cwd, [...(dirs.get(s.meta.cwd) ?? []), s]);
-  }
-  return [...dirs].map(([cwd, sessions]) => (
-    <Group key={cwd} title={`${baseName(cwd)} (${sessions.length})`} hint={cwd} foldKey={`ended:${props.machine.id}:${cwd}`} byDefault={false} prefs={prefs}>
-      <EndedList {...props} sessions={sessions} />
+  for (const s of sessions) dirs.set(s.meta.cwd, [...(dirs.get(s.meta.cwd) ?? []), s]);
+  return [...dirs].map(([cwd, list]) => (
+    <Group key={cwd} title={`${baseName(cwd)} (${list.length})`} hint={cwd} foldKey={`${foldKey}:${cwd}`} byDefault={byDefault} prefs={prefs}>
+      {children(list)}
     </Group>
   ));
 };
+
+/** Running sessions by directory, directories by name so the list does not reorder as sessions work. */
+const byDirName = (sessions: SessionState[]) => [...sessions].sort((a, b) => baseName(a.meta.cwd).localeCompare(baseName(b.meta.cwd)));
 
 /** Ended sessions, newest first, the older ones behind "show all". */
 const EndedList = ({ machine, sessions, onResume }: EndedProps) => {
@@ -286,7 +289,7 @@ const TabsSection = ({ prefs, sessions, machineOf, pinOf, onPin, onEnd }: ListPr
               </button>
             </div>
             {open && (
-              // Sessions line up with Machines (machine > Active > session) so rows have the same width.
+              // Sessions line up with Machines (machine > Active > directory > session).
               <div className="tree deep">
                 {panes.map((p) => {
                   if (p.session === null) return null;
@@ -394,11 +397,15 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
                 <div className="tree">
                   <Group title={`Active (${active.length})`} foldKey={`active:${m.id}`} byDefault prefs={prefs}>
                     {active.length === 0 && <div className="empty">No active sessions</div>}
-                    {active.map((s) => item(s, "machine"))}
+                    <ByDir prefs={prefs} foldKey={`active:${m.id}`} byDefault sessions={byDirName(active)}>
+                      {(list) => list.map((s) => item(s, "machine"))}
+                    </ByDir>
                   </Group>
                   {ended.length > 0 && (
                     <Group title={`Ended (${ended.length})`} foldKey={`ended:${m.id}`} byDefault={false} prefs={prefs}>
-                      <EndedByDir machine={m} sessions={ended} onResume={onResume} prefs={prefs} />
+                      <ByDir prefs={prefs} foldKey={`ended:${m.id}`} byDefault={false} sessions={[...ended].sort((a, b) => endedAt(b) - endedAt(a))}>
+                        {(list) => <EndedList machine={m} sessions={list} onResume={onResume} />}
+                      </ByDir>
                     </Group>
                   )}
                 </div>

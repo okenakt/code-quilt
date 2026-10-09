@@ -5,7 +5,9 @@
 
 :root {
   /* One level of indentation in the sidebars' trees. */
-  --indent: 8px;
+  --indent: 7px;
+  /* Where the fold toggle of every sidebar row sits: a session row's padding plus its border. */
+  --row-inset: 9px;
   --bg: #0f1114;
   --panel: #171a1f;
   --panel-2: #1e2229;
@@ -327,7 +329,7 @@ kbd {
   text-transform: uppercase;
   font-size: 11px;
   letter-spacing: 0.06em;
-  padding: 4px 4px 6px;
+  padding: 4px 4px 6px var(--row-inset);
 }
 
 .machine-offline {
@@ -480,7 +482,7 @@ kbd {
   background: transparent;
   color: var(--muted);
   font-size: 11px;
-  padding: 4px;
+  padding: 4px 4px 4px var(--row-inset);
   cursor: pointer;
 }
 
@@ -1289,6 +1291,7 @@ kbd {
 .right-sidebar {
   background: var(--panel);
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 8px;
   min-height: 0;
 }
@@ -1340,6 +1343,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 2px;
+  padding-left: var(--row-inset);
 }
 
 .tab-group-name {
@@ -1497,7 +1501,7 @@ kbd {
 }
 
 .tree.deep {
-  margin-left: calc(2 * var(--indent));
+  margin-left: calc(3 * var(--indent));
 }
 
 .agent-badge {
@@ -1519,6 +1523,12 @@ kbd {
 
 .agent-badge.codex {
   --agent: #7896fa;
+}
+
+.agent-heading .agent-badge {
+  width: 54px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .renamable {
