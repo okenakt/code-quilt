@@ -384,22 +384,29 @@ kbd {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .col {
   position: relative;
-  flex: none;
+  flex: 0 1 auto;
   display: flex;
   min-width: 0;
   overflow: hidden;
 }
 
+/* When the sidebar is narrow, the state or time goes first (it only takes what is left), then the
+   id (it shrinks a hundred times faster), then the name down to a minimum; past that the row is
+   cut at its right end, buttons included. */
 .col-name {
-  width: var(--col-name);
+  flex-basis: var(--col-name);
+  min-width: 48px;
 }
 
 .col-id {
-  width: var(--col-id);
+  flex-basis: var(--col-id);
+  flex-shrink: 100;
 }
 
 .col-resizer {
@@ -420,9 +427,11 @@ kbd {
   flex: 1;
   min-width: 0;
   display: flex;
+  overflow: hidden;
 }
 
 .session-state .badge {
+  flex-shrink: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -497,6 +506,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 6px;
+  overflow: hidden;
   /* Matches .session's padding plus its 1px border so the columns line up. */
   padding: 3px 9px;
   color: var(--muted);
@@ -511,6 +521,9 @@ kbd {
   flex: 1;
   min-width: 0;
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .badge {
@@ -801,6 +814,7 @@ kbd {
 }
 
 .pin {
+  flex: none;
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -828,6 +842,7 @@ kbd {
 }
 
 .end-session {
+  flex: none;
   border: 0;
   background: transparent;
   color: var(--muted);
