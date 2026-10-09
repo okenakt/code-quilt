@@ -81,6 +81,11 @@ fn approve(
 }
 
 #[tauri::command]
+fn rename(hub: State<'_, HubState>, machine: String, session: String, name: Option<String>) -> Result<(), String> {
+    hub.rename(&machine, &session, name).map_err(err)
+}
+
+#[tauri::command]
 fn terminate(hub: State<'_, HubState>, machine: String, session: String) -> Result<(), String> {
     hub.terminate(&machine, &session).map_err(err)
 }
@@ -201,6 +206,7 @@ fn main() {
             terminate,
             set_focus,
             launch,
+            rename,
             resume,
             list_dir,
             commands,

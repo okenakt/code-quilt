@@ -6,6 +6,7 @@ import { setColumn, toggleFold, usePrefs, type Column, type Prefs } from "../pre
 import { Fold, SidebarSection, isExpanded } from "./sidebar-section";
 import { isPinned, togglePin, type Pins } from "../pins";
 import { AgentBadge } from "./agent-badge";
+import { SessionName } from "./session-name";
 import { displayName } from "../store";
 import type { Activity, MachineInfo, SessionState } from "../types";
 
@@ -146,7 +147,7 @@ const SessionItem = ({ s, machine, detailsKey, active, pinned, onPin, onEnd, onO
         </button>
         <AgentBadge agent={s.meta.agent} />
         <Col col="name">
-          <span className="session-name">{displayName(s)}</span>
+          <SessionName s={s} className="session-name" />
         </Col>
         <Col col="id">
           <SessionId id={s.meta.id} />

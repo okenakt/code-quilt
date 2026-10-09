@@ -1515,3 +1515,26 @@ kbd {
 .agent-badge.codex {
   --agent: #7896fa;
 }
+
+.renamable {
+  cursor: text;
+}
+
+.renamable:hover {
+  text-decoration: underline dotted var(--muted);
+}
+
+.session-name-input {
+  min-width: 0;
+  width: 100%;
+  font: inherit;
+  padding: 0 3px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.session-name-input.invalid {
+  border-color: var(--danger);
+}

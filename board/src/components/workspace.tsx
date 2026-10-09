@@ -25,6 +25,7 @@ import {
 import { trackPointer } from "../drag";
 import { displayName } from "../store";
 import type { Activity, SessionState } from "../types";
+import { SessionName } from "./session-name";
 import { TerminalView } from "./terminal-view";
 
 const ACTIVITY_LABEL: Record<Activity, string> = {
@@ -210,7 +211,7 @@ const PaneView = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
       onPointerDown={() => !focused && focusPane(pane.id)}
     >
       <div className="pane-header" title="Drag to move this pane" onPointerDown={(e) => ctx.startDrag(e, "pane", pane.id, title)}>
-        <span className={`pane-title ${pane.session ? "" : "muted"}`}>{title}</span>
+        {s ? <SessionName s={s} className="pane-title" /> : <span className={`pane-title ${pane.session ? "" : "muted"}`}>{title}</span>}
         {pane.session && <span className="session-id">{id.slice(0, 8)}</span>}
         {s && <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>}
         <span className="pane-header-spacer" />

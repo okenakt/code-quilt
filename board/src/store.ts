@@ -140,6 +140,7 @@ export const applyEvent = (machine: string, session: string, ev: AgentEvent): vo
   let status = s.status;
   let account = s.account;
   let tokens = s.tokens;
+  let meta = s.meta;
   if (ev.source === "statusline") {
     status = parseStatus(ev.payload, ev.received_at_ms);
   } else if (ev.source === "hook") {
@@ -165,6 +166,8 @@ export const applyEvent = (machine: string, session: string, ev: AgentEvent): vo
     } else if (type === "permission_resolved") {
       prompt = null;
       if (activity === "approval") activity = asRecord(ev.payload)?.idle === true ? "idle" : "working";
+    } else if (type === "meta") {
+      meta = { ...meta, name: str(ev.payload, "name") };
     } else if (type === "account") {
       const id = str(ev.payload, "account", "id");
       account = id ? { id, label: str(ev.payload, "account", "label") ?? id } : null;
@@ -172,8 +175,8 @@ export const applyEvent = (machine: string, session: string, ev: AgentEvent): vo
       tokens = parseTokens(asRecord(ev.payload)?.tokens) ?? tokens;
     }
   }
-  if (s.meta.status === "exited") activity = "exited";
-  const next = { ...s, activity, prompt, status, account, tokens, lastActivityAt: Math.max(s.lastActivityAt, ev.received_at_ms) };
+  if (meta.status === "exited") activity = "exited";
+  const next = { ...s, meta, activity, prompt, status, account, tokens, lastActivityAt: Math.max(s.lastActivityAt, ev.received_at_ms) };
   sessions.set(s.key, next);
   emit();
 };

@@ -198,6 +198,11 @@ impl Hub {
         }
     }
 
+    /// Names a session (`None` clears the name); the host refuses a name another running session has.
+    pub fn rename(&self, machine: &str, session: &str, name: Option<String>) -> Result<()> {
+        self.routed(machine, session, Message::Rename(cq_proto::Rename { name }))
+    }
+
     /// Asks a session to end gracefully; the host kills it after the grace period.
     pub fn terminate(&self, machine: &str, session: &str) -> Result<()> {
         let t = cq_proto::Terminate { grace_ms: 10_000, force: false };

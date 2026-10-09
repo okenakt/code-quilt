@@ -42,6 +42,10 @@ export const approve = (machine: string, session: string, option: number, prompt
 /** Asks a session to end: the agent exits as if the user quit it, or is killed after a grace period. */
 export const terminate = (machine: string, session: string): Promise<void> => invoke("terminate", { machine, session });
 
+/** Names a session; an empty name clears it. */
+export const renameSession = (machine: string, session: string, name: string): Promise<void> =>
+  invoke("rename", { machine, session, name: name.trim() || null });
+
 /** Tells the daemon which session the user is typing into (or none). */
 export const setFocus = (machine: string | null, session: string | null): Promise<void> =>
   invoke("set_focus", { machine, session });
