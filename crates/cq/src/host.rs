@@ -226,7 +226,8 @@ impl State {
     fn prompt_event(&self) -> AgentEvent {
         let payload = match &self.prompt {
             Some(p) => serde_json::json!({ "type": "permission_prompt", "prompt": p }),
-            None => serde_json::json!({ "type": "permission_resolved" }),
+            // Whether the agent is between turns, so clients know what the session went back to.
+            None => serde_json::json!({ "type": "permission_resolved", "idle": self.agent_idle }),
         };
         AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload }
     }

@@ -58,6 +58,9 @@ export const setMachines = (m: MachineInfo[]): void => {
 };
 
 /** Replaces a machine's session list, keeping derived state for known sessions. */
+/** Codex fires SessionStart only with its first turn, so it starts out idle. */
+const initialActivity = (meta: SessionMeta): Activity => (meta.agent === "codex" ? "idle" : "starting");
+
 export const setSessions = (machine: string, list: SessionMeta[]): void => {
   const seen = new Set<string>();
   for (const meta of list) {
@@ -69,7 +72,7 @@ export const setSessions = (machine: string, list: SessionMeta[]): void => {
       key,
       machine,
       meta,
-      activity: exited ? "exited" : prev && prev.activity !== "exited" ? prev.activity : "starting",
+      activity: exited ? "exited" : prev && prev.activity !== "exited" ? prev.activity : initialActivity(meta),
       prompt: exited ? null : (prev?.prompt ?? null),
       status: prev?.status ?? null,
       account: prev?.account ?? null,
@@ -161,7 +164,7 @@ export const applyEvent = (machine: string, session: string, ev: AgentEvent): vo
       activity = "approval";
     } else if (type === "permission_resolved") {
       prompt = null;
-      if (activity === "approval") activity = "working";
+      if (activity === "approval") activity = asRecord(ev.payload)?.idle === true ? "idle" : "working";
     } else if (type === "account") {
       const id = str(ev.payload, "account", "id");
       account = id ? { id, label: str(ev.payload, "account", "label") ?? id } : null;
@@ -187,6 +190,6 @@ export const markExited = (machine: string, session: string): void => {
 export const markResumed = (machine: string, session: string): void => {
   const s = sessions.get(sessionKey(machine, session));
   if (!s) return;
-  sessions.set(s.key, { ...s, activity: "starting", meta: { ...s.meta, status: "running", ended_at_ms: null } });
+  sessions.set(s.key, { ...s, activity: initialActivity(s.meta), meta: { ...s.meta, status: "running", ended_at_ms: null } });
   emit();
 };

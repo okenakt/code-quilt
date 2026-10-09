@@ -108,7 +108,8 @@ impl Model {
             let entry = self.sessions.entry(key).or_insert_with(|| Session {
                 machine: machine.to_owned(),
                 meta: meta.clone(),
-                activity: Activity::Starting,
+                // Codex fires SessionStart only with its first turn, so it starts out idle.
+                activity: if meta.agent == "codex" { Activity::Idle } else { Activity::Starting },
                 prompt: None,
                 turns: VecDeque::new(),
             });
@@ -151,7 +152,8 @@ impl Model {
                 Some("permission_resolved") => {
                     s.prompt = None;
                     if s.activity == Activity::Waiting {
-                        s.activity = Activity::Working;
+                        let idle = ev.payload.get("idle").and_then(Value::as_bool) == Some(true);
+                        s.activity = if idle { Activity::Idle } else { Activity::Working };
                     }
                 }
                 Some("meta") => s.meta.name = text("name"),
