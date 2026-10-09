@@ -91,10 +91,22 @@ pub fn launch_detached(req: &cq_proto::Launch) -> Result<String> {
     let cwd = crate::config::check_allowed(&req.cwd)?;
     paths::ensure_dirs()?;
     let id = session::new_id();
-    let command = agent_command(&req.agent, req.resume.as_deref(), &req.args)?;
+    let command = agent_command(&req.agent, None, &req.args)?;
     let size = Size { cols: req.cols.max(20), rows: req.rows.max(5) };
     spawn_host(&id, &req.agent, &cwd.to_string_lossy(), size, req.name.as_deref(), &command)?;
     Ok(id)
+}
+
+/// Starts the ended session `key` again under its id, in its directory and with its name,
+/// resuming the agent's conversation. A session that ended before its first turn has no
+/// conversation yet (Codex starts one only then), so the agent starts afresh. Returns the id.
+pub fn resume_detached(key: &str, size: Size) -> Result<String> {
+    let list = session::list()?;
+    let m = session::pick_ended(&list, key)?;
+    let cwd = crate::config::check_allowed(&m.cwd)?;
+    let command = agent_command(&m.agent, m.agent_session_id.as_deref(), &[])?;
+    spawn_host(&m.id, &m.agent, &cwd.to_string_lossy(), size, m.name.as_deref(), &command)?;
+    Ok(m.id.clone())
 }
 
 /// Runs `cq claude|codex [args...]` in this terminal and returns the process exit code.
@@ -104,9 +116,20 @@ pub async fn run_agent(agent: &str, name: Option<String>, args: Vec<String>) -> 
     let command = agent_command(agent, None, &args)?;
     let cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     spawn_host(&id, agent, &cwd, crate::term::size(), name.as_deref(), &command)?;
-    let endpoint = paths::session_endpoint(&id)?;
+    attach_new(&id).await
+}
+
+/// `cq resume KEY`: resumes an ended session and attaches this terminal to it.
+pub async fn resume(key: &str) -> Result<i32> {
+    let id = resume_detached(key, crate::term::size())?;
+    attach_new(&id).await
+}
+
+/// Attaches this terminal to a session whose host was just spawned.
+async fn attach_new(id: &str) -> Result<i32> {
+    let endpoint = paths::session_endpoint(id)?;
     let outcome = attach::attach(&endpoint, Duration::from_secs(10))
         .await
         .with_context(|| format!("session host did not start; see ~/.codequilt/logs/{id}.log"))?;
-    Ok(attach::report(&id, outcome))
+    Ok(attach::report(id, outcome))
 }

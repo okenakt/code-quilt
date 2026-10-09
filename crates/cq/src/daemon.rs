@@ -11,7 +11,7 @@ use crate::{ipc, paths, plugin, remote, session};
 use anyhow::{Result, bail};
 use cq_proto::{
     ClientKind, CommandInfo, CommandResult, DirList, Hello, InvokeCommand, DAEMON_PROTOCOL_VERSION, LOCAL_MACHINE, Launched, MachineInfo, Message, PROTOCOL_VERSION,
-    RequestFailed, SessionList, SessionMeta, SessionStatus, Subscribe, read_message, spawn_reader,
+    RequestFailed, SessionList, SessionMeta, SessionStatus, Size, Subscribe, read_message, spawn_reader,
     write_message,
 };
 use std::collections::HashMap;
@@ -184,6 +184,18 @@ impl LocalRelay {
         }
     }
 
+    /// Starts a session in the background and answers the request `id` with its outcome.
+    fn start_session(&self, id: u64, what: &'static str, start: impl FnOnce() -> Result<String> + Send + 'static) {
+        let out = self.out.clone();
+        tokio::spawn(async move {
+            let reply = match start_registered(start).await {
+                Ok(session) => Message::Launched(Launched { id, machine: LOCAL_MACHINE.to_owned(), session }),
+                Err(e) => Message::RequestFailed(RequestFailed { id, error: format!("{what} failed: {e:#}") }),
+            };
+            let _ = out.send(reply);
+        });
+    }
+
     fn handle(&mut self, msg: Message) {
         match msg {
             Message::ListSessions => {
@@ -210,15 +222,10 @@ impl LocalRelay {
             Message::Unsubscribe(r) => {
                 self.subs.remove(&r.session);
             }
-            Message::Launch(req) => {
-                let out = self.out.clone();
-                tokio::spawn(async move {
-                    let reply = match launch_registered(&req).await {
-                        Ok(session) => Message::Launched(Launched { id: req.id, machine: LOCAL_MACHINE.to_owned(), session }),
-                        Err(e) => Message::RequestFailed(RequestFailed { id: req.id, error: format!("launch failed: {e:#}") }),
-                    };
-                    let _ = out.send(reply);
-                });
+            Message::Launch(req) => self.start_session(req.id, "launch", move || crate::launch::launch_detached(&req)),
+            Message::Resume(req) => {
+                let size = Size { cols: req.cols.max(20), rows: req.rows.max(5) };
+                self.start_session(req.id, "resume", move || crate::launch::resume_detached(&req.session, size))
             }
             Message::ListDir(req) => {
                 let reply = match crate::config::list_dir(&req.path) {
@@ -248,6 +255,7 @@ fn target_machine(msg: &Message) -> Option<&str> {
         Message::Unsubscribe(r) => Some(&r.machine),
         Message::Routed { machine, .. } => Some(machine),
         Message::Launch(l) => Some(&l.machine),
+        Message::Resume(r) => Some(&r.machine),
         Message::ListDir(l) => Some(&l.machine),
         _ => None,
     }
@@ -561,6 +569,7 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                             let error = format!("unknown machine '{id}'");
                             let reply = match msg {
                                 Message::Launch(l) => Message::RequestFailed(RequestFailed { id: l.id, error }),
+                                Message::Resume(r) => Message::RequestFailed(RequestFailed { id: r.id, error }),
                                 Message::ListDir(l) => Message::RequestFailed(RequestFailed { id: l.id, error }),
                                 _ => continue,
                             };
@@ -587,13 +596,14 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
     result
 }
 
-/// Starts a session and returns once its host has registered it, so the session is in every
-/// list by the time the caller hears about it.
-async fn launch_registered(req: &cq_proto::Launch) -> Result<String> {
-    let id = crate::launch::launch_detached(req)?;
+/// Starts a session (new or resumed) and returns once its host has recorded it as running, so
+/// the session is in every list by the time the caller hears about it.
+async fn start_registered(start: impl FnOnce() -> Result<String>) -> Result<String> {
+    let id = start()?;
     let file = paths::session_file(&id)?;
     for _ in 0..100 {
-        if file.exists() {
+        let meta = std::fs::read(&file).ok().and_then(|d| serde_json::from_slice::<SessionMeta>(&d).ok());
+        if meta.is_some_and(|m| m.status == SessionStatus::Running) {
             return Ok(id);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;

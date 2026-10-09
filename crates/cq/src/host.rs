@@ -448,6 +448,8 @@ pub async fn run(args: HostArgs) -> Result<()> {
     let mut reader = pair.master.try_clone_reader()?;
     let mut writer = pair.master.take_writer()?;
 
+    // A resumed session keeps what its earlier run learned about the agent.
+    let earlier: Option<SessionMeta> = std::fs::read(paths::session_file(&args.id)?).ok().and_then(|d| serde_json::from_slice(&d).ok());
     let meta = SessionMeta {
         id: args.id.clone(),
         agent: args.agent.clone(),
@@ -459,10 +461,10 @@ pub async fn run(args: HostArgs) -> Result<()> {
         status: SessionStatus::Running,
         exit_code: None,
         ended_at_ms: None,
-        agent_session_id: None,
+        agent_session_id: earlier.as_ref().and_then(|m| m.agent_session_id.clone()),
         name: args.name.clone(),
-        account: None,
-        tokens_by_hour: Default::default(),
+        account: earlier.as_ref().and_then(|m| m.account.clone()),
+        tokens_by_hour: earlier.map(|m| m.tokens_by_hour).unwrap_or_default(),
     };
     session::save(&meta)?;
 

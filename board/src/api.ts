@@ -55,13 +55,11 @@ export const listDir = (machine: string, path: string): Promise<DirList> => invo
 export type Agent = "claude" | "codex";
 
 /** Starts a session on a machine without a local terminal; resolves to its id. */
-export const launchSession = (
-  machine: string,
-  agent: Agent,
-  cwd: string,
-  args: string[],
-  resume: string | null,
-): Promise<string> => invoke("launch", { machine, agent, cwd, args, resume });
+export const launchSession = (machine: string, agent: Agent, cwd: string, args: string[]): Promise<string> =>
+  invoke("launch", { machine, agent, cwd, args });
+
+/** Starts an ended session again under its id, resuming the agent's conversation. */
+export const resumeSession = (machine: string, session: string): Promise<string> => invoke("resume", { machine, session });
 
 type TerminalSink = (msg: SessionData) => void;
 

@@ -101,6 +101,10 @@ fn untag_outgoing(msg: Message) -> Message {
             l.machine = LOCAL_MACHINE.to_owned();
             Message::Launch(l)
         }
+        Message::Resume(mut r) => {
+            r.machine = LOCAL_MACHINE.to_owned();
+            Message::Resume(r)
+        }
         Message::ListDir(mut l) => {
             l.machine = LOCAL_MACHINE.to_owned();
             Message::ListDir(l)
@@ -143,6 +147,7 @@ pub async fn run(
                     Some(Message::Unsubscribe(r)) => { subs.remove(&r.session); }
                     Some(Message::Launch(l)) => fail(&out, l.id, "machine is offline"),
                     Some(Message::ListDir(l)) => fail(&out, l.id, "machine is offline"),
+                    Some(Message::Resume(r)) => fail(&out, r.id, "machine is offline"),
                     Some(_) => {}
                     None => return,
                 },

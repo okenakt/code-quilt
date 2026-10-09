@@ -79,8 +79,8 @@ pub struct SessionMeta {
     /// Account the agent was last seen logged in with (its label, e.g. an email address).
     #[serde(default)]
     pub account: Option<String>,
-    /// Tokens used per UTC hour, keyed `YYYY-MM-DDTHH`. Resumed sessions re-read the agent's
-    /// whole log, so sessions sharing an `agent_session_id` report overlapping hours.
+    /// Tokens used per UTC hour, keyed `YYYY-MM-DDTHH`, recounted from the agent's whole log (a
+    /// resumed session keeps its id and counts its earlier turns again, not twice).
     #[serde(default)]
     pub tokens_by_hour: BTreeMap<String, TokenCounts>,
 }
@@ -299,16 +299,25 @@ pub struct Launch {
     /// Extra agent arguments.
     #[serde(default)]
     pub args: Vec<String>,
-    /// Agent session id to resume (`claude --resume <id>`).
-    #[serde(default)]
-    pub resume: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
     pub cols: u16,
     pub rows: u16,
 }
 
-/// Reply to [`Launch`].
+/// Request to start an ended session again under its id, resuming the agent's conversation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Resume {
+    /// Client-chosen id echoed in the reply.
+    pub id: u64,
+    #[serde(default = "local_machine")]
+    pub machine: String,
+    pub session: String,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// Reply to [`Launch`] and [`Resume`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Launched {
     pub id: u64,
@@ -377,6 +386,8 @@ pub enum Message {
     Routed { machine: String, session: String, inner: Box<Message> },
     /// Client to daemon: start a session.
     Launch(Launch),
+    /// Client to daemon: start an ended session again.
+    Resume(Resume),
     /// Daemon to client: a launched session.
     Launched(Launched),
     /// Client to daemon: list subdirectories.
@@ -440,6 +451,7 @@ mod kind {
     pub const COMMAND_LIST: u8 = 0x43;
     pub const INVOKE_COMMAND: u8 = 0x44;
     pub const COMMAND_RESULT: u8 = 0x45;
+    pub const RESUME: u8 = 0x46;
     pub const ERROR: u8 = 0x7f;
 }
 
@@ -486,6 +498,7 @@ impl Message {
             }
             Message::MachineList(v) => (kind::MACHINE_LIST, serde_json::to_vec(v)?),
             Message::Launch(v) => (kind::LAUNCH, serde_json::to_vec(v)?),
+            Message::Resume(v) => (kind::RESUME, serde_json::to_vec(v)?),
             Message::Launched(v) => (kind::LAUNCHED, serde_json::to_vec(v)?),
             Message::ListDir(v) => (kind::LIST_DIR, serde_json::to_vec(v)?),
             Message::DirList(v) => (kind::DIR_LIST, serde_json::to_vec(v)?),
@@ -544,6 +557,7 @@ impl Message {
             }
             kind::MACHINE_LIST => Message::MachineList(serde_json::from_slice(&payload)?),
             kind::LAUNCH => Message::Launch(serde_json::from_slice(&payload)?),
+            kind::RESUME => Message::Resume(serde_json::from_slice(&payload)?),
             kind::LAUNCHED => Message::Launched(serde_json::from_slice(&payload)?),
             kind::LIST_DIR => Message::ListDir(serde_json::from_slice(&payload)?),
             kind::DIR_LIST => Message::DirList(serde_json::from_slice(&payload)?),

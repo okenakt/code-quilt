@@ -138,7 +138,6 @@ impl Server {
             agent: agent.to_owned(),
             cwd,
             args: Vec::new(),
-            resume: None,
             name: name.clone(),
             cols: 120,
             rows: 36,

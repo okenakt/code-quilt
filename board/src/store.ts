@@ -69,7 +69,7 @@ export const setSessions = (machine: string, list: SessionMeta[]): void => {
       key,
       machine,
       meta,
-      activity: exited ? "exited" : (prev?.activity ?? "starting"),
+      activity: exited ? "exited" : prev && prev.activity !== "exited" ? prev.activity : "starting",
       prompt: exited ? null : (prev?.prompt ?? null),
       status: prev?.status ?? null,
       account: prev?.account ?? null,
@@ -180,5 +180,13 @@ export const markExited = (machine: string, session: string): void => {
   const s = sessions.get(sessionKey(machine, session));
   if (!s) return;
   sessions.set(s.key, { ...s, activity: "exited", prompt: null, meta: { ...s.meta, status: "exited" } });
+  emit();
+};
+
+/** Shows a resumed session as running again before the next session list confirms it. */
+export const markResumed = (machine: string, session: string): void => {
+  const s = sessions.get(sessionKey(machine, session));
+  if (!s) return;
+  sessions.set(s.key, { ...s, activity: "starting", meta: { ...s.meta, status: "running", ended_at_ms: null } });
   emit();
 };

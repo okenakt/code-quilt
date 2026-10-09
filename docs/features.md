@@ -11,7 +11,7 @@
 - セッションは名前・id・idの前方一致で指定できる。名前は動いているセッションの中でマシンごとに一意。
 - 終了は `cq kill` かダッシュボードの「End session」。エージェント自身に終了させ、10秒で終わらなければ強制終了する。
 - ダッシュボードの「New session」では、そのマシンのClaude CodeやCodexで信頼済みのフォルダが一覧に出る。それ以外は「Choose another folder…」で `allowed_roots` の配下から選ぶ。
-- 終了したセッションはresumeできる（エージェント側のセッションを引き継いで起動し直す）。
+- 終了したセッションはresumeできる（同じcqのIDのまま、同じディレクトリと名前で、エージェントの会話を引き継いで起動し直す）。boardのEndedの「Resume」か `cq resume ID`。最初のターンの前に終わったセッションはエージェント側に会話がない（Codexは最初のターンで会話を作る）ので、同じID・ディレクトリ・名前でエージェントを新しく起動する。
 
 ### マシン
 
@@ -50,6 +50,7 @@
 | `cq claude [--cq-name NAME] [claudeの引数…]` | claudeをセッションとして起動し、この端末に付ける |
 | `cq codex [--cq-name NAME] [codexの引数…]` | codexをセッションとして起動し、この端末に付ける |
 | `cq attach TARGET`（`cq a`） | 動いているセッションにこの端末を付ける。Ctrl+\ で切り離す |
+| `cq resume ID` | 終了したセッション（cqのIDか一意な前方一致）を同じIDのまま起動し直し、この端末に付ける。エージェント・ディレクトリ・名前は記録から引き、`claude --resume` / `codex resume` で会話を引き継ぐ |
 | `cq ls [-a | --all]` | このマシンの動いているセッションの一覧。`--all` は終了したものも出す |
 | `cq rename TARGET [NAME] [--clear]` | 名前を付ける（重複は断る）／消す |
 | `cq inject TARGET TEXT [--submit] [--quiet-ms N]` | セッションがアイドルで誰も入力していないときに文字を入れる |

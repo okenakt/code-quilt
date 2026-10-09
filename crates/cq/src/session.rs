@@ -73,6 +73,17 @@ pub fn pick<'a>(sessions: &'a [SessionMeta], key: &str) -> Result<&'a SessionMet
     anyhow::bail!("no running session matches '{key}'")
 }
 
+/// Picks the ended session that `key` refers to: an exact id or a unique id prefix.
+pub fn pick_ended<'a>(sessions: &'a [SessionMeta], key: &str) -> Result<&'a SessionMeta> {
+    let hits: Vec<_> = sessions.iter().filter(|m| m.id.starts_with(key)).collect();
+    match hits.as_slice() {
+        [] => anyhow::bail!("no session matches '{key}'"),
+        [one] if one.status == SessionStatus::Running => anyhow::bail!("session {} is still running", one.id),
+        [one] => Ok(one),
+        many => anyhow::bail!("'{key}' is ambiguous: {}", many.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", ")),
+    }
+}
+
 /// The id of another running session already called `name`, if any. Names are unique among a
 /// machine's running sessions so that a name alone identifies a session.
 pub fn name_taken(name: &str, except_id: &str) -> Option<String> {
@@ -152,5 +163,7 @@ mod tests {
         let s = [meta("abc123", Some("x"), false), meta("def456", Some("x"), true)];
         assert_eq!(pick(&s, "x").unwrap().id, "def456");
         assert!(pick(&s, "abc").unwrap_err().to_string().contains("exited"));
+        assert_eq!(pick_ended(&s, "abc").unwrap().id, "abc123");
+        assert!(pick_ended(&s, "def").unwrap_err().to_string().contains("still running"));
     }
 }

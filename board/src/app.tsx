@@ -1,6 +1,6 @@
 import { PanelLeft, PanelRight } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, restartDaemon, sessionKey, terminate, type Agent } from "./api";
+import { connectBackend, getMachines, getReplay, launchSession, refreshSessions, restartDaemon, resumeSession, sessionKey, terminate, type Agent } from "./api";
 import { ApprovalCards, pendingApprovals, promptKey } from "./components/approvals";
 import { RightSidebar, SidebarResizer } from "./components/right-sidebar";
 import { NewSessionDialog } from "./components/new-session-dialog";
@@ -31,7 +31,7 @@ import { KeybindingsView } from "./components/keybindings-view";
 import { chordOfEvent } from "./keys";
 import { togglePin, usePins } from "./pins";
 import { toggleSidebar, usePrefs } from "./prefs";
-import { applyEvent, displayName, markExited, setMachines, setSessions, useStore } from "./store";
+import { applyEvent, displayName, markExited, markResumed, setMachines, setSessions, useStore } from "./store";
 import type { SessionState } from "./types";
 
 const sideOf = (command: string): Side => {
@@ -90,13 +90,10 @@ export const App = () => {
 
   const openSession = useCallback((s: SessionState) => openInActiveTab(s.key), []);
 
-  const launch = useCallback(
-    async (machine: string, agent: Agent, cwd: string, args: string[], resume: string | null = null) => {
-      const id = await launchSession(machine, agent, cwd, args, resume);
-      openInActiveTab(sessionKey(machine, id));
-    },
-    [],
-  );
+  const launch = useCallback(async (machine: string, agent: Agent, cwd: string, args: string[]) => {
+    const id = await launchSession(machine, agent, cwd, args);
+    openInActiveTab(sessionKey(machine, id));
+  }, []);
 
   const pins = usePins();
   const uiConfig = useCommandState().config;
@@ -137,12 +134,15 @@ export const App = () => {
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), ok ? 4000 : 10000);
   }, []);
 
-  const resumeSession = useCallback(
+  const resume = useCallback(
     (s: SessionState) =>
-      void launch(s.machine, s.meta.agent === "codex" ? "codex" : "claude", s.meta.cwd, [], s.meta.agent_session_id).catch((e: unknown) =>
-        showToast(false, `Resume: ${String(e)}`),
-      ),
-    [launch, showToast],
+      void resumeSession(s.machine, s.meta.id)
+        .then(() => {
+          markResumed(s.machine, s.meta.id);
+          openInActiveTab(s.key);
+        })
+        .catch((e: unknown) => showToast(false, `Resume: ${String(e)}`)),
+    [showToast],
   );
 
   /** Ends a session after the user confirms; the agent exits and is killed if it has not exited after 10s. */
@@ -316,7 +316,7 @@ export const App = () => {
             activeKey={activeKey}
             onOpen={openSession}
             onNew={setNewSessionFor}
-            onResume={resumeSession}
+            onResume={resume}
             onEnd={endSession}
             pins={pins}
             pinNames={pinNames}

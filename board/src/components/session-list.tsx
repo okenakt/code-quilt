@@ -192,7 +192,7 @@ const EndedItem = ({ s, canResume, onResume }: { s: SessionState; canResume: boo
       <SessionId id={s.meta.id} />
     </Col>
     <span className="ended-when">{ago(s.meta.ended_at_ms ?? s.meta.started_at_ms)}</span>
-    {canResume && s.meta.agent_session_id && (
+    {canResume && (
       <button className="session-resume" onClick={() => onResume(s)}>
         Resume
       </button>

@@ -122,27 +122,22 @@ fn set_focus(hub: State<'_, HubState>, machine: Option<String>, session: Option<
 }
 
 #[tauri::command]
-async fn launch(
-    hub: State<'_, HubState>,
-    machine: String,
-    agent: String,
-    cwd: String,
-    resume: Option<String>,
-    args: Vec<String>,
-) -> Result<String, String> {
+async fn launch(hub: State<'_, HubState>, machine: String, agent: String, cwd: String, args: Vec<String>) -> Result<String, String> {
     let id = hub.next_id();
-    let req = cq_proto::Launch {
-        id,
-        machine,
-        agent,
-        cwd,
-        args,
-        resume,
-        name: None,
-        cols: 120,
-        rows: 36,
-    };
-    match hub.call(id, cq_proto::Message::Launch(req)).await.map_err(err)? {
+    let req = cq_proto::Launch { id, machine, agent, cwd, args, name: None, cols: 120, rows: 36 };
+    launched(&hub, id, cq_proto::Message::Launch(req)).await
+}
+
+#[tauri::command]
+async fn resume(hub: State<'_, HubState>, machine: String, session: String) -> Result<String, String> {
+    let id = hub.next_id();
+    let req = cq_proto::Resume { id, machine, session, cols: 120, rows: 36 };
+    launched(&hub, id, cq_proto::Message::Resume(req)).await
+}
+
+/// Sends a request that starts a session and returns the session's id.
+async fn launched(hub: &HubState, id: u64, msg: cq_proto::Message) -> Result<String, String> {
+    match hub.call(id, msg).await.map_err(err)? {
         cq_proto::Message::Launched(l) => Ok(l.session),
         other => Err(format!("unexpected reply {other:?}")),
     }
@@ -206,6 +201,7 @@ fn main() {
             terminate,
             set_focus,
             launch,
+            resume,
             list_dir,
             commands,
             invoke_command,

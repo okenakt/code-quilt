@@ -50,6 +50,9 @@ enum Cmd {
     /// Attach this terminal to a running session (name, id, or unique id prefix). Ctrl+\ detaches.
     #[command(visible_alias = "a")]
     Attach { id: String },
+    /// Start an ended session again under its id (or a unique id prefix), in its directory and
+    /// with its name, resuming the agent's conversation; attaches this terminal.
+    Resume { id: String },
     /// List running sessions (`--all` also lists ended ones).
     Ls {
         #[arg(short, long)]
@@ -281,6 +284,7 @@ async fn run(cmd: Cmd) -> Result<i32> {
             let outcome = attach::attach(&meta.pipe, Duration::from_secs(2)).await?;
             Ok(attach::report(&meta.id, outcome))
         }
+        Cmd::Resume { id } => launch::resume(&id).await,
         Cmd::Ls { all } => {
             println!("{:<12}  {:<16}  {:<7}  {:<8}  CWD", "ID", "NAME", "AGENT", "STATUS");
             for m in session::list()?.into_iter().filter(|m| all || m.status == SessionStatus::Running) {

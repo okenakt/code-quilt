@@ -165,7 +165,6 @@ async fn launch_detached(name: &str, agent: &str, cwd: &std::path::Path, args: V
         agent: agent.into(),
         cwd: cwd.to_string_lossy().into_owned(),
         args,
-        resume: None,
         name: Some(name.into()),
         cols: 120,
         rows: 36,
