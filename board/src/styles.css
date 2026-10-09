@@ -257,6 +257,8 @@ kbd {
 .token-name,
 .token-entry-place {
   flex: 1;
+  /* The same size as the left sidebar's level headings. */
+  font-size: 11px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1525,10 +1527,14 @@ kbd {
   --agent: #7896fa;
 }
 
-.agent-heading .agent-badge {
+.usage-account .agent-badge {
   width: 54px;
   font-size: 12px;
   line-height: 18px;
+}
+
+.usage-account .agent-account {
+  font-size: 12px;
 }
 
 .renamable {
