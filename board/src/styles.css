@@ -120,17 +120,13 @@ kbd {
 
 .agent-heading {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
 .usage-account .agent-heading {
   margin-bottom: 8px;
-}
-
-.agent-name {
-  font-size: 14px;
 }
 
 .agent-account {
@@ -1497,4 +1493,25 @@ kbd {
 
 .tree.deep {
   margin-left: calc(2 * var(--indent));
+}
+
+.agent-badge {
+  --agent: var(--muted);
+  flex: none;
+  width: 44px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 14px;
+  border: 1px solid var(--agent);
+  border-radius: 3px;
+  color: var(--agent);
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--agent) 28%, transparent) 0 2px, transparent 2px 5px);
+}
+
+.agent-badge.claude {
+  --agent: #d97757;
+}
+
+.agent-badge.codex {
+  --agent: #7896fa;
 }

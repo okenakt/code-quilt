@@ -5,6 +5,7 @@ import { focusPane, panesOf, selectTab, useLayout } from "../layout";
 import { setColumn, toggleFold, usePrefs, type Column, type Prefs } from "../prefs";
 import { Fold, SidebarSection, isExpanded } from "./sidebar-section";
 import { isPinned, togglePin, type Pins } from "../pins";
+import { AgentBadge } from "./agent-badge";
 import { displayName } from "../store";
 import type { Activity, MachineInfo, SessionState } from "../types";
 
@@ -143,6 +144,7 @@ const SessionItem = ({ s, machine, detailsKey, active, pinned, onPin, onEnd, onO
         >
           {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </button>
+        <AgentBadge agent={s.meta.agent} />
         <Col col="name">
           <span className="session-name">{displayName(s)}</span>
         </Col>
@@ -185,6 +187,7 @@ const SessionItem = ({ s, machine, detailsKey, active, pinned, onPin, onEnd, onO
 const EndedItem = ({ s, canResume, onResume }: { s: SessionState; canResume: boolean; onResume: (s: SessionState) => void }) => (
   <div className="ended" title={s.meta.cwd}>
     <span className="session-expand" />
+    <AgentBadge agent={s.meta.agent} />
     <Col col="name">
       <span className="session-name">{displayName(s)}</span>
     </Col>

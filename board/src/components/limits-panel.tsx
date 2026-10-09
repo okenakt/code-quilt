@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { MachineInfo, RateWindow, SessionState } from "../types";
+import { AgentBadge } from "./agent-badge";
 
 type AccountUsage = {
   key: string;
@@ -12,12 +13,10 @@ type AccountUsage = {
 
 type AgentGroup = { agent: string; accounts: AccountUsage[] };
 
-const AGENT_LABEL: Record<string, string> = { claude: "Claude", codex: "Codex" };
-
 /** An agent and its account(s), as both the Limits and Tokens sections show them. */
 export const AgentHeading = ({ agent, account }: { agent: string; account: string }) => (
   <header className="agent-heading">
-    <span className="agent-name">{AGENT_LABEL[agent] ?? agent}</span>
+    <AgentBadge agent={agent} />
     <span className="agent-account">{account}</span>
   </header>
 );
