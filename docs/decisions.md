@@ -455,3 +455,15 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 ## 53. cq-notifyは今は作らない
 
 - #48で未決事項に残したcq-notify（boardから独立した通知のプラグイン）は、今は作らないことに決めた。未決事項からは外し、構想は#48に残す。
+
+## 54. Codexで動くQueen
+
+- **エージェントの選び方**：`NAME.toml` の `agent` を既定とし、起動時の `KEY=VALUE`（Hydraのような上書き）で切り替える。エージェントだけ特別に `--agent` を設ける案より、どのキーも同じ仕組みで上書きできる方が単純。値はCodexの `-c` と同じくTOMLとして読む。上書きは保存しない。パレットの `queen.start` には `agent` の引数だけ足し、空なら設定のままにする（任意のキーを打つ欄はパレットでは使いにくいため設けない）。
+- **エージェントごとの既定**：`model = "sonnet"` のまま `agent=codex` で起動するとCodexにSonnetを渡してしまうため、`model` と `delivery` は書かなければエージェントごとの既定（Claudeは `sonnet` と `channels`、Codexはユーザーの既定モデルと `pty`）にし、既定の設定ファイルにも書き出さない。Codexの既定モデルを軽いモデルに固定する案は、アカウントによって使えないため採らなかった。
+- **Codexへの渡し方**：MCPは `-c mcp_servers.cq.*`、確認なしで使えるツールは `mcp_servers.cq.tools.<tool>.approval_mode = "approve"`（サーバー全体の既定は `prompt`）、人格は `developer_instructions`（ユーザーのAGENTS.mdとは別に読まれる）。Queenの `cwd` にAGENTS.mdを書く案は、`cwd` をユーザーのプロジェクトにしたときにぶつかるため採らなかった。値は英数字といくつかの記号以外を `\u` でエスケープしたTOMLの文字列にする。Windowsでは `codex.cmd` 経由で起動するため、人格の `<` や `"` を `cmd.exe` が解釈してCodexが起動直後に終了したことから（JSONの文字列として書くだけでは足りなかった）。
+- **届け方**：CodexにはChannelsに当たる仕組みがないため、PTY注入にする。`codex queue`（Codexの待ち行列）は、`-c` で起動したセッションで使えるか未確認で、配信が最大10秒遅れ、宛先のスレッドIDが最初のターンまで分からないため採らなかった。
+
+## 55. `@名前` の近道をやめる
+
+- #25で入れた `@名前 本文`（QueenのUserPromptSubmit hookで直接送る）をやめた。Queenに代行させないなら、ユーザーは対象のセッションのペインで直接入力する方が自然で、使われなかった。Codexで動くQueenでこのhookがエラーになったことも見直すきっかけになった。
+- これだけのためにあった本体の追加設定（`--cq-settings`、起動要求の `settings_extra`、セッション専用の `settings/<id>.json`）と、プロンプトを止めたことを知らせる `prompt_blocked` イベントも削除した。

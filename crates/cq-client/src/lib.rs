@@ -154,15 +154,6 @@ impl Model {
                         s.activity = Activity::Working;
                     }
                 }
-                Some("prompt_blocked") => {
-                    // A hook stopped the prompt: no turn ran.
-                    if s.turns.back().is_some_and(|t| t.reply.is_none()) {
-                        s.turns.pop_back();
-                    }
-                    if s.activity == Activity::Working {
-                        s.activity = Activity::Idle;
-                    }
-                }
                 Some("meta") => s.meta.name = text("name"),
                 _ => {}
             },

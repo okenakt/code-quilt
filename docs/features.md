@@ -35,8 +35,7 @@
 
 - 他のセッションの承認待ち・質問・ターン終了をまとめて報告し、ユーザーの指示や承認を各セッションに送るオーケストレーター。Queen自身は代わりに判断しない。
 - 頼めば、指定したディレクトリで新しいセッションを起動し、最初の指示を渡す（確認なし）。
-- `@名前 本文` と書くと、Queenを介さずそのセッションに直接送る。
-- 担当するマシン、モデル、人格、届け方は設定で変えられる。名前の違うQueenを複数動かせる。
+- エージェントはClaude CodeかCodex。担当するマシン、モデル、人格、届け方は設定で変えられ、起動時に `KEY=VALUE` で一時的に上書きできる（例 `agent=codex`）。名前の違うQueenを複数動かせる。
 
 ### プラグイン
 
@@ -48,7 +47,7 @@
 
 | コマンド | 内容 |
 | --- | --- |
-| `cq claude [--cq-name NAME] [--cq-settings FILE] [claudeの引数…]` | claudeをセッションとして起動し、この端末に付ける。`--cq-settings` はhooksを足す設定ファイル |
+| `cq claude [--cq-name NAME] [claudeの引数…]` | claudeをセッションとして起動し、この端末に付ける |
 | `cq codex [--cq-name NAME] [codexの引数…]` | codexをセッションとして起動し、この端末に付ける |
 | `cq attach TARGET`（`cq a`） | 動いているセッションにこの端末を付ける。Ctrl+\ で切り離す |
 | `cq ls` | このマシンのセッションの一覧 |
@@ -71,7 +70,7 @@
 
 | コマンド | 内容 |
 | --- | --- |
-| `cq queen start [NAME] [--detach] [-- エージェントの引数…]` | Queenを起動する（既定の名前は `queen`）。同名のQueenが動いていれば何もしない。`--detach` は端末に付けずに起動する |
+| `cq queen start [NAME] [KEY=VALUE]… [--detach] [-- エージェントの引数…]` | Queenを起動する（既定の名前は `queen`）。`KEY=VALUE` は `NAME.toml` のキーをこの起動だけ上書きする（値はTOMLとして読み、読めなければ文字列。空の値は上書きしない）。同名のQueenが動いていれば何もしない。`--detach` は端末に付けずに起動する |
 | `cq queen config [NAME]` | 設定ファイルのパスを出す（無ければ既定値で作る） |
 
 エイリアスの既定で `cq q` は `cq queen` になる。
@@ -114,7 +113,7 @@
 
 | コマンド | プラグイン | 内容 |
 | --- | --- | --- |
-| `queen.start` | queen | Queenを起動する（引数 `name`、既定 `queen`） |
+| `queen.start` | queen | Queenを起動する（引数 `name`、既定 `queen`。`agent` は `claude` か `codex`、空なら設定のまま） |
 
 ## 設定
 
@@ -171,15 +170,15 @@ command = "-pane.close"     # "-" removes a default binding (all of its keys wit
 
 ### `~/.codequilt/queens/NAME.toml`
 
-無ければ既定値で作られる。
+無ければ既定値で作られる。知らないキーはエラーになる。
 
 | キー | 既定 | 内容 |
 | --- | --- | --- |
-| `agent` | `"claude"` | Queenのエージェント |
-| `model` | `"sonnet"` | モデル |
+| `agent` | `"claude"` | Queenのエージェント（`claude` か `codex`） |
+| `model` | Claudeは `"sonnet"`、Codexはユーザーの既定 | モデル。既定のときはファイルに書かれない |
 | `persona` | `"default"` | 人格（指示文）。`default` かファイルのパス |
 | `scope` | `[]` | 担当するマシン（`machine:ID`）。空なら全マシン |
-| `delivery` | `"channels"` | 届け方。`channels` か `pty` |
+| `delivery` | Claudeは `"channels"`、Codexは `"pty"` | 届け方。`channels` か `pty`。Codexは `pty` だけ。既定のときはファイルに書かれない |
 | `wake_on` | `["permission", "question", "stop"]` | Queenに届けるイベント |
 | `allow_approve` | `false` | `approve` ツールを確認なしで使わせる |
 | `cwd` | `~/.codequilt/queens/NAME` | Queenのセッションを動かすディレクトリ |
@@ -195,5 +194,5 @@ command = "-pane.close"     # "-" removes a default binding (all of its keys wit
 | `logs/` | daemon・セッション・プラグインのログ |
 | `plugins/<name>.json` | 導入済みプラグインのmanifest |
 | `claude.json`、`settings/<id>.json` | Claude Codeに注入する設定 |
-| `queens/` | Queenの設定と、生成したMCP設定・hooks設定 |
+| `queens/` | Queenの設定と、生成したMCP設定（Claude） |
 | `run/` | Linuxのソケット |

@@ -835,10 +835,6 @@ fn handle_event(state: &Shared, ev: AgentEvent) {
         Some("UserPromptSubmit") => st.agent_idle = false,
         _ => {}
     }
-    // A hook blocked the prompt, so no turn will start or Stop arrive.
-    if ev.source == "cq" && ev.payload.get("type").and_then(|t| t.as_str()) == Some("prompt_blocked") {
-        st.agent_idle = true;
-    }
     if hook == Some("SessionStart") {
         st.account_recheck = true;
         if let Some(sid) = ev.payload.get("session_id").and_then(|v| v.as_str()) {

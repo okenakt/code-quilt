@@ -304,9 +304,6 @@ pub struct Launch {
     pub resume: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
-    /// Extra Claude Code settings file whose hooks run alongside CodeQuilt's own.
-    #[serde(default)]
-    pub settings_extra: Option<String>,
     pub cols: u16,
     pub rows: u16,
 }

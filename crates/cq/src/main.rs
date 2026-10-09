@@ -35,13 +35,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Run claude inside a detachable CodeQuilt session. `--cq-name NAME` names the session
-    /// (unique among running ones), `--cq-settings FILE` adds hooks; other arguments go to claude.
+    /// (unique among running ones); other arguments go to claude.
     #[command(disable_help_flag = true)]
     Claude {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Run codex inside a detachable CodeQuilt session (same `--cq-*` options as `claude`).
+    /// Run codex inside a detachable CodeQuilt session (same `--cq-name` option as `claude`).
     #[command(disable_help_flag = true)]
     Codex {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -205,19 +205,18 @@ enum MachineCmd {
     Remove { id: String },
 }
 
-/// Takes `--cq-name NAME` and `--cq-settings FILE` out of the agent arguments.
-fn split_labels(args: Vec<String>) -> (launch::Labels, Vec<String>) {
-    let mut labels = launch::Labels::default();
+/// Takes `--cq-name NAME` out of the agent arguments.
+fn split_name(args: Vec<String>) -> (Option<String>, Vec<String>) {
+    let mut name = None;
     let mut rest = Vec::new();
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--cq-name" => labels.name = it.next(),
-            "--cq-settings" => labels.settings_extra = it.next(),
+            "--cq-name" => name = it.next(),
             _ => rest.push(a),
         }
     }
-    (labels, rest)
+    (name, rest)
 }
 
 fn main() {
@@ -243,12 +242,12 @@ fn main() {
 async fn run(cmd: Cmd) -> Result<i32> {
     match cmd {
         Cmd::Claude { args } => {
-            let (labels, args) = split_labels(args);
-            launch::run_agent("claude", labels, args).await
+            let (name, args) = split_name(args);
+            launch::run_agent("claude", name, args).await
         }
         Cmd::Codex { args } => {
-            let (labels, args) = split_labels(args);
-            launch::run_agent("codex", labels, args).await
+            let (name, args) = split_name(args);
+            launch::run_agent("codex", name, args).await
         }
         Cmd::Rename { target, name, clear } => {
             if name.is_none() && !clear {

@@ -127,7 +127,7 @@ flowchart TB
 
 ### 設定の注入
 
-- Claude Codeは `claude --settings ~/.codequilt/claude.json` で起動し、hooksとstatusLineだけを注入する。追加の設定ファイル（`--cq-settings`）があれば、hooksをイベントごとに連結したセッション専用の設定を作る。`~/.claude` 配下には書き込まない。
+- Claude Codeは `claude --settings ~/.codequilt/claude.json` で起動し、hooksとstatusLineだけを注入する。`~/.claude` 配下には書き込まない。
 - Codexは `-c hooks.<Event>=[...]` で同じhooksを渡す。
 - **hooksは何も出力しない**：標準出力はコンテキストに注入されるため。イベントをcq hostに送って正常終了するだけにし、トークン消費を増やさない。cq hostが不在でもすぐ終わる。
 - **statusLineはユーザー設定に連鎖させる**：`cq statusline` はデータをcq hostに送ったうえで、ユーザーの `settings.json` にある元のコマンドを呼び、その出力を表示する。ローカルの見た目は変わらない。
@@ -184,8 +184,11 @@ VS Codeの拡張と同じ考え方で、プラグインは提供するコマン�
     {
       "name": "queen.start",
       "title": "Queen: Start",
-      "args": [{ "name": "name", "title": "Queen name", "default": "queen" }],
-      "run": { "exec": ["start", "${name}", "--detach"] }
+      "args": [
+        { "name": "name", "title": "Queen name", "default": "queen" },
+        { "name": "agent", "title": "Agent (claude / codex; empty: as in the settings)", "default": "" }
+      ],
+      "run": { "exec": ["start", "${name}", "agent=${agent}", "--detach"] }
     }
   ]
 }
@@ -225,7 +228,7 @@ sequenceDiagram
 | `~/.codequilt/keybindings.toml` | キーバインド | cq-board |
 | `~/.codequilt/queens/NAME.toml` | Queenごとの設定 | cq-queen |
 
-- プログラムが生成する状態（`sessions/*.json`、`plugins/*.json`）や、Claude Code・MCPがJSONを求めるファイル（`claude.json`、`settings/*.json`、`*.mcp.json`）はJSONのまま。
+- プログラムが生成する状態（`sessions/*.json`、`plugins/*.json`）や、Claude Code・MCPがJSONを求めるファイル（`claude.json`、`*.mcp.json`）はJSONのまま。
 - 効いている設定はファイルに見えるようにする。`ui.toml` は無ければ既定の内容を書き出す。キーバインドの既定は組み込みで、`keybindings.toml` は上書きだけを書く。
 - ダッシュボードは `ui.toml` と `keybindings.toml` を監視して、変更をすぐに反映する。
 
@@ -256,9 +259,10 @@ sequenceDiagram
 4. ユーザーの指示を、Queenが `cq mcp` の `send` / `approve` で各セッションへ送る。`approve` は既定では事前許可せず、使うたびにQueen自身の確認を挟む。新しいセッションが要るときは `launch` で起動し、最初の指示はセッションがアイドルになってから注入する（`cq inject` と同じ待ち行列）。`launch` は事前許可する（起動できるディレクトリは本体が `allowed_roots` と信頼済みのフォルダに限るため）。
 
 - Queen自身のイベントは届けない（無限ループの防止）。ユーザーがセッションに直接入力したら、そのセッションの未処理の項目は取り下げる。
-- **届け方**：Claudeの既定はChannels（入力欄と干渉せず、通知が「ユーザーの発言」として履歴に混ざらない）。起動のたびに開発用チャネルの確認が出るので、ダッシュボードの承認ダイアログで答える。Channelsが使えないときはPTY注入（アイドルで入力欄が空のときだけ）を使う。
-- **`@名前`**：QueenのUserPromptSubmit hook（`cq-queen hook`）が `@名前 本文` を検出したら直接送り、LLMのターンを使わない。
-- **cqの場所**：`NAME.mcp.json` にはcq本体の絶対パス（cq-queenの隣、または `CQ_BIN`）を書く。見つからなければ起動を失敗させる。名前だけを書くと `PATH` 上の古いcqが使われうるため。
+- **届け方**：Claudeの既定はChannels（入力欄と干渉せず、通知が「ユーザーの発言」として履歴に混ざらない）。起動のたびに開発用チャネルの確認が出るので、ダッシュボードの承認ダイアログで答える。Channelsが使えないときと、Codex（Channelsに当たる仕組みがない）はPTY注入（アイドルで入力欄が空のときだけ）を使う。
+- **エージェントごとの渡し方**：同じ中身（`cq mcp`、確認なしで使えるツール、人格、モデル）を、Claudeには `--mcp-config`（`NAME.mcp.json`）・`--allowedTools`・`--append-system-prompt`・`--model` で、Codexには `-c` の上書き（`mcp_servers.cq.*`、ツールごとの `approval_mode = "approve"`、`developer_instructions`）と `-m` で渡す。値は英数字といくつかの記号以外を `\u` でエスケープしたTOMLの文字列にする（Windowsでは `codex.cmd` 経由で起動するため、`cmd.exe` が `<` や `"` や改行を解釈しないように）。
+- **設定と上書き**：設定は `NAME.toml`、起動時の `KEY=VALUE` でこの起動だけ上書きする（エージェントの切り替えなど）。`model` と `delivery` は書かなければエージェントごとの既定になるので、`agent` を上書きするだけで別のエージェントで動く。上書きはcourierにも渡す。
+- **cqの場所**：MCPの設定にはcq本体の絶対パス（cq-queenの隣、または `CQ_BIN`）を書く。見つからなければ起動を失敗させる。名前だけを書くと `PATH` 上の古いcqが使われうるため。
 - **特定**：Queenは名前で特定する（名前は一意）。`queen.start` は同名のセッションが動いていれば何もせず成功を返す。
 - 設定はQueenごとに `~/.codequilt/queens/NAME.toml` を置き、複数のQueenを同時に動かせる。
 
@@ -351,6 +355,5 @@ sequenceDiagram
 
 ## 未実装・未決事項
 
-- [ ] Codexで動くQueen（MCP設定と指示文の渡し方、Channels非対応のためPTY配信）
 - [ ] リモートマシン上のQueen、リモートマシンのプラグインのコマンド
 - [ ] リモートへの `cq` バイナリの配布（当面は手動で置き、`cq_path` で指定）

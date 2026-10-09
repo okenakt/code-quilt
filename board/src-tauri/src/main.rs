@@ -139,7 +139,6 @@ async fn launch(
         args,
         resume,
         name: None,
-        settings_extra: None,
         cols: 120,
         rows: 36,
     };

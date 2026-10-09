@@ -16,16 +16,20 @@ pub enum Delivery {
 
 /// Settings of one Queen.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct QueenConfig {
-    /// `claude` (`codex` once CodeQuilt supports it).
+    /// `claude` or `codex`.
     pub agent: String,
-    pub model: String,
+    /// Default: `sonnet` for Claude, the user's own default for Codex.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// `default`, or a path to a prompt file.
     pub persona: String,
     /// `machine:ID` entries; empty means every machine.
     pub scope: Vec<String>,
-    pub delivery: Delivery,
+    /// Default: `channels` for Claude; Codex supports only `pty`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<Delivery>,
     /// Which events wake the Queen: `permission`, `question` (other dialogs), `stop`.
     pub wake_on: Vec<String>,
     /// Let the Queen answer permission prompts without its own confirmation step.
@@ -40,10 +44,10 @@ impl Default for QueenConfig {
     fn default() -> Self {
         Self {
             agent: "claude".into(),
-            model: "sonnet".into(),
+            model: None,
             persona: "default".into(),
             scope: Vec::new(),
-            delivery: Delivery::Channels,
+            delivery: None,
             wake_on: vec!["permission".into(), "question".into(), "stop".into()],
             allow_approve: false,
             cwd: None,
@@ -57,8 +61,40 @@ pub fn queens_dir() -> Result<PathBuf> {
     Ok(cq_proto::local::state_root()?.join("queens"))
 }
 
-/// Loads `<name>.toml`, writing the defaults first if it does not exist.
-pub fn load_or_create(name: &str) -> Result<(QueenConfig, PathBuf)> {
+/// Loads `<name>.toml` (writing the defaults first if it does not exist) and applies `KEY=VALUE`
+/// overrides on top without saving them. A value is read as TOML, else as a plain string; an empty
+/// value leaves the key as it is.
+pub fn load(name: &str, overrides: &[String]) -> Result<(QueenConfig, PathBuf)> {
+    let (text, path) = read_or_create(name)?;
+    let mut table: toml::Table = toml::from_str(&text).with_context(|| format!("invalid {}", path.display()))?;
+    for o in overrides {
+        let (key, value) = o.split_once('=').with_context(|| format!("expected KEY=VALUE, got '{o}'"))?;
+        if value.is_empty() {
+            continue;
+        }
+        let value = toml::from_str::<toml::Table>(&format!("v = {value}"))
+            .ok()
+            .and_then(|mut t| t.remove("v"))
+            .unwrap_or_else(|| toml::Value::String(value.to_owned()));
+        table.insert(key.to_owned(), value);
+    }
+    let cfg: QueenConfig = table.try_into().with_context(|| format!("invalid settings for queen '{name}'"))?;
+    match (cfg.agent.as_str(), cfg.delivery) {
+        ("claude", _) | ("codex", None | Some(Delivery::Pty)) => Ok((cfg, path)),
+        ("codex", Some(Delivery::Channels)) => bail!("a Codex Queen supports only delivery = \"pty\""),
+        (other, _) => bail!("unknown agent '{other}' (claude or codex)"),
+    }
+}
+
+impl QueenConfig {
+    /// How updates reach the Queen, after the agent's default.
+    pub fn delivery(&self) -> Delivery {
+        self.delivery.unwrap_or(if self.agent == "claude" { Delivery::Channels } else { Delivery::Pty })
+    }
+}
+
+/// The settings file's text, writing the defaults first if it does not exist.
+fn read_or_create(name: &str) -> Result<(String, PathBuf)> {
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         bail!("queen names may only contain letters, digits, '-' and '_'");
     }
@@ -68,9 +104,7 @@ pub fn load_or_create(name: &str) -> Result<(QueenConfig, PathBuf)> {
     if !path.exists() {
         std::fs::write(&path, toml::to_string_pretty(&QueenConfig::default())?)?;
     }
-    let text = std::fs::read_to_string(&path)?;
-    let cfg = toml::from_str(&text).with_context(|| format!("invalid {}", path.display()))?;
-    Ok((cfg, path))
+    Ok((std::fs::read_to_string(&path)?, path))
 }
 
 /// The persona text for a configuration.

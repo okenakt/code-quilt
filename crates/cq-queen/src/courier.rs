@@ -216,7 +216,7 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                 }
                 let channel = format!("channel:{qid}");
                 let content = compose(&pending, &open);
-                let msg = match cfg.delivery {
+                let msg = match cfg.delivery() {
                     Delivery::Channels => {
                         // The channel exists once the Queen's MCP server is up (after the user
                         // confirms the development channel dialog).

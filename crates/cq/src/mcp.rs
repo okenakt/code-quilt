@@ -140,7 +140,6 @@ impl Server {
             args: Vec::new(),
             resume: None,
             name: name.clone(),
-            settings_extra: None,
             cols: 120,
             rows: 36,
         };
