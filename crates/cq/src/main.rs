@@ -50,8 +50,11 @@ enum Cmd {
     /// Attach this terminal to a running session (name, id, or unique id prefix). Ctrl+\ detaches.
     #[command(visible_alias = "a")]
     Attach { id: String },
-    /// List sessions.
-    Ls,
+    /// List running sessions (`--all` also lists ended ones).
+    Ls {
+        #[arg(short, long)]
+        all: bool,
+    },
     /// Show rate limits per account and tokens per running session (all machines).
     Usage {
         /// Only this machine (no ssh to remote machines).
@@ -278,9 +281,9 @@ async fn run(cmd: Cmd) -> Result<i32> {
             let outcome = attach::attach(&meta.pipe, Duration::from_secs(2)).await?;
             Ok(attach::report(&meta.id, outcome))
         }
-        Cmd::Ls => {
+        Cmd::Ls { all } => {
             println!("{:<12}  {:<16}  {:<7}  {:<8}  CWD", "ID", "NAME", "AGENT", "STATUS");
-            for m in session::list()? {
+            for m in session::list()?.into_iter().filter(|m| all || m.status == SessionStatus::Running) {
                 let status = match m.status {
                     SessionStatus::Running => "running",
                     SessionStatus::Exited => "exited",

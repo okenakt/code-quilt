@@ -50,7 +50,7 @@
 | `cq claude [--cq-name NAME] [claudeの引数…]` | claudeをセッションとして起動し、この端末に付ける |
 | `cq codex [--cq-name NAME] [codexの引数…]` | codexをセッションとして起動し、この端末に付ける |
 | `cq attach TARGET`（`cq a`） | 動いているセッションにこの端末を付ける。Ctrl+\ で切り離す |
-| `cq ls` | このマシンのセッションの一覧 |
+| `cq ls [-a | --all]` | このマシンの動いているセッションの一覧。`--all` は終了したものも出す |
 | `cq rename TARGET [NAME] [--clear]` | 名前を付ける（重複は断る）／消す |
 | `cq inject TARGET TEXT [--submit] [--quiet-ms N]` | セッションがアイドルで誰も入力していないときに文字を入れる |
 | `cq kill TARGET [--force] [--grace SECONDS]` | セッションを終了させる |
