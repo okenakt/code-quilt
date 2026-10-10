@@ -12,7 +12,7 @@
 - 終了は `cq kill` かダッシュボードの「End session」。エージェント自身に終了させ、10秒で終わらなければ強制終了する。
 - ダッシュボードの「New session」では、そのマシンのClaude CodeやCodexで信頼済みのフォルダが一覧に出る。それ以外は「Choose another folder…」で `allowed_roots` の配下から選ぶ。
 - 終了したセッションはresumeできる（同じcqのIDのまま、同じディレクトリと名前で、エージェントの会話を引き継いで起動し直す）。boardのEndedの「Resume」か `cq resume ID`。最初のターンの前に終わったセッションはエージェント側に会話がない（Codexは最初のターンで会話を作る）ので、同じID・ディレクトリ・名前でエージェントを新しく起動する。
-- セッション同士でメッセージを送り合える。cqで起動したセッション（Queenを除く）には、cqのMCP（`cq mcp --worker`）が確認なしで使える形で入っていて、エージェントは `list_sessions` / `get_turns` でほかのセッションを見て、`message` で依頼や返事を残せる。メッセージは相手がアイドルになってから `[from 送信元の名前 (machine:id)]` を先頭に付けて入力される。入れたくないときは `--cq-no-mcp`。
+- セッション同士でメッセージを送り合える。cqで起動したセッション（オーケストレーターを除く）には、cqのMCP（`cq mcp --worker`）が確認なしで使える形で入っていて、エージェントは `list_sessions` / `get_turns` でほかのセッションを見て、`message` で依頼や返事を残せる。メッセージは相手がアイドルになってから `[from 送信元の名前 (machine:id)]` を先頭に付けて入力される。入れたくないときは `--cq-no-mcp`。
 
 ### マシン
 
@@ -22,21 +22,21 @@
 ### ダッシュボード（cq-board）
 
 - **左サイドバー**（開閉できる）：Pinned（ピン留めしたセッション）、Tabs（タブごとに中のセッションと空のペイン。選ぶとそのタブとペインへ移る）、Machines（マシンごとに、Active（動いているセッションを作業ディレクトリごとにまとめ、ディレクトリの名前の順に並べる）と、既定で折りたたんだEnded（終了したセッションを作業ディレクトリごとにまとめ、最近使ったディレクトリから並べる））の3つの欄。作業ディレクトリはboardのどこでも末尾の名前で出し、カーソルを置くとフルパスが出る。欄や項目は折りたためる。セッションの行はどの欄でも同じで、既定で1行（折りたたみの ＞ の右にエージェント（Claude / Codex）を色分けした斜線のバッジ、名前・id・状態・ピン・終了）、＞ で詳細（`machine:`、`cwd:`、`model:`、`context:`、`tokens:`）を開く。詳細は欄ごとに別々に開く。名前とidの列の幅は、どの行でも列の右端をドラッグして変えられ、全部の欄で共有される。idはクリックでコピーでき、名前はクリックすると変えられる（ペインの見出しの名前も同じ。Enterで確定、Escで取り消し、空にすると名前を消す。動いているほかのセッションと同じ名前は断る）。左右のサイドバーは上部の右端のボタンで開閉し、幅は境界をドラッグして変えられる。
-- **ピン留め**：`ui.toml` の `pinned` に書いた名前のセッション（既定は `queen`）を上部にも出す。行にホバーすると出るピンのボタンで個別に付け外しでき、ピン留めしたセッションの行には横向きのピンを常に出す。
+- **ピン留め**：`ui.toml` の `pinned` に書いた名前のセッション（既定は `orchestrator`）を上部にも出す。行にホバーすると出るピンのボタンで個別に付け外しでき、ピン留めしたセッションの行には横向きのピンを常に出す。
 - **タブとペイン**：メインエリアのタブごとに、ペインを左右・上下に分割して並べる（tmuxのwindowとpaneと同じ）。一覧からセッションを開くと、今のタブに無ければ、フォーカス中のペインが空ならそこへ、空でなければ親と逆の向きに分割して入れる。同じセッションを複数のタブに置ける。ペインの見出しに名前・id・状態と、ペインを閉じる✕（セッションは動き続ける）がある。セッションの終了は左サイドバーの行にホバーすると出るゴミ箱。境界はドラッグで動かせる。見出しを掴んでドラッグすると、別のペイン（落とした位置に近い辺の方向に分割して移る。空のペインも同じ）、タブ（そのタブへ移り、そのタブを表示）、＋（新しいタブへ移る）に動かせ、離したときの結果がプレビューされる。タブの上で少し待つとそのタブが表示され、そこで置き場所を選べる。移す先のタブに同じセッションがあるときや置き場所のない所で離したときは、移さずにトーストで知らせる。ペインがなくなったタブは閉じる。タブもドラッグで並べ替えられ、ドラッグ中は並べ替え後の順に表示される。配置は保存され、終了したセッションのペインは自動で閉じる。
 - **承認**：承認の要求や確認ダイアログ（フォルダの信頼、開発用チャネルなど）が出たら、右下にセッション・マシン・cwd・内容・選択肢を示すカードを出す。カードは入力のフォーカスを奪わず（フォーカスのあるカードだけ枠が明るいオレンジ、ほかは暗いオレンジ）、最小化しても右サイドバーのApprovalsに残り、選ぶともう一度出る（`ui.approvals` で最新のカードにフォーカス）。手元の端末で答えてもカードで答えてもよい。承認待ちのセッションのペインは枠の色で知らせる。
 - **右サイドバー**（開閉できる）：Approvals（承認待ちの一覧）、Limits（エージェント（バッジ）ごと・アカウントごとの5hとweeklyのレート制限、使用率とリセット時刻）、Tokens（マシンとディレクトリごとに、ClaudeとCodexを分けたトークン。エージェント（左サイドバーと同じバッジ）とアカウントの下にバーと使用量を出す。マシン→ディレクトリ→エージェントの木と、使用量の順の一覧を切り替え、期間は24h / 7d（既定）/ all。項目にカーソルを置くと内訳が出る。CodeQuiltで動かしたセッションだけを、終了したものも含めて数える）。
 - **コマンドパレット**（Ctrl+Shift+P）：組み込みとプラグインのコマンドを検索して実行する。引数のあるコマンドは既定値つきで入力を求める。パレットから最近実行した5件は「recently used」として新しい順に先頭に出る（検索中も一致したものは先頭）。
 - **キーバインド**：すべてのコマンドにキーを割り当てられる。`ui.keybindings` で開く画面で、コマンドとキーと出どころ（default / plugin / user）を検索・一覧し、「bind」を押してからキーを押すと、その行のキーをそのキーに置き換える（1行に1キー）。そのキーが別のコマンドに割り当て済みなら、確認のうえ付け替える。×で外す。引数付きの割り当て（`tab.goTo` の Alt+1〜9 など）は引数ごとに別の行になる。変更は `keybindings.toml` にコメントを保ったまま書き込まれ、直接編集してもよい。
-- **起動時の処理**：`ui.toml` の `on_start` に並べたコマンドを起動時に実行する（既定はQueenの起動）。
+- **起動時の処理**：`ui.toml` の `on_start` に並べたコマンドを起動時に実行する（既定はオーケストレーターの起動）。
 - **トースト**：コマンドの結果と失敗は右下に出す。OS通知は出さない。
 - **フォント**：`ui.toml` でターミナルのフォントと大きさを変えられる。
 
-### Queen（cq-queen）
+### オーケストレーター（cq-orchestrator）
 
-- 他のセッションの承認待ち・質問・ターン終了をまとめて報告し、ユーザーの指示や承認を各セッションに送るオーケストレーター。Queen自身は代わりに判断しない。
+- 他のセッションの承認待ち・質問・ターン終了をまとめて報告し、ユーザーの指示や承認を各セッションに送るオーケストレーター。オーケストレーター自身は代わりに判断しない。
 - 頼めば、指定したディレクトリで新しいセッションを起動し、最初の指示を渡す（確認なし）。
-- エージェントはClaude CodeかCodex。担当するマシン、モデル、人格、届け方は設定で変えられ、起動時に `KEY=VALUE` で一時的に上書きできる（例 `agent=codex`）。名前の違うQueenを複数動かせる。
+- エージェントはClaude CodeかCodex。担当するマシン、モデル、人格、届け方は設定で変えられ、起動時に `KEY=VALUE` で一時的に上書きできる（例 `agent=codex`）。名前の違うオーケストレーターを複数動かせる。
 
 ### プラグイン
 
@@ -64,18 +64,18 @@
 | `cq daemon status \| stop \| restart` | daemonの状態（ローカルと各リモートマシン）、ローカルのdaemonの停止・再起動。止めてもセッションは動き続ける。リモートのdaemonはそのマシンで `cq daemon restart` する |
 | `cq mcp [--scope machine:ID]… [--channel] [--worker]` | MCPサーバー（stdio）。`--channel` はClaude Codeのチャネルとしても動く。`--worker` はワーカー用（`list_sessions` / `get_turns` / `message` だけ） |
 | `cq bridge` | 標準入出力をこのマシンのdaemonにつなぐ（`ssh HOST cq bridge` 用） |
-| `cq NAME …` | 組み込みにない名前は `cq-NAME …` を実行する（例 `cq queen`、`cq board`） |
+| `cq NAME …` | 組み込みにない名前は `cq-NAME …` を実行する（例 `cq orchestrator`、`cq board`） |
 
 `TARGET` は `[machine:]名前|id|idの前方一致`。内部用に `cq host`、`cq hook`、`cq statusline`、`cq debug-screen` がある。
 
-### cq queen（cq-queen）
+### cq orchestrator（cq-orchestrator）
 
 | コマンド | 内容 |
 | --- | --- |
-| `cq queen start [NAME] [KEY=VALUE]… [--detach] [-- エージェントの引数…]` | Queenを起動する（既定の名前は `queen`）。`KEY=VALUE` は `NAME.toml` のキーをこの起動だけ上書きする（値はTOMLとして読み、読めなければ文字列。空の値は上書きしない）。同名のQueenが動いていれば何もしない。`--detach` は端末に付けずに起動する |
-| `cq queen config [NAME]` | 設定ファイルのパスを出す（無ければ既定値で作る） |
+| `cq orchestrator start [NAME] [KEY=VALUE]… [--detach] [-- エージェントの引数…]` | オーケストレーターを起動する（既定の名前は `orchestrator`）。`KEY=VALUE` は `NAME.toml` のキーをこの起動だけ上書きする（値はTOMLとして読み、読めなければ文字列。空の値は上書きしない）。同名のオーケストレーターが動いていれば何もしない。`--detach` は端末に付けずに起動する |
+| `cq orchestrator config [NAME]` | 設定ファイルのパスを出す（無ければ既定値で作る） |
 
-エイリアスの既定で `cq q` は `cq queen` になる。
+エイリアスの既定で `cq o` は `cq orchestrator` になる。
 
 ### cq board（cq-board）
 
@@ -83,7 +83,7 @@
 
 ### MCPツール（`cq mcp`）
 
-Queenはすべてのツールを、ワーカー（`--worker`）は `list_sessions` / `get_turns` / `message` だけを使える。
+オーケストレーターはすべてのツールを、ワーカー（`--worker`）は `list_sessions` / `get_turns` / `message` だけを使える。
 
 | ツール | 内容 |
 | --- | --- |
@@ -118,7 +118,7 @@ Queenはすべてのツールを、ワーカー（`--worker`）は `list_session
 
 | コマンド | プラグイン | 内容 |
 | --- | --- | --- |
-| `queen.start` | queen | Queenを起動する（引数 `name`、既定 `queen`。`agent` は `claude` か `codex`、空なら設定のまま） |
+| `orchestrator.start` | orchestrator | オーケストレーターを起動する（引数 `name`、既定 `orchestrator`。`agent` は `claude` か `codex`、空なら設定のまま） |
 
 ## 設定
 
@@ -128,8 +128,8 @@ Queenはすべてのツールを、ワーカー（`--worker`）は `list_session
 allowed_roots = ["C:/Users/me/work"]   # folders under which the board may start sessions (besides trusted ones); default: home
 
 [aliases]
-q = "queen"                 # built in; user aliases take precedence
-qs = "queen start main"     # several words are fine
+o = "orchestrator"              # built in; user aliases take precedence
+os = "orchestrator start main"  # several words are fine
 
 [[machines]]
 id = "wsl"
@@ -146,11 +146,11 @@ login_shell = true                            # run `cq bridge` via `sh -lc` so 
 無ければダッシュボードの起動時に次の内容で作られる。
 
 ```toml
-pinned = ["queen"]          # session names also shown at the top of the list
+pinned = ["orchestrator"]   # session names also shown at the top of the list
 
 [[on_start]]                # commands run in order when the board starts
-command = "queen.start"
-args = { name = "queen" }
+command = "orchestrator.start"
+args = { name = "orchestrator" }
 
 [terminal]
 font_family = []            # tried before the built-in fallbacks
@@ -162,7 +162,7 @@ font_size = 13
 ```toml
 [[binding]]
 key = "ctrl+shift+q"
-command = "queen.start"
+command = "orchestrator.start"
 args = { name = "main" }
 
 [[binding]]
@@ -173,20 +173,20 @@ command = "-pane.close"     # "-" removes a default binding (all of its keys wit
 - 優先順位はユーザー > プラグインの既定 > 組み込みの既定。1つのキーは1つのコマンドだけを実行する。未知のコマンドや書式の誤りはパレットの下に警告として出る。
 - キーは配列に依存しない（`KeyboardEvent.code` で判定）。割り当てたキーはターミナルより先に処理されるので、Ctrl+C などを割り当てるとエージェントに届かなくなる。
 
-### `~/.codequilt/queens/NAME.toml`
+### `~/.codequilt/orchestrators/NAME.toml`
 
 無ければ既定値で作られる。知らないキーはエラーになる。
 
 | キー | 既定 | 内容 |
 | --- | --- | --- |
-| `agent` | `"claude"` | Queenのエージェント（`claude` か `codex`） |
+| `agent` | `"claude"` | オーケストレーターのエージェント（`claude` か `codex`） |
 | `model` | Claudeは `"sonnet"`、Codexはユーザーの既定 | モデル。既定のときはファイルに書かれない |
 | `persona` | `"default"` | 人格（指示文）。`default` かファイルのパス |
 | `scope` | `[]` | 担当するマシン（`machine:ID`）。空なら全マシン |
 | `delivery` | Claudeは `"channels"`、Codexは `"pty"` | 届け方。`channels` か `pty`。Codexは `pty` だけ。既定のときはファイルに書かれない |
-| `wake_on` | `["permission", "question", "stop"]` | Queenに届けるイベント |
+| `wake_on` | `["permission", "question", "stop"]` | オーケストレーターに届けるイベント |
 | `allow_approve` | `false` | `approve` ツールを確認なしで使わせる |
-| `cwd` | `~/.codequilt/queens/NAME` | Queenのセッションを動かすディレクトリ |
+| `cwd` | `~/.codequilt/orchestrators/NAME` | オーケストレーターのセッションを動かすディレクトリ |
 | `batch_seconds` | `2.5` | まとめて届けるまでの秒数 |
 
 ## データの置き場所
@@ -199,5 +199,5 @@ command = "-pane.close"     # "-" removes a default binding (all of its keys wit
 | `logs/` | daemon・セッション・プラグインのログ |
 | `plugins/<name>.json` | 導入済みプラグインのmanifest |
 | `claude.json`、`settings/<id>.json` | Claude Codeに注入する設定 |
-| `queens/` | Queenの設定と、生成したMCP設定（Claude） |
+| `orchestrators/` | オーケストレーターの設定と、生成したMCP設定（Claude） |
 | `run/` | Linuxのソケット |

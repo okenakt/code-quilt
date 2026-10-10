@@ -99,7 +99,7 @@ enum Cmd {
     },
     /// Run a command declared by a plugin (as the command palette does).
     Run {
-        /// Command name, e.g. `queen.start`.
+        /// Command name, e.g. `orchestrator.start`.
         name: String,
         /// Command argument as NAME=VALUE (repeatable).
         #[arg(long = "arg", value_name = "NAME=VALUE")]
@@ -170,7 +170,7 @@ enum Cmd {
     /// Agent status line endpoint (internal).
     #[command(hide = true)]
     Statusline,
-    /// Any other name runs the plugin `cq-NAME` (e.g. `cq queen` runs cq-queen).
+    /// Any other name runs the plugin `cq-NAME` (e.g. `cq orchestrator` runs cq-orchestrator).
     #[command(external_subcommand)]
     External(Vec<OsString>),
 }

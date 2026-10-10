@@ -1,7 +1,7 @@
-//! The courier (`cq-queen run`): watches the sessions in the Queen's scope, gathers what needs
-//! the user's attention, and delivers it to the Queen session when the Queen is idle.
+//! The courier (`cq-orchestrator run`): watches the sessions in the orchestrator's scope, gathers what needs
+//! the user's attention, and delivers it to the orchestrator session when the orchestrator is idle.
 
-use crate::config::{Delivery, QueenConfig};
+use crate::config::{Delivery, OrchestratorConfig};
 use anyhow::{Result, bail};
 use cq_client::{Activity, Model, Session};
 use cq_proto::{
@@ -98,28 +98,28 @@ fn compose(new: &[Item], open: &[Item]) -> String {
     out
 }
 
-/// The Queen's own session: the local running session named after this Queen (names are unique).
-fn find_queen<'a>(model: &'a Model, name: &str) -> Option<&'a Session> {
+/// The orchestrator's own session: the local running session named after this orchestrator (names are unique).
+fn find_orchestrator<'a>(model: &'a Model, name: &str) -> Option<&'a Session> {
     model.sessions.values().find(|s| {
         s.machine == LOCAL_MACHINE && s.activity != Activity::Exited && s.meta.name.as_deref() == Some(name)
     })
 }
 
-/// Runs the courier until the Queen session exits.
-pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
+/// Runs the courier until the orchestrator session exits.
+pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
     let scope = cq_client::Scope::parse(&cfg.scope)?;
     let mut started = now_ms();
     let mut conn = cq_client::DaemonClient::open(true).await?;
     conn.send(&Message::ListSessions).await?;
 
-    let me = format!("queen:{name}");
+    let me = format!("orchestrator:{name}");
     let mut model = Model::default();
     let mut commands: Vec<String> = Vec::new();
     let mut registered = false;
-    // Whether the local session list arrived on this connection; until then a missing Queen
+    // Whether the local session list arrived on this connection; until then a missing orchestrator
     // only means the list is not there yet.
     let mut listed = false;
-    let mut queen_id: Option<String> = None;
+    let mut orchestrator_id: Option<String> = None;
     let mut pending: Vec<Item> = Vec::new();
     let mut open: Vec<Item> = Vec::new();
     let mut first_pending: Option<Instant> = None;
@@ -146,10 +146,10 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                     commands = list.iter().map(|c| c.name.clone()).collect();
                     if !registered {
                         if commands.contains(&me) {
-                            eprintln!("another courier is already serving queen '{name}'");
+                            eprintln!("another courier is already serving orchestrator '{name}'");
                             return Ok(());
                         }
-                        let cmd = CommandInfo { name: me.clone(), title: format!("Courier of queen {name}"), ..Default::default() };
+                        let cmd = CommandInfo { name: me.clone(), title: format!("Courier of orchestrator {name}"), ..Default::default() };
                         registered = conn.send(&Message::RegisterCommand(cmd)).await.is_ok();
                     }
                 }
@@ -159,11 +159,11 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                     continue;
                 }
                 let Some(s) = model.sessions.get(&(machine.clone(), session.clone())) else { continue };
-                // Queens (this one and any other with a running courier) are not reported, or two
-                // Queens would keep answering each other's updates.
-                let is_queen = machine == LOCAL_MACHINE
-                    && (Some(&session) == queen_id.as_ref() || s.meta.name.as_ref().is_some_and(|n| commands.contains(&format!("queen:{n}"))));
-                if is_queen || !scope.admits(&s.machine) {
+                // Orchestrators (this one and any other with a running courier) are not reported, or two
+                // Orchestrators would keep answering each other's updates.
+                let is_orchestrator = machine == LOCAL_MACHINE
+                    && (Some(&session) == orchestrator_id.as_ref() || s.meta.name.as_ref().is_some_and(|n| commands.contains(&format!("orchestrator:{n}"))));
+                if is_orchestrator || !scope.admits(&s.machine) {
                     continue;
                 }
                 let item = |kind| Item { key: s.key(), label: s.label().to_owned(), kind, at_ms: ev.received_at_ms };
@@ -186,7 +186,7 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                         (wake("stop") && !reply.trim().is_empty()).then(|| item(ItemKind::Done { reply: reply.to_owned() }))
                     }
                     (Some("UserPromptSubmit"), _) => {
-                        // The session got its answer (from the user directly or via the Queen).
+                        // The session got its answer (from the user directly or via the orchestrator).
                         pending.retain(|i| i.key != key);
                         open.retain(|i| i.key != key);
                         None
@@ -201,27 +201,27 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                 }
             }
             _ = tick.tick() => {
-                // Follow the Queen session; stop when it is gone.
+                // Follow the orchestrator session; stop when it is gone.
                 if !listed {
                     continue;
                 }
-                match find_queen(&model, name).map(|q| q.meta.id.clone()) {
-                    Some(id) => queen_id = Some(id),
-                    None if queen_id.is_some() => return Ok(()),
+                match find_orchestrator(&model, name).map(|s| s.meta.id.clone()) {
+                    Some(id) => orchestrator_id = Some(id),
+                    None if orchestrator_id.is_some() => return Ok(()),
                     None if Instant::now() > give_up => bail!("no running session named '{name}'"),
                     None => continue,
                 }
-                let Some(qid) = queen_id.clone() else { continue };
-                let Some(queen) = model.sessions.get(&(LOCAL_MACHINE.to_owned(), qid.clone())) else { continue };
+                let Some(oid) = orchestrator_id.clone() else { continue };
+                let Some(orchestrator) = model.sessions.get(&(LOCAL_MACHINE.to_owned(), oid.clone())) else { continue };
                 let batch_ready = first_pending.is_some_and(|t| t.elapsed() >= Duration::from_secs_f64(cfg.batch_seconds));
-                if pending.is_empty() || !batch_ready || queen.activity != Activity::Idle {
+                if pending.is_empty() || !batch_ready || orchestrator.activity != Activity::Idle {
                     continue;
                 }
-                let channel = format!("channel:{qid}");
+                let channel = format!("channel:{oid}");
                 let content = compose(&pending, &open);
                 let msg = match cfg.delivery() {
                     Delivery::Channels => {
-                        // The channel exists once the Queen's MCP server is up (after the user
+                        // The channel exists once the orchestrator's MCP server is up (after the user
                         // confirms the development channel dialog).
                         if !commands.contains(&channel) {
                             continue;
@@ -236,7 +236,7 @@ pub async fn run(name: &str, cfg: QueenConfig) -> Result<()> {
                     Delivery::Pty => {
                         inject_id += 1;
                         let inj = cq_proto::Inject { id: inject_id, text: content, submit: true, quiet_ms: 3000 };
-                        Message::Routed { machine: LOCAL_MACHINE.to_owned(), session: qid, inner: Box::new(Message::Inject(inj)) }
+                        Message::Routed { machine: LOCAL_MACHINE.to_owned(), session: oid, inner: Box::new(Message::Inject(inj)) }
                     }
                 };
                 if conn.send(&msg).await.is_err() {

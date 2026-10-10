@@ -13,7 +13,7 @@ pub struct Config {
     /// Directories under which the dashboard may start sessions. Defaults to the home directory.
     #[serde(default)]
     allowed_roots: Vec<String>,
-    /// Subcommand aliases (`q = "queen"`); the value may hold several words.
+    /// Subcommand aliases (`o = "orchestrator"`); the value may hold several words.
     #[serde(default)]
     aliases: HashMap<String, String>,
     /// Remote machines the daemon connects to.
@@ -82,7 +82,7 @@ pub fn allowed_roots() -> Vec<PathBuf> {
 }
 
 /// Existing directories the user trusted in Claude Code or Codex, outside CodeQuilt's own state
-/// (e.g. Queen directories), canonical and sorted. Read anew on every call.
+/// (e.g. orchestrator directories), canonical and sorted. Read anew on every call.
 pub fn trusted_dirs() -> Vec<PathBuf> {
     let own = paths::root().ok().and_then(|r| r.canonicalize().ok());
     let mut dirs: Vec<PathBuf> = crate::usage::trusted_dirs()
@@ -133,9 +133,9 @@ pub fn list_dir(path: &str) -> Result<cq_proto::DirList> {
     Ok(cq_proto::DirList { id: 0, path: dir.to_string_lossy().into_owned(), parent, entries, roots, known: Vec::new() })
 }
 
-/// Subcommand aliases: the built-in `q = queen` plus the user's own, which take precedence.
+/// Subcommand aliases: the built-in `o = orchestrator` plus the user's own, which take precedence.
 pub fn aliases() -> HashMap<String, String> {
-    let mut all = HashMap::from([("q".to_owned(), "queen".to_owned())]);
+    let mut all = HashMap::from([("o".to_owned(), "orchestrator".to_owned())]);
     all.extend(load().aliases);
     all
 }
@@ -156,13 +156,13 @@ mod tests {
         let root = temp_root("edit");
         std::fs::write(root.join(FILE), "# my roots\nallowed_roots = [\"/w\"] # trailing\n").unwrap();
         edit_in(&root, |doc| {
-            doc["aliases"]["x"] = toml_edit::value("queen");
+            doc["aliases"]["x"] = toml_edit::value("orchestrator");
             Ok(())
         })
         .unwrap();
         let text = std::fs::read_to_string(root.join(FILE)).unwrap();
         assert!(text.contains("# my roots") && text.contains("# trailing"), "{text}");
-        assert_eq!(load_in(&root).unwrap().aliases["x"], "queen");
+        assert_eq!(load_in(&root).unwrap().aliases["x"], "orchestrator");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

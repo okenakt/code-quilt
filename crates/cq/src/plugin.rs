@@ -1,5 +1,5 @@
 //! External subcommands: `cq NAME ARGS…` runs `cq-NAME ARGS…` (like git and cargo), so plugins
-//! such as cq-queen are reachable as `cq queen` without the core knowing about them. Also the
+//! such as cq-orchestrator are reachable as `cq orchestrator` without the core knowing about them. Also the
 //! registry of installed plugins and the commands their manifests declare.
 
 use crate::{config, paths};
@@ -331,9 +331,9 @@ mod tests {
 
     fn run(args: &[&str]) -> Vec<String> {
         let aliases = HashMap::from([
-            ("q".to_owned(), "queen".to_owned()),
-            ("qs".to_owned(), "queen start main".to_owned()),
-            ("ls".to_owned(), "queen".to_owned()),
+            ("o".to_owned(), "orchestrator".to_owned()),
+            ("os".to_owned(), "orchestrator start main".to_owned()),
+            ("ls".to_owned(), "orchestrator".to_owned()),
         ]);
         let args = args.iter().map(OsString::from).collect();
         expand_with(args, |n| n == "ls", &aliases).into_iter().map(|a| a.into_string().unwrap()).collect()
@@ -341,8 +341,8 @@ mod tests {
 
     #[test]
     fn expands_alias_in_subcommand_position() {
-        assert_eq!(run(&["cq", "q", "start"]), ["cq", "queen", "start"]);
-        assert_eq!(run(&["cq", "qs", "--detach"]), ["cq", "queen", "start", "main", "--detach"]);
+        assert_eq!(run(&["cq", "o", "start"]), ["cq", "orchestrator", "start"]);
+        assert_eq!(run(&["cq", "os", "--detach"]), ["cq", "orchestrator", "start", "main", "--detach"]);
     }
 
     #[test]
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn expands_given_default_and_context_values() {
         let template = ["start".to_owned(), "${name}".to_owned(), "--in=${machine}/${session}".to_owned()];
-        let declared = [arg("name", Some("queen"))];
+        let declared = [arg("name", Some("orchestrator"))];
         let context = cq_proto::SessionRef { machine: "wsl".into(), session: "abc".into() };
         let given = serde_json::json!({ "name": "main" });
         assert_eq!(
@@ -368,7 +368,7 @@ mod tests {
             ["start", "main", "--in=wsl/abc"]
         );
         let defaults = expand_args(&template[..2], &declared, &serde_json::json!({}), None).unwrap();
-        assert_eq!(defaults, ["start", "queen"]);
+        assert_eq!(defaults, ["start", "orchestrator"]);
     }
 
     #[test]

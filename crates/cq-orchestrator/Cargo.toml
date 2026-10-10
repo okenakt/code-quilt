@@ -1,5 +1,5 @@
 [package]
-name = "cq-queen"
+name = "cq-orchestrator"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

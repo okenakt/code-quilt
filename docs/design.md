@@ -2,25 +2,15 @@
 
 ## 概要と目的
 
-CodeQuilt（コマンド名 `cq`）は、並列に動かす複数のコーディングエージェント（Claude Code、Codex）のセッションを一元管理し、人間がボトルネックになる状態を解消するための基盤である。本体はエージェントのプロセスをラップして全マシンのセッションを束ねることに徹し、ダッシュボード（cq-board）やオーケストレーター（cq-queen）はその上に載るクライアントとして提供する。
+CodeQuilt（コマンド名 `cq`）は、並列に動かす複数のコーディングエージェント（Claude Code、Codex）のセッションを一元管理し、人間がボトルネックになる状態を解消するための基盤である。本体はエージェントのプロセスをラップして全マシンのセッションを束ねることに徹し、ダッシュボード（cq-board）やオーケストレーター（cq-orchestrator）はその上に載るクライアントとして提供する。
 
 設計の中心は次の3点である。
 
 - **セッションの寿命をクライアントから切り離す**：ダッシュボードが未起動・クラッシュしてもセッションは無傷で、後から取り込める。
 - **ローカルと同じ体験**：手元のターミナルでの操作は変わらず、ダッシュボードのペインからも同じように操作できる。
-- **本体は薄く、仲介は外側に**：本体だけでもマルチプレクサとして使える。他のセッションの仲介は公式オーケストレーターcq-queenが担い、ユーザーが自分のオーケストレーターを作って置くこともできる。
+- **本体は薄く、仲介は外側に**：本体だけでもマルチプレクサとして使える。他のセッションの仲介は公式オーケストレーターcq-orchestratorが担い、ユーザーが自分のオーケストレーターを作って置くこともできる。
 
 機能・コマンド・設定の一覧は [features.md](features.md)、判断の経緯と不採用案は [decisions.md](decisions.md) にある。
-
-### 名前の由来
-
-コンセプトはセッションを繋ぎ合わせた蜂の巣である。多数のエージェント（働き蜂）を統べる存在として、オーケストレーターをQueenと呼ぶ。
-
-CodeQuilt／`cq` は三重の意味を持つ。
-
-- **Quilt**：個々のセッションをキルトのように繋ぎ合わせ、一枚の画面にまとめる。
-- **Q**：蜂の巣をオーケストレーションするQueenのQ。
-- **cq**：無線通信で全ての局に応答を呼びかけるサイン。全セッションに呼びかけ、応答を集める役割に重ねている。
 
 ## 要件
 
@@ -28,7 +18,7 @@ CodeQuilt／`cq` は三重の意味を持つ。
 | ------------ | ------------------------------------------------------------------------------------------------------ |
 | エージェント | Claude CodeとCodex                                                                                     |
 | OS           | WindowsとLinux（Ubuntu、WSLで確認）                                                                    |
-| 仲介         | Queenを置けば稼働中のセッションをQueenが仲介する。置かずにマルチプレクサとして使うこともできる         |
+| 仲介         | オーケストレーターを置けば稼働中のセッションをオーケストレーターが仲介する。置かずにマルチプレクサとして使うこともできる         |
 | 取り込み     | 手元で起動したセッションを後から取り込める。ダッシュボードが停止していてもセッションは影響を受けない   |
 | リモート     | sshで届くリモートマシンのセッションも同じ画面で扱う                                                     |
 | 実行環境     | bash、PowerShell、WezTermのどれで起動しても動く                                                        |
@@ -39,7 +29,7 @@ CodeQuilt／`cq` は三重の意味を持つ。
 
 ## 全体アーキテクチャ
 
-実行ファイルは `cq`（本体）と、その隣に置くプラグイン `cq-board`、`cq-queen` の3つで、どれも `cq` のサブコマンドとして呼べる（`cq board`、`cq queen`）。本体の常駐プロセスは2種類あり、どちらも `cq` のサブコマンドとして動く。
+実行ファイルは `cq`（本体）と、その隣に置くプラグイン `cq-board`、`cq-orchestrator` の3つで、どれも `cq` のサブコマンドとして呼べる（`cq board`、`cq orchestrator`）。本体の常駐プロセスは2種類あり、どちらも `cq` のサブコマンドとして動く。
 
 - **cq host**（`cq host`、内部用）：セッションごとに1つ。エージェントをPTYの中で動かす。
 - **daemon**（`cq daemon`）：マシンごとに1つ。そのマシンのセッションを束ね、クライアントに中継する。
@@ -48,18 +38,18 @@ CodeQuilt／`cq` は三重の意味を持つ。
 flowchart TB
   subgraph Clients["クライアント（本体から見て対等）"]
     Board["cq-board<br/>ダッシュボード（Tauri＋React）"]
-    Queen["cq-queen<br/>公式オーケストレーター"]
+    Orch["cq-orchestrator<br/>公式オーケストレーター"]
     CLI["cq CLI<br/>ls / attach / usage …"]
   end
   subgraph Local["ローカルマシン（本体）"]
     CQD["daemon（cq daemon）<br/>全マシンの集約・中継"]
     H1["cq host"] --> A1["claude / codex"]
-    QH["cq host（Queen）"] --> QA["claude（Queen）"]
+    QH["cq host（オーケストレーター）"] --> QA["claude（オーケストレーター）"]
   end
   subgraph Remote["リモートマシン（本体）"]
     RCQD["daemon"] --> H2["cq host"] --> A2["claude / codex"]
   end
-  Board & Queen & CLI --> CQD
+  Board & Orch & CLI --> CQD
   CQD --> H1 & QH
   CQD -- "ssh host cq bridge" --> RCQD
   QA -. "MCP（cq mcp）" .-> CQD
@@ -72,15 +62,15 @@ flowchart TB
 | 本体 | cq CLI / `cq mcp` | 人間向けのCLIと、エージェント向けのMCPサーバー。どちらもdaemonのクライアント |
 | 契約 | cq-proto / cq-client | プロトコルの型と、Rust製クライアント用のSDK（daemonへの接続・起動、セッションのモデル、範囲指定） |
 | クライアント | cq-board（`board/`） | 一覧・タブとペイン・承認のカード・使用量・コマンドパレット。データは持たず本体の状態を表示する |
-| クライアント | cq-queen | 公式オーケストレーター。Queen自体は名前を持つ普通のセッションで、配達役（courier）が他セッションの出来事をQueenに届ける |
+| クライアント | cq-orchestrator | 公式オーケストレーター。オーケストレーター自体は名前を持つ普通のセッションで、配達役（courier）が他セッションの出来事をオーケストレーターに届ける |
 
 - クライアントはローカルのdaemonにだけ接続し、無ければ起動する。リモートへのssh接続はdaemonが受け持つ。
-- クライアント同士は依存しない。Queenも本体から見れば名前の付いたセッションの一つで、ダッシュボードはそれを上部に固定（ピン留め）できるだけ。
+- クライアント同士は依存しない。オーケストレーターも本体から見れば名前の付いたセッションの一つで、ダッシュボードはそれを上部に固定（ピン留め）できるだけ。
 - エージェントの違い（起動方法、hooksの渡し方、使用量の読み方、画面の癖）は本体の中の小さな分岐に閉じ込める。
 
 ## セッション接続と通信
 
-セッションは `cq claude` / `cq codex` で起動し、cq hostがエージェントのPTYを保持する。ダッシュボードやQueenから起動したセッションも、daemon経由で同じcq hostとして動く。
+セッションは `cq claude` / `cq codex` で起動し、cq hostがエージェントのPTYを保持する。ダッシュボードやオーケストレーターから起動したセッションも、daemon経由で同じcq hostとして動く。
 
 ### cq host（セッションごとの常駐プロセス）
 
@@ -129,7 +119,7 @@ flowchart TB
 
 - Claude Codeは `claude --settings ~/.codequilt/claude.json` で起動し、hooksとstatusLineだけを注入する。`~/.claude` 配下には書き込まない。
 - Codexは `-c hooks.<Event>=[...]` で同じhooksを渡す。
-- **セッション同士のメッセージ**：cqで起動したセッションには、ワーカー用のcqのMCP（`cq mcp --worker`）を入れる。Claudeには `--mcp-config ~/.codequilt/worker.mcp.json` と `--allowedTools`、Codexには `-c mcp_servers.cq.*` とツールごとの `approval_mode = "approve"` で渡す。ワーカーが使えるのは `list_sessions` / `get_turns` / `message` だけで、人に代わる入力（`send`）・承認・起動はQueenに残す。`message` は相手のアイドル時の注入の待ち行列に入れ、先頭に送信元（名前と `machine:id`）を付けて、人からの指示ではないと分かるようにする。Queenは自分のcqのMCPを持つので入れない（起動要求の `no_mcp`、`cq claude --cq-no-mcp`）。
+- **セッション同士のメッセージ**：cqで起動したセッションには、ワーカー用のcqのMCP（`cq mcp --worker`）を入れる。Claudeには `--mcp-config ~/.codequilt/worker.mcp.json` と `--allowedTools`、Codexには `-c mcp_servers.cq.*` とツールごとの `approval_mode = "approve"` で渡す。ワーカーが使えるのは `list_sessions` / `get_turns` / `message` だけで、人に代わる入力（`send`）・承認・起動はオーケストレーターに残す。`message` は相手のアイドル時の注入の待ち行列に入れ、先頭に送信元（名前と `machine:id`）を付けて、人からの指示ではないと分かるようにする。オーケストレーターは自分のcqのMCPを持つので入れない（起動要求の `no_mcp`、`cq claude --cq-no-mcp`）。
 - **hooksは何も出力しない**：標準出力はコンテキストに注入されるため。イベントをcq hostに送って正常終了するだけにし、トークン消費を増やさない。cq hostが不在でもすぐ終わる。
 - **statusLineはユーザー設定に連鎖させる**：`cq statusline` はデータをcq hostに送ったうえで、ユーザーの `settings.json` にある元のコマンドを呼び、その出力を表示する。ローカルの見た目は変わらない。
 
@@ -139,7 +129,7 @@ flowchart TB
 
 - ペインはxterm.jsで描画し、キー入力はそのままバイト列としてPTYに流す。作業中に入力したときの挙動もエージェント自身の挙動になる。
 - cq hostは解釈せずバイト列を素通しする。Shift+Enter（`ESC[13;2u`）、ブラケットペースト、マウス、OSCシーケンスを壊さない。ConPTYが求めるカーソル位置の問い合わせにはcq hostが答える。
-- **入力権**：最後に入力した端末やペインが入力権を持ち、PTYの大きさはそのクライアントに合わせる。QueenやCLIの送信（monitor）は入力権を奪わない。
+- **入力権**：最後に入力した端末やペインが入力権を持ち、PTYの大きさはそのクライアントに合わせる。オーケストレーターやCLIの送信（monitor）は入力権を奪わない。
 - **アイドル時の注入**：エージェントがアイドルで、入力欄が空で、一定時間誰も入力していないときだけ文字を入れる。入力欄が空かは、Claudeは実線の下の `❯` の行、Codexは最後の `›` の行から続く行で、薄い色の案内文以外の文字があるかで判定する。送信したのに入力欄に文字が残っていれば、誰かが入力するまで最大10秒、Enterを送り直す。
 
 ### 承認
@@ -180,13 +170,13 @@ VS Codeの拡張と同じ考え方で、プラグインは提供するコマン�
 
 ```json
 {
-  "name": "queen",
+  "name": "orchestrator",
   "commands": [
     {
-      "name": "queen.start",
-      "title": "Queen: Start",
+      "name": "orchestrator.start",
+      "title": "Orchestrator: Start",
       "args": [
-        { "name": "name", "title": "Queen name", "default": "queen" },
+        { "name": "name", "title": "Orchestrator name", "default": "orchestrator" },
         { "name": "agent", "title": "Agent (claude / codex; empty: as in the settings)", "default": "" }
       ],
       "run": { "exec": ["start", "${name}", "agent=${agent}", "--detach"] }
@@ -227,22 +217,22 @@ sequenceDiagram
 | `~/.codequilt/config.toml` | 起動を許すディレクトリ、エイリアス、リモートマシン | cq / daemon |
 | `~/.codequilt/ui.toml` | ダッシュボードの設定 | cq-board |
 | `~/.codequilt/keybindings.toml` | キーバインド | cq-board |
-| `~/.codequilt/queens/NAME.toml` | Queenごとの設定 | cq-queen |
+| `~/.codequilt/orchestrators/NAME.toml` | オーケストレーターごとの設定 | cq-orchestrator |
 
 - プログラムが生成する状態（`sessions/*.json`、`plugins/*.json`）や、Claude Code・MCPがJSONを求めるファイル（`claude.json`、`*.mcp.json`）はJSONのまま。
 - 効いている設定はファイルに見えるようにする。`ui.toml` は無ければ既定の内容を書き出す。キーバインドの既定は組み込みで、`keybindings.toml` は上書きだけを書く。
 - ダッシュボードは `ui.toml` と `keybindings.toml` を監視して、変更をすぐに反映する。
 
-## cq-queen（公式オーケストレーター）
+## cq-orchestrator（公式オーケストレーター）
 
-Queenは「他のセッションを仲介してくれるセッション」である。本体から見ればQueenの名前（例 `queen`）を持つ普通のセッションで、cq-queenの配達役（courier）が他セッションの出来事をQueenに届ける。Queenを置くかどうか、何体置くかはユーザーが選ぶ。
+オーケストレーターは「他のセッションを仲介してくれるセッション」である。本体から見ればオーケストレーターの名前（例 `orchestrator`）を持つ普通のセッションで、cq-orchestratorの配達役（courier）が他セッションの出来事をオーケストレーターに届ける。オーケストレーターを置くかどうか、何体置くかはユーザーが選ぶ。
 
 ```mermaid
 sequenceDiagram
   participant S as wsl: api-server
   participant D as daemon
   participant C as courier
-  participant QS as Queenセッション
+  participant QS as オーケストレーターセッション
   participant U as ユーザー
   S->>D: 承認待ち / ターン終了
   D->>C: イベント
@@ -255,17 +245,17 @@ sequenceDiagram
 ```
 
 1. 範囲内のセッションがターンを終えるか、承認・質問待ちになると、courierがイベントを受け取る。
-2. 数秒（`batch_seconds`）まとめてからQueenに届ける。通知には各セッションの名前・マシン・状態・最後の返答・承認プロンプトの内容と選択肢、まだ待っているものの一覧を入れる。
-3. Queenは状況を報告し、承認要求はユーザーに取り次ぐ。**Queenは代わりに判断しない**。ダッシュボードの承認ダイアログも並行して出し、先に答えた方が採用される。
-4. ユーザーの指示を、Queenが `cq mcp` の `send` / `approve` で各セッションへ送る。`approve` は既定では事前許可せず、使うたびにQueen自身の確認を挟む。新しいセッションが要るときは `launch` で起動し、最初の指示はセッションがアイドルになってから注入する（`cq inject` と同じ待ち行列）。`launch` は事前許可する（起動できるディレクトリは本体が `allowed_roots` と信頼済みのフォルダに限るため）。
+2. 数秒（`batch_seconds`）まとめてからオーケストレーターに届ける。通知には各セッションの名前・マシン・状態・最後の返答・承認プロンプトの内容と選択肢、まだ待っているものの一覧を入れる。
+3. オーケストレーターは状況を報告し、承認要求はユーザーに取り次ぐ。**オーケストレーターは代わりに判断しない**。ダッシュボードの承認ダイアログも並行して出し、先に答えた方が採用される。
+4. ユーザーの指示を、オーケストレーターが `cq mcp` の `send` / `approve` で各セッションへ送る。`approve` は既定では事前許可せず、使うたびにオーケストレーター自身の確認を挟む。新しいセッションが要るときは `launch` で起動し、最初の指示はセッションがアイドルになってから注入する（`cq inject` と同じ待ち行列）。`launch` は事前許可する（起動できるディレクトリは本体が `allowed_roots` と信頼済みのフォルダに限るため）。
 
-- Queen自身と、ほかのQueen（courierが動いているセッション）のイベントは届けない（Queen同士が互いの応答を報告し合う無限ループの防止）。ユーザーがセッションに直接入力したら、そのセッションの未処理の項目は取り下げる。
+- オーケストレーター自身と、ほかのオーケストレーター（courierが動いているセッション）のイベントは届けない（オーケストレーター同士が互いの応答を報告し合う無限ループの防止）。ユーザーがセッションに直接入力したら、そのセッションの未処理の項目は取り下げる。
 - **届け方**：Claudeの既定はChannels（入力欄と干渉せず、通知が「ユーザーの発言」として履歴に混ざらない）。起動のたびに開発用チャネルの確認が出るので、ダッシュボードの承認ダイアログで答える。Channelsが使えないときと、Codex（Channelsに当たる仕組みがない）はPTY注入（アイドルで入力欄が空のときだけ）を使う。
 - **エージェントごとの渡し方**：同じ中身（`cq mcp`、確認なしで使えるツール、人格、モデル）を、Claudeには `--mcp-config`（`NAME.mcp.json`）・`--allowedTools`・`--append-system-prompt`・`--model` で、Codexには `-c` の上書き（`mcp_servers.cq.*`、ツールごとの `approval_mode = "approve"`、`developer_instructions`）と `-m` で渡す。値は英数字といくつかの記号以外を `\u` でエスケープしたTOMLの文字列にする（Windowsでは `codex.cmd` 経由で起動するため、`cmd.exe` が `<` や `"` や改行を解釈しないように）。
 - **設定と上書き**：設定は `NAME.toml`、起動時の `KEY=VALUE` でこの起動だけ上書きする（エージェントの切り替えなど）。`model` と `delivery` は書かなければエージェントごとの既定になるので、`agent` を上書きするだけで別のエージェントで動く。上書きはcourierにも渡す。
-- **cqの場所**：MCPの設定にはcq本体の絶対パス（cq-queenの隣、または `CQ_BIN`）を書く。見つからなければ起動を失敗させる。名前だけを書くと `PATH` 上の古いcqが使われうるため。
-- **特定**：Queenは名前で特定する（名前は一意）。`queen.start` は同名のセッションが動いていれば何もせず成功を返す。
-- 設定はQueenごとに `~/.codequilt/queens/NAME.toml` を置き、複数のQueenを同時に動かせる。
+- **cqの場所**：MCPの設定にはcq本体の絶対パス（cq-orchestratorの隣、または `CQ_BIN`）を書く。見つからなければ起動を失敗させる。名前だけを書くと `PATH` 上の古いcqが使われうるため。
+- **特定**：オーケストレーターは名前で特定する（名前は一意）。`orchestrator.start` は同名のセッションが動いていれば何もせず成功を返す。
+- 設定はオーケストレーターごとに `~/.codequilt/orchestrators/NAME.toml` を置き、複数のオーケストレーターを同時に動かせる。
 
 ## ダッシュボードの画面
 
@@ -358,5 +348,5 @@ sequenceDiagram
 
 ## 未実装・未決事項
 
-- [ ] リモートマシン上のQueen、リモートマシンのプラグインのコマンド
+- [ ] リモートマシン上のオーケストレーター、リモートマシンのプラグインのコマンド
 - [ ] リモートへの `cq` バイナリの配布（当面は手動で置き、`cq_path` で指定）

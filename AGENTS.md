@@ -18,7 +18,7 @@ The docs in `docs/` are written in Japanese and must always match the code.
 - `features.md`: what the user can do today: features, every command (CLI, board, MCP, plugins), settings files and their keys, and where data is stored.
 - `decisions.md`: the only place for history. Append each decision with its reason and the alternatives that were rejected; never rewrite past entries except to fix names.
 - Update the affected docs in the same turn as any change to behavior, commands, settings, structure or names, and commit them with that change. Before finishing a turn, check that the docs still describe the code.
-- Use the names the code uses: `cq daemon` or "the daemon", `cq host`, `cq-board`, `cq-queen`.
+- Use the names the code uses: `cq daemon` or "the daemon", `cq host`, `cq-board`, `cq-orchestrator`.
 
 ## Development notes
 

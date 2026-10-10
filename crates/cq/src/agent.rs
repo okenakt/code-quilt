@@ -363,7 +363,7 @@ mod tests {
         let screen = "\
  Accessing workspace:
 
- C:\\Users\\me\\queens\\queen
+ C:\\Users\\me\\orchestrators\\orchestrator
 
  Claude Code'll be able to read, edit, and execute files here.
 

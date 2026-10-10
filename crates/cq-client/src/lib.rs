@@ -1,5 +1,5 @@
 //! Client library for CodeQuilt: connect to the local daemon and keep a model of every session
-//! built from the daemon's messages. Used by `cq mcp`, `cq-queen`, and other clients.
+//! built from the daemon's messages. Used by `cq mcp`, `cq-orchestrator`, and other clients.
 
 use anyhow::{Context, Result};
 use cq_proto::local::{self, BoxStream};

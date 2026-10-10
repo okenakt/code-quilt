@@ -90,7 +90,7 @@ fn worker_mcp_args(agent: &str) -> Result<Vec<String>> {
 }
 
 /// The agent command line for a new session, with CodeQuilt's hooks wired in, and its worker MCP
-/// server unless the session brings its own (a Queen).
+/// server unless the session brings its own (an orchestrator).
 fn agent_command(agent: &str, resume: Option<&str>, mcp: bool, args: &[String]) -> Result<Vec<String>> {
     let mut command = match agent {
         "claude" => {

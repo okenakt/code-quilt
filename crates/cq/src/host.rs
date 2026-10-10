@@ -666,7 +666,7 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
         while let Some(msg) = read_message(&mut rd).await? {
             let mut st = state.lock().unwrap();
             match msg {
-                // Monitors (e.g. Queen through the daemon) may type, but never take the input
+                // Monitors (e.g. an orchestrator through the daemon) may type, but never take the input
                 // right or the PTY size from an attached terminal.
                 Message::Input(bytes) if monitor => {
                     st.last_input = std::time::Instant::now();

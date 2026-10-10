@@ -1,23 +1,23 @@
-//! Per-Queen configuration (`~/.codequilt/queens/<name>.toml`) and the default persona.
+//! Per-orchestrator configuration (`~/.codequilt/orchestrators/<name>.toml`) and the default persona.
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// How updates reach the Queen session.
+/// How updates reach the orchestrator session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Delivery {
     /// Claude Code channel (`cq mcp --channel`); no interference with the input box.
     Channels,
-    /// Typed into the Queen's terminal when it is idle; works with any agent.
+    /// Typed into the orchestrator's terminal when it is idle; works with any agent.
     Pty,
 }
 
-/// Settings of one Queen.
+/// Settings of one orchestrator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct QueenConfig {
+pub struct OrchestratorConfig {
     /// `claude` or `codex`.
     pub agent: String,
     /// Default: `sonnet` for Claude, the user's own default for Codex.
@@ -30,17 +30,17 @@ pub struct QueenConfig {
     /// Default: `channels` for Claude; Codex supports only `pty`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivery: Option<Delivery>,
-    /// Which events wake the Queen: `permission`, `question` (other dialogs), `stop`.
+    /// Which events wake the orchestrator: `permission`, `question` (other dialogs), `stop`.
     pub wake_on: Vec<String>,
-    /// Let the Queen answer permission prompts without its own confirmation step.
+    /// Let the orchestrator answer permission prompts without its own confirmation step.
     pub allow_approve: bool,
-    /// Directory the Queen session runs in (default: `~/.codequilt/queens/<name>`).
+    /// Directory the orchestrator session runs in (default: `~/.codequilt/orchestrators/<name>`).
     pub cwd: Option<String>,
     /// Seconds to gather updates before delivering them together.
     pub batch_seconds: f64,
 }
 
-impl Default for QueenConfig {
+impl Default for OrchestratorConfig {
     fn default() -> Self {
         Self {
             agent: "claude".into(),
@@ -56,15 +56,15 @@ impl Default for QueenConfig {
     }
 }
 
-/// Directory holding Queen configurations and generated files.
-pub fn queens_dir() -> Result<PathBuf> {
-    Ok(cq_proto::local::state_root()?.join("queens"))
+/// Directory holding orchestrator configurations and generated files.
+pub fn orchestrators_dir() -> Result<PathBuf> {
+    Ok(cq_proto::local::state_root()?.join("orchestrators"))
 }
 
 /// Loads `<name>.toml` (writing the defaults first if it does not exist) and applies `KEY=VALUE`
 /// overrides on top without saving them. A value is read as TOML, else as a plain string; an empty
 /// value leaves the key as it is.
-pub fn load(name: &str, overrides: &[String]) -> Result<(QueenConfig, PathBuf)> {
+pub fn load(name: &str, overrides: &[String]) -> Result<(OrchestratorConfig, PathBuf)> {
     let (text, path) = read_or_create(name)?;
     let mut table: toml::Table = toml::from_str(&text).with_context(|| format!("invalid {}", path.display()))?;
     for o in overrides {
@@ -78,16 +78,16 @@ pub fn load(name: &str, overrides: &[String]) -> Result<(QueenConfig, PathBuf)> 
             .unwrap_or_else(|| toml::Value::String(value.to_owned()));
         table.insert(key.to_owned(), value);
     }
-    let cfg: QueenConfig = table.try_into().with_context(|| format!("invalid settings for queen '{name}'"))?;
+    let cfg: OrchestratorConfig = table.try_into().with_context(|| format!("invalid settings for orchestrator '{name}'"))?;
     match (cfg.agent.as_str(), cfg.delivery) {
         ("claude", _) | ("codex", None | Some(Delivery::Pty)) => Ok((cfg, path)),
-        ("codex", Some(Delivery::Channels)) => bail!("a Codex Queen supports only delivery = \"pty\""),
+        ("codex", Some(Delivery::Channels)) => bail!("a Codex orchestrator supports only delivery = \"pty\""),
         (other, _) => bail!("unknown agent '{other}' (claude or codex)"),
     }
 }
 
-impl QueenConfig {
-    /// How updates reach the Queen, after the agent's default.
+impl OrchestratorConfig {
+    /// How updates reach the orchestrator, after the agent's default.
     pub fn delivery(&self) -> Delivery {
         self.delivery.unwrap_or(if self.agent == "claude" { Delivery::Channels } else { Delivery::Pty })
     }
@@ -96,28 +96,28 @@ impl QueenConfig {
 /// The settings file's text, writing the defaults first if it does not exist.
 fn read_or_create(name: &str) -> Result<(String, PathBuf)> {
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        bail!("queen names may only contain letters, digits, '-' and '_'");
+        bail!("orchestrator names may only contain letters, digits, '-' and '_'");
     }
-    let dir = queens_dir()?;
+    let dir = orchestrators_dir()?;
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{name}.toml"));
     if !path.exists() {
-        std::fs::write(&path, toml::to_string_pretty(&QueenConfig::default())?)?;
+        std::fs::write(&path, toml::to_string_pretty(&OrchestratorConfig::default())?)?;
     }
     Ok((std::fs::read_to_string(&path)?, path))
 }
 
 /// The persona text for a configuration.
-pub fn persona(cfg: &QueenConfig) -> Result<String> {
+pub fn persona(cfg: &OrchestratorConfig) -> Result<String> {
     if cfg.persona == "default" {
         return Ok(DEFAULT_PERSONA.to_owned());
     }
     std::fs::read_to_string(&cfg.persona).with_context(|| format!("read persona {}", cfg.persona))
 }
 
-/// Default instructions for a Queen session.
+/// Default instructions for an orchestrator session.
 pub const DEFAULT_PERSONA: &str = "\
-You are the Queen of CodeQuilt. The user runs several coding agent sessions in parallel, on this \
+You are the orchestrator of CodeQuilt. The user runs several coding agent sessions in parallel, on this \
 and other machines, and you stand between them and the user so they only need to talk to you.
 
 Updates about the other sessions arrive as messages from CodeQuilt (a <channel source=\"cq\"> \

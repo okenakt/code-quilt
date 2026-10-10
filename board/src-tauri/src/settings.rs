@@ -39,16 +39,16 @@ fn read_toml(name: &str, errors: &mut Vec<String>) -> serde_json::Value {
     }
 }
 
-const DEFAULT_UI: &str = r#"# CodeQuilt board settings (docs/design.md, "UI settings").
+const DEFAULT_UI: &str = r#"# CodeQuilt board settings (docs/features.md, "~/.codequilt/ui.toml").
 
 # Sessions pinned to the top of the list by name (each can still be unpinned in the list).
-pinned = ["queen"]
+pinned = ["orchestrator"]
 
 # Commands run in order when the board starts; failures are shown as toasts.
-# The Queen uses Claude and asks you to confirm its channel when it starts.
+# The orchestrator uses Claude and asks you to confirm its channel when it starts.
 [[on_start]]
-command = "queen.start"
-args = { name = "queen" }
+command = "orchestrator.start"
+args = { name = "orchestrator" }
 
 [terminal]
 # Fonts tried before the built-in fallbacks, e.g. ["HackGen Console NF"].
