@@ -12,8 +12,8 @@ import {
   closePane,
   closeTab,
   cycleTab,
-  dropSessions,
-  focusedSession as focusedSessionKey,
+  dropViews,
+  focusedView,
   moveFocus,
   openInActiveTab,
   renameTab,
@@ -32,6 +32,8 @@ import { chordOfEvent } from "./keys";
 import { togglePin, usePins } from "./pins";
 import { toggleSidebar, usePrefs } from "./prefs";
 import { applyEvent, displayName, markExited, markResumed, setMachines, setSessions, useStore } from "./store";
+import { sharedFiles } from "./files";
+import { baseName } from "./path";
 import type { SessionState } from "./types";
 
 const sideOf = (command: string): Side => {
@@ -43,7 +45,7 @@ const sideOf = (command: string): Side => {
 export const App = () => {
   const { machines, sessions } = useStore();
   const layout = useLayout();
-  const activeKey = useMemo(() => focusedSessionKey(), [layout]);
+  const activeKey = useMemo(() => focusedView(), [layout]);
   const [newSessionFor, setNewSessionFor] = useState<string | null>(null);
   const prefs = usePrefs();
   const [minimized, setMinimized] = useState<Set<string>>(new Set());
@@ -102,7 +104,7 @@ export const App = () => {
   // Panes of ended sessions close themselves.
   useEffect(() => {
     const ended = new Set(sessions.filter((s) => s.activity === "exited").map((s) => s.key));
-    if (ended.size > 0) dropSessions((k) => ended.has(k));
+    if (ended.size > 0) dropViews((k) => ended.has(k));
   }, [sessions]);
 
   const { plugins, pluginKeys, config, loaded } = useCommandState();
@@ -126,13 +128,26 @@ export const App = () => {
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [keybindingsOpen, setKeybindingsOpen] = useState(false);
-  const [toasts, setToasts] = useState<{ id: number; ok: boolean; text: string }[]>([]);
+  const [toasts, setToasts] = useState<{ id: number; ok: boolean; text: string; open?: () => void }[]>([]);
   const toastId = useRef(0);
-  const showToast = useCallback((ok: boolean, text: string) => {
+  /** Shows a toast; clicking it runs `open`, if given, and dismisses it. */
+  const showToast = useCallback((ok: boolean, text: string, open?: () => void) => {
     const id = ++toastId.current;
-    setToasts((ts) => [...ts, { id, ok, text }]);
+    setToasts((ts) => [...ts, { id, ok, text, open }]);
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), ok ? 4000 : 10000);
   }, []);
+
+  // Files shared while the board is open are announced; all are listed under their session's terminal.
+  const openedAt = useRef(Date.now());
+  const announced = useRef(new Set<string>());
+  useEffect(() => {
+    for (const { s, file, view } of sharedFiles(sessions)) {
+      const id = `${view}@${file.shared_at_ms}`;
+      if (file.shared_at_ms < openedAt.current || announced.current.has(id)) continue;
+      announced.current.add(id);
+      showToast(true, `${displayName(s)} shared ${baseName(file.path)}`, () => openInActiveTab(view, s.key));
+    }
+  }, [sessions, showToast]);
 
   const resume = useCallback(
     (s: SessionState) =>
@@ -158,7 +173,7 @@ export const App = () => {
 
   /** The session of the focused pane, which session commands act on. */
   const focusedSession = (): SessionState | null => {
-    const key = focusedSessionKey();
+    const key = focusedView();
     return sessionsRef.current.find((s) => s.key === key) ?? null;
   };
 
@@ -327,7 +342,7 @@ export const App = () => {
       <Workspace
         sessions={sessions}
         onNewSession={() => setNewSessionFor("local")}
-        onGone={(key) => dropSessions((k) => k === key)}
+        onGone={(key) => dropViews((k) => k === key)}
         onRefuse={(m) => showToast(false, m)}
         overlay={
           keybindingsOpen && (
@@ -366,7 +381,14 @@ export const App = () => {
         />
         <div className="toasts">
           {toasts.map((t) => (
-            <div key={t.id} className={`toast ${t.ok ? "ok" : "error"}`} onClick={() => setToasts((ts) => ts.filter((x) => x.id !== t.id))}>
+            <div
+              key={t.id}
+              className={`toast ${t.ok ? "ok" : "error"} ${t.open ? "action" : ""}`}
+              onClick={() => {
+                t.open?.();
+                setToasts((ts) => ts.filter((x) => x.id !== t.id));
+              }}
+            >
               {t.text}
             </div>
           ))}

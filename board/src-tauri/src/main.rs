@@ -161,6 +161,22 @@ async fn list_dir(
     }
 }
 
+/// Contents of a file a session shared, as raw bytes (an `ArrayBuffer` in the frontend).
+#[tauri::command]
+async fn read_file(
+    hub: State<'_, HubState>,
+    machine: String,
+    session: String,
+    path: String,
+) -> Result<tauri::ipc::Response, String> {
+    let id = hub.next_id();
+    let req = cq_protocol::ReadFile { id, machine, session, path };
+    match hub.call(id, cq_protocol::Message::ReadFile(req)).await.map_err(err)? {
+        cq_protocol::Message::FileContent { data, .. } => Ok(tauri::ipc::Response::new(data)),
+        other => Err(format!("unexpected reply {other:?}")),
+    }
+}
+
 /// Creates the main window from config. Debug builds honor `CQ_DEVTOOLS_PORT` to expose the
 /// WebView2 DevTools protocol for automated UI checks.
 fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
@@ -209,6 +225,7 @@ fn main() {
             rename,
             resume,
             list_dir,
+            read_file,
             commands,
             invoke_command,
             ui_config,

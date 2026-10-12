@@ -338,6 +338,7 @@ impl Hub {
             Message::Routed { machine, session, inner } => self.dispatch_session(&machine, &session, *inner),
             Message::Launched(l) => self.reply(l.id, Ok(Message::Launched(l))),
             Message::DirList(l) => self.reply(l.id, Ok(Message::DirList(l))),
+            Message::FileContent { id, data } => self.reply(id, Ok(Message::FileContent { id, data })),
             Message::RequestFailed(f) => self.reply(f.id, Err(f.error)),
             Message::Focus(f) => {
                 let _ = self.app.emit("focus", f);

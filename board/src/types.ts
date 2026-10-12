@@ -15,7 +15,12 @@ export type SessionMeta = {
   account?: string | null;
   /** Tokens per UTC hour, keyed `YYYY-MM-DDTHH`. */
   tokens_by_hour?: Record<string, TokenCounts>;
+  /** Files the agent shared for the user to view, oldest first. */
+  files?: SharedFile[];
 };
+
+/** A file an agent shared with the user (mirrors `cq_protocol::SharedFile`). */
+export type SharedFile = { path: string; caption: string | null; shared_at_ms: number };
 
 export type TokenCounts = { input: number; output: number; cache_read: number; cache_creation: number };
 

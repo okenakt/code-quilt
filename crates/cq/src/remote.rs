@@ -109,6 +109,10 @@ fn untag_outgoing(msg: Message) -> Message {
             l.machine = LOCAL_MACHINE.to_owned();
             Message::ListDir(l)
         }
+        Message::ReadFile(mut r) => {
+            r.machine = LOCAL_MACHINE.to_owned();
+            Message::ReadFile(r)
+        }
         other => other,
     }
 }
@@ -145,10 +149,11 @@ pub async fn run(
                     // Remember subscription changes made while offline.
                     Some(Message::Subscribe(s)) => { subs.insert(s.session.clone(), s); }
                     Some(Message::Unsubscribe(r)) => { subs.remove(&r.session); }
-                    Some(Message::Launch(l)) => fail(&out, l.id, "machine is offline"),
-                    Some(Message::ListDir(l)) => fail(&out, l.id, "machine is offline"),
-                    Some(Message::Resume(r)) => fail(&out, r.id, "machine is offline"),
-                    Some(_) => {}
+                    Some(m) => {
+                        if let Some(id) = m.request_id() {
+                            fail(&out, id, "machine is offline");
+                        }
+                    }
                     None => return,
                 },
             }

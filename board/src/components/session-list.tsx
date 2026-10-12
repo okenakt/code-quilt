@@ -5,6 +5,7 @@ import { focusPane, panesOf, selectTab, useLayout } from "../layout";
 import { setColumn, toggleFold, usePrefs, type Column, type Prefs } from "../prefs";
 import { Fold, SidebarSection, isExpanded } from "./sidebar-section";
 import { baseName } from "../path";
+import { parseFileView } from "../files";
 import { isPinned, togglePin, type Pins } from "../pins";
 import { AgentBadge } from "./agent-badge";
 import { DirName } from "./dir-name";
@@ -277,7 +278,7 @@ const TabsSection = ({ prefs, sessions, machineOf, pinOf, onPin, onEnd }: ListPr
         const key = `tab:${t.id}`;
         const open = isExpanded(prefs, key, true);
         const panes = panesOf(t.root);
-        const empty = panes.filter((p) => p.session === null).length;
+        const empty = panes.filter((p) => p.view === null).length;
         return (
           <div key={t.id} className={`tab-group ${t.id === active ? "active" : ""}`}>
             <div className="tab-group-header">
@@ -292,12 +293,13 @@ const TabsSection = ({ prefs, sessions, machineOf, pinOf, onPin, onEnd }: ListPr
               // Sessions line up with Machines (machine > Active > directory > session).
               <div className="tree deep">
                 {panes.map((p) => {
-                  if (p.session === null) return null;
-                  const s = sessions.get(p.session);
+                  // Shared files are listed under their session's terminal.
+                  if (p.view === null || parseFileView(p.view)) return null;
+                  const s = sessions.get(p.view);
                   if (!s)
                     return (
                       <div key={p.id} className="empty">
-                        {p.session.slice(p.session.indexOf("/") + 1, p.session.indexOf("/") + 9)} (unavailable)
+                        {p.view.slice(p.view.indexOf("/") + 1, p.view.indexOf("/") + 9)} (unavailable)
                       </div>
                     );
                   return (

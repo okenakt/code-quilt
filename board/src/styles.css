@@ -1579,3 +1579,104 @@ kbd {
 .token-machine-name {
   color: var(--muted);
 }
+
+.toast.action {
+  border-color: var(--accent);
+}
+
+.shared-file-strip {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 96px;
+  padding: 6px;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.shared-file-strip button {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 48px;
+  padding: 6px 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.shared-file-strip button:hover {
+  border-color: var(--accent);
+}
+
+.shared-file-strip button:has(img) {
+  padding: 0;
+  overflow: hidden;
+}
+
+.shared-file-strip img {
+  width: 100%;
+  max-height: 96px;
+  object-fit: cover;
+}
+
+.shared-file-strip span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-view {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+.file-error {
+  color: var(--danger);
+}
+
+.file-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.file-text {
+  margin: 0;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+
+.file-frame {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: var(--bg);
+}
+
+/* Shared pages are usually written for a white page. */
+.file-frame.page {
+  background: #fff;
+}
+
+body.tracking-pointer iframe {
+  pointer-events: none;
+}

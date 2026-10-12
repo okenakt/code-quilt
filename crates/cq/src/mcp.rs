@@ -123,6 +123,27 @@ impl Server {
         Ok(json!({ "queued_for": s.key(), "name": s.meta.name }))
     }
 
+    /// Adds a file to this session's shared files, which the board lists and opens.
+    fn share_file(&self, args: &Value) -> Result<Value> {
+        let own = self.own.clone().ok_or_else(|| anyhow!("share_file works only inside a CodeQuilt session"))?;
+        // Relative paths resolve against the agent's working directory, where this server runs.
+        let path = std::fs::canonicalize(str_arg(args, "path")?).map_err(|e| anyhow!("{e}"))?;
+        let len = std::fs::metadata(&path)?.len();
+        if !path.is_file() {
+            bail!("{} is not a file", path.display());
+        }
+        if len > cq_protocol::MAX_SHARED_FILE_LEN {
+            bail!("{} is larger than 10 MB", path.display());
+        }
+        let path = crate::config::display_path(&path).to_string_lossy().into_owned();
+        let caption = args.get("caption").and_then(Value::as_str).map(str::to_owned);
+        let file = cq_protocol::SharedFile { path: path.clone(), caption, shared_at_ms: crate::session::now_ms() };
+        self.tx
+            .send(Message::Routed { machine: LOCAL_MACHINE.to_owned(), session: own, inner: Box::new(Message::ShareFile(file)) })
+            .map_err(|_| anyhow!("daemon connection closed"))?;
+        Ok(json!({ "shared": path }))
+    }
+
     fn send(&self, args: &Value) -> Result<Value> {
         let s = self.resolve(str_arg(args, "session")?)?;
         let text = str_arg(args, "text")?;
@@ -210,7 +231,7 @@ fn str_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
 
 /// The tools a worker session gets: it can see the other sessions and leave them messages, but not
 /// type for the user, answer their prompts or start sessions.
-pub const WORKER_TOOLS: [&str; 3] = ["list_sessions", "get_turns", "message"];
+pub const WORKER_TOOLS: [&str; 4] = ["list_sessions", "get_turns", "message", "share_file"];
 
 /// The tools of this server; a worker gets only [`WORKER_TOOLS`].
 fn tools(worker: bool) -> Value {
@@ -220,6 +241,14 @@ fn tools(worker: bool) -> Value {
             "name": "message",
             "description": "Leave a message for another coding agent session. It is typed into that session as a prompt once the session is idle, starting with [from <your name> (<machine:id>)] so it can tell the message came from you and not from the user. Write it so it can be acted on without this conversation. When you receive such a message, reply with this tool only if a reply is needed.",
             "inputSchema": { "type": "object", "properties": { "session": session, "text": { "type": "string" } }, "required": ["session", "text"] }
+        },
+        {
+            "name": "share_file",
+            "description": "Show a file to the user in the CodeQuilt board: an image, a text or Markdown file, a PDF or an HTML page (up to 10 MB). Use it for screenshots, diagrams, reports and other results the user should look at rather than read in the terminal. Sharing the same path again shows its current contents.",
+            "inputSchema": { "type": "object", "properties": {
+                "path": { "type": "string", "description": "Path of the file, absolute or relative to your working directory" },
+                "caption": { "type": "string", "description": "One line on what the file shows" }
+            }, "required": ["path"] }
         },
         {
             "name": "list_sessions",
@@ -400,6 +429,7 @@ async fn handle(server: &Server, req: &Value) -> Result<Value> {
                 "get_turns" => server.get_turns(&args),
                 "send" => server.send(&args),
                 "message" => server.message(&args),
+                "share_file" => server.share_file(&args),
                 "approve" => server.approve(&args).await,
                 "launch" => server.launch(&args).await,
                 other => Err(anyhow!("unknown tool '{other}'")),

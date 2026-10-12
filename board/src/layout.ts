@@ -4,8 +4,8 @@ import { useSyncExternalStore } from "react";
 export type Dir = "row" | "column";
 export type Side = "left" | "right" | "up" | "down";
 
-/** A pane shows one session (by session key) or nothing. */
-export type PaneNode = { kind: "pane"; id: string; session: string | null };
+/** A pane shows one view, a session key or a shared file (`fileView`), or nothing. */
+export type PaneNode = { kind: "pane"; id: string; view: string | null };
 export type SplitNode = { kind: "split"; id: string; dir: Dir; children: LayoutNode[]; sizes: number[] };
 export type LayoutNode = PaneNode | SplitNode;
 
@@ -15,12 +15,12 @@ export type Layout = { tabs: Tab[]; active: string };
 
 type Rect = { x: number; y: number; w: number; h: number };
 
-const KEY = "cq.tabs.v1";
+const KEY = "cq.tabs.v2";
 
 let counter = 0;
 const newId = (prefix: string): string => `${prefix}${Date.now().toString(36)}${(counter++).toString(36)}`;
 
-const emptyPane = (): PaneNode => ({ kind: "pane", id: newId("p"), session: null });
+const emptyPane = (): PaneNode => ({ kind: "pane", id: newId("p"), view: null });
 
 /** A tab with one empty pane, named after its position (`tab N`) unless a name is given. */
 const newTab = (tabs: Tab[], name = `tab ${tabs.length + 1}`): Tab => {
@@ -57,9 +57,9 @@ const replace = (node: LayoutNode, id: string, f: (n: LayoutNode) => LayoutNode)
 
 const dirOf = (side: Side): Dir => (side === "left" || side === "right" ? "row" : "column");
 
-/** Splits pane `id` towards `side` with a new pane (empty unless `session` is given). */
-export const splitPane = (root: LayoutNode, id: string, side: Side, session: string | null = null): { root: LayoutNode; pane: PaneNode } => {
-  const pane: PaneNode = { ...emptyPane(), session };
+/** Splits pane `id` towards `side` with a new pane (empty unless `view` is given). */
+export const splitPane = (root: LayoutNode, id: string, side: Side, view: string | null = null): { root: LayoutNode; pane: PaneNode } => {
+  const pane: PaneNode = { ...emptyPane(), view };
   const dir = dirOf(side);
   const before = side === "left" || side === "up";
   const parent = parentOf(root, id);
@@ -97,8 +97,8 @@ export const removePane = (root: LayoutNode, id: string): LayoutNode => {
   return replace(root, split.id, () => next);
 };
 
-const setSession = (root: LayoutNode, id: string, session: string | null): LayoutNode =>
-  replace(root, id, (n) => ({ ...(n as PaneNode), session }));
+const setView = (root: LayoutNode, id: string, view: string | null): LayoutNode =>
+  replace(root, id, (n) => ({ ...(n as PaneNode), view }));
 
 /** Rectangles of all panes in a unit square. */
 const rectsOf = (node: LayoutNode, r: Rect = { x: 0, y: 0, w: 1, h: 1 }): Map<string, Rect> => {
@@ -180,10 +180,10 @@ export const activeTab = (): Tab => layout.tabs.find((t) => t.id === layout.acti
 
 const updateTab = (id: string, f: (t: Tab) => Tab) => commit({ ...layout, tabs: layout.tabs.map((t) => (t.id === id ? f(t) : t)) });
 
-/** The session key shown in the focused pane of the active tab. */
-export const focusedSession = (): string | null => {
+/** The view key shown in the focused pane of the active tab. */
+export const focusedView = (): string | null => {
   const t = activeTab();
-  return findPane(t.root, t.focus)?.session ?? null;
+  return findPane(t.root, t.focus)?.view ?? null;
 };
 
 export const focusPane = (paneId: string) => updateTab(activeTab().id, (t) => ({ ...t, focus: paneId }));
@@ -195,11 +195,11 @@ export const splitFocused = (side: Side) =>
     return { ...t, root, focus: pane.id, zoom: null };
   });
 
-/** Closes a pane of the active tab (its session is only detached). */
+/** Closes a pane of the active tab (a session in it is only detached). */
 export const closePane = (paneId: string) => {
   const tab = activeTab();
   // Closing a tab's only pane when it is already empty closes the tab.
-  if (tab.root.kind === "pane" && tab.root.id === paneId && tab.root.session === null) return closeTab(tab.id);
+  if (tab.root.kind === "pane" && tab.root.id === paneId && tab.root.view === null) return closeTab(tab.id);
   updateTab(tab.id, (t) => {
     const root = removePane(t.root, paneId);
     const focus = findPane(root, t.focus) ? t.focus : panesOf(root)[0].id;
@@ -220,30 +220,36 @@ export const resizeSplit = (splitId: string, sizes: number[]) =>
   updateTab(activeTab().id, (t) => ({ ...t, root: replace(t.root, splitId, (n) => ({ ...(n as SplitNode), sizes })) }));
 
 /**
- * Shows a session in a tab: focuses it if the tab already has it, fills the focused pane if that
- * is empty, and otherwise splits the focused pane across its parent's direction.
+ * Shows a view in a tab: focuses it if the tab already has it, opens it to the right of the pane
+ * showing `near` if there is one, fills the focused pane if that is empty, and otherwise splits
+ * the focused pane across its parent's direction.
  */
-const showIn = (t: Tab, session: string): Tab => {
-  const existing = panesOf(t.root).find((p) => p.session === session);
+const showIn = (t: Tab, view: string, near?: string): Tab => {
+  const existing = panesOf(t.root).find((p) => p.view === view);
   if (existing) return { ...t, focus: existing.id };
+  const anchor = near === undefined ? undefined : panesOf(t.root).find((p) => p.view === near);
+  if (anchor) {
+    const { root, pane } = splitPane(t.root, anchor.id, "right", view);
+    return { ...t, root, focus: pane.id, zoom: null };
+  }
   const focused = findPane(t.root, t.focus);
-  if (focused && focused.session === null) return { ...t, root: setSession(t.root, focused.id, session) };
+  if (focused && focused.view === null) return { ...t, root: setView(t.root, focused.id, view) };
   const parent = parentOf(t.root, t.focus);
   const side: Side = parent?.split.dir === "row" ? "down" : "right";
-  const { root, pane } = splitPane(t.root, t.focus, side, session);
+  const { root, pane } = splitPane(t.root, t.focus, side, view);
   return { ...t, root, focus: pane.id, zoom: null };
 };
 
-/** Shows a session in the active tab (see `showIn`). */
-export const openInActiveTab = (session: string) => updateTab(activeTab().id, (t) => showIn(t, session));
+/** Shows a view in the active tab, next to the pane showing `near` if any (see `showIn`). */
+export const openInActiveTab = (view: string, near?: string) => updateTab(activeTab().id, (t) => showIn(t, view, near));
 
-/** Drops panes whose session is gone or ended, in every tab. */
-export const dropSessions = (gone: (session: string) => boolean) => {
+/** Drops panes whose view is gone (e.g. an ended session), in every tab. */
+export const dropViews = (gone: (view: string) => boolean) => {
   let changed = false;
   const tabs = layout.tabs.map((t) => {
     let root = t.root;
     for (const p of panesOf(t.root)) {
-      if (p.session !== null && gone(p.session)) {
+      if (p.view !== null && gone(p.view)) {
         root = removePane(root, p.id);
         changed = true;
       }
@@ -291,12 +297,12 @@ export const moveTab = (id: string, index: number) => {
 /** Where a dragged pane goes: beside a pane, or into a tab (a new tab for `null`) by the `showIn` rule. */
 export type MoveTarget = { tab: string; pane: string; side: Side } | { tab: string | null };
 
-/** Whether tab `tabId` already shows the session of pane `src` in another tab `srcTab`. */
-export const holdsSessionOf = (srcTab: string, src: string, tabId: string): boolean => {
+/** Whether tab `tabId` already shows the view of pane `src` in another tab `srcTab`. */
+export const holdsViewOf = (srcTab: string, src: string, tabId: string): boolean => {
   const from = layout.tabs.find((t) => t.id === srcTab);
-  const session = from && findPane(from.root, src)?.session;
+  const view = from && findPane(from.root, src)?.view;
   const dst = layout.tabs.find((t) => t.id === tabId);
-  return tabId !== srcTab && !!session && !!dst && panesOf(dst.root).some((p) => p.session === session);
+  return tabId !== srcTab && !!view && !!dst && panesOf(dst.root).some((p) => p.view === view);
 };
 
 /** Moves pane `src` of tab `srcTab` and shows the destination tab. A tab left without panes is closed. */
@@ -317,8 +323,8 @@ export const movePane = (srcTab: string, src: string, to: MoveTarget) => {
     return { ...t, root, focus: findPane(root, t.focus) ? t.focus : panesOf(root)[0].id, zoom: t.zoom === src ? null : t.zoom };
   };
   const place = (t: Tab): Tab => {
-    if (!("pane" in to)) return pane.session === null ? t : showIn(t, pane.session);
-    const { root, pane: placed } = splitPane(t.root, to.pane, to.side, pane.session);
+    if (!("pane" in to)) return pane.view === null ? t : showIn(t, pane.view);
+    const { root, pane: placed } = splitPane(t.root, to.pane, to.side, pane.view);
     return { ...t, root, focus: placed.id, zoom: null };
   };
   const emptied = panesOf(from.root).length === 1;

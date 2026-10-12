@@ -465,7 +465,8 @@ pub async fn run(args: HostArgs) -> Result<()> {
         agent_session_id: earlier.as_ref().and_then(|m| m.agent_session_id.clone()),
         name: args.name.clone(),
         account: earlier.as_ref().and_then(|m| m.account.clone()),
-        tokens_by_hour: earlier.map(|m| m.tokens_by_hour).unwrap_or_default(),
+        tokens_by_hour: earlier.as_ref().map(|m| m.tokens_by_hour.clone()).unwrap_or_default(),
+        files: earlier.map(|m| m.files).unwrap_or_default(),
     };
     session::save(&meta)?;
 
@@ -678,6 +679,12 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
                     st.publish(AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload });
                 }
                 Message::Rename(r) => st.rename(r),
+                Message::ShareFile(f) => {
+                    // Sharing a file again moves it to the end with its new caption.
+                    st.meta.files.retain(|old| old.path != f.path);
+                    st.meta.files.push(f);
+                    let _ = session::save(&st.meta);
+                }
                 Message::Terminate(t) => {
                     if !std::mem::replace(&mut st.terminating, true) {
                         let payload = serde_json::json!({ "type": "terminating", "force": t.force });

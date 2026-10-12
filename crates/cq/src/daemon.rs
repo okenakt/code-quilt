@@ -176,7 +176,7 @@ impl LocalRelay {
     /// so they work without a subscription; so does input for sessions without an open tile.
     fn route(&self, session: &str, inner: &Message) -> Option<&Conn> {
         match inner {
-            Message::Approve(_) | Message::Rename(_) | Message::Inject(_) | Message::Terminate(_) => {
+            Message::Approve(_) | Message::Rename(_) | Message::Inject(_) | Message::Terminate(_) | Message::ShareFile(_) => {
                 self.monitors.get(session)
             }
             Message::Input(_) => self.subs.get(session).or_else(|| self.monitors.get(session)),
@@ -234,6 +234,13 @@ impl LocalRelay {
                 };
                 let _ = self.out.send(reply);
             }
+            Message::ReadFile(req) => {
+                let reply = match crate::session::read_shared(&req.session, &req.path) {
+                    Ok(data) => Message::FileContent { id: req.id, data },
+                    Err(e) => Message::RequestFailed(RequestFailed { id: req.id, error: format!("{e:#}") }),
+                };
+                let _ = self.out.send(reply);
+            }
             Message::Routed { session, inner, .. } => {
                 if self.route(&session, &inner).is_none() {
                     // The host may have started after the last scan.
@@ -257,6 +264,7 @@ fn target_machine(msg: &Message) -> Option<&str> {
         Message::Launch(l) => Some(&l.machine),
         Message::Resume(r) => Some(&r.machine),
         Message::ListDir(l) => Some(&l.machine),
+        Message::ReadFile(r) => Some(&r.machine),
         _ => None,
     }
 }
@@ -566,14 +574,10 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                             let _ = r.tx.send(msg);
                         }
                         None => {
-                            let error = format!("unknown machine '{id}'");
-                            let reply = match msg {
-                                Message::Launch(l) => Message::RequestFailed(RequestFailed { id: l.id, error }),
-                                Message::Resume(r) => Message::RequestFailed(RequestFailed { id: r.id, error }),
-                                Message::ListDir(l) => Message::RequestFailed(RequestFailed { id: l.id, error }),
-                                _ => continue,
-                            };
-                            let _ = out.send(reply);
+                            if let Some(rid) = msg.request_id() {
+                                let error = format!("unknown machine '{id}'");
+                                let _ = out.send(Message::RequestFailed(RequestFailed { id: rid, error }));
+                            }
                         }
                     },
                 }

@@ -55,6 +55,10 @@ export type DirList = { path: string; parent: string | null; entries: string[]; 
 /** Lists subdirectories on a machine (an empty path lists the allowed roots). */
 export const listDir = (machine: string, path: string): Promise<DirList> => invoke("list_dir", { machine, path });
 
+/** Reads a file the session shared. */
+export const readFile = (machine: string, session: string, path: string): Promise<ArrayBuffer> =>
+  invoke("read_file", { machine, session, path });
+
 /** Agents CodeQuilt can host. */
 export type Agent = "claude" | "codex";
 

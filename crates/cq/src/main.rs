@@ -123,7 +123,7 @@ enum Cmd {
         /// Also act as a Claude Code channel that orchestrators can push messages into.
         #[arg(long)]
         channel: bool,
-        /// Serve a worker session: only list_sessions, get_turns and message.
+        /// Serve a worker session: only list_sessions, get_turns, message and share_file.
         #[arg(long)]
         worker: bool,
     },

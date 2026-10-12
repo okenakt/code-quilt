@@ -24,6 +24,16 @@ pub fn save(meta: &SessionMeta) -> Result<()> {
     Ok(())
 }
 
+/// Reads a file the session `id` shared; any other path is refused.
+pub fn read_shared(id: &str, path: &str) -> Result<Vec<u8>> {
+    anyhow::ensure!(!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()), "invalid session id");
+    let meta: SessionMeta = serde_json::from_slice(&std::fs::read(paths::session_file(id)?).context("unknown session")?)?;
+    anyhow::ensure!(meta.files.iter().any(|f| f.path == path), "the session did not share {path}");
+    let len = std::fs::metadata(path).with_context(|| format!("read {path}"))?.len();
+    anyhow::ensure!(len <= cq_protocol::MAX_SHARED_FILE_LEN, "{path} is larger than 10 MB");
+    std::fs::read(path).with_context(|| format!("read {path}"))
+}
+
 /// Lists all sessions, marking running entries whose host process is gone as exited.
 pub fn list() -> Result<Vec<SessionMeta>> {
     let mut out = Vec::new();
@@ -145,6 +155,7 @@ mod tests {
             name: name.map(Into::into),
             account: None,
             tokens_by_hour: Default::default(),
+            files: Vec::new(),
         }
     }
 

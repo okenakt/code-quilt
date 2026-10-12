@@ -64,7 +64,7 @@ fn edit_in(root: &Path, f: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()
 }
 
 /// Strips the `\\?\` prefix that `canonicalize` adds on Windows.
-fn display_path(p: &Path) -> PathBuf {
+pub fn display_path(p: &Path) -> PathBuf {
     let s = p.to_string_lossy();
     match s.strip_prefix(r"\\?\") {
         Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),

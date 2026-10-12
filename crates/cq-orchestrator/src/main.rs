@@ -77,7 +77,7 @@ fn agent_args(name: &str, cfg: &OrchestratorConfig) -> Result<Vec<String>> {
     if !cq.is_file() {
         bail!("cq was not found next to cq-orchestrator; build or install cq, or set CQ_BIN");
     }
-    let mut tools = vec!["list_sessions", "get_turns", "send", "launch"];
+    let mut tools = vec!["list_sessions", "get_turns", "send", "launch", "share_file"];
     if cfg.allow_approve {
         tools.push("approve");
     }

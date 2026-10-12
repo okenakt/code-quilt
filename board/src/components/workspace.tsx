@@ -1,12 +1,12 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { Plus, X } from "lucide-react";
+import { FileText, Plus, X } from "lucide-react";
 import {
   addTab,
   closePane,
   closeTab,
   focusPane,
   currentLayout,
-  holdsSessionOf,
+  holdsViewOf,
   movePane,
   moveTab,
   openInActiveTab,
@@ -27,6 +27,10 @@ import { displayName } from "../store";
 import type { Activity, SessionState } from "../types";
 import { SessionName } from "./session-name";
 import { TerminalView } from "./terminal-view";
+import { FileView } from "./file-view";
+import { SharedFileStrip } from "./shared-file-strip";
+import { parseFileView } from "../files";
+import { baseName } from "../path";
 
 const ACTIVITY_LABEL: Record<Activity, string> = {
   starting: "starting",
@@ -172,7 +176,7 @@ const Splitter = ({ split, index }: { split: SplitNode; index: number }) => {
 };
 
 const EmptyPane = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
-  const shown = new Set(panesOf(ctx.tab.root).map((p) => p.session));
+  const shown = new Set(panesOf(ctx.tab.root).map((p) => p.view));
   const candidates = [...ctx.sessions.values()].filter((s) => s.activity !== "exited" && !shown.has(s.key));
   return (
     <div className="pane-empty">
@@ -199,25 +203,39 @@ const EmptyPane = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
 };
 
 const PaneView = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
-  const s = pane.session ? ctx.sessions.get(pane.session) : undefined;
-  const slash = pane.session?.indexOf("/") ?? -1;
-  const [machine, id] = pane.session ? [pane.session.slice(0, slash), pane.session.slice(slash + 1)] : ["", ""];
+  const file = pane.view ? parseFileView(pane.view) : null;
+  // A file pane belongs to the session that shared the file.
+  const key = file ? file.session : pane.view;
+  const s = key ? ctx.sessions.get(key) : undefined;
+  const slash = key?.indexOf("/") ?? -1;
+  const [machine, id] = key ? [key.slice(0, slash), key.slice(slash + 1)] : ["", ""];
   const focused = ctx.tab.focus === pane.id;
-  const title = s ? displayName(s) : pane.session ? id.slice(0, 8) : "empty";
+  const shared = file && s?.meta.files?.find((f) => f.path === file.path);
+  const title = file ? baseName(file.path) : s ? displayName(s) : pane.view ? id.slice(0, 8) : "empty";
   return (
     <div
       data-pane={pane.id}
-      className={`pane ${focused ? "focused" : ""} ${s?.activity === "approval" ? "approval" : ""} ${ctx.drag?.id === pane.id ? "dragging" : ""}`}
+      className={`pane ${focused ? "focused" : ""} ${!file && s?.activity === "approval" ? "approval" : ""} ${ctx.drag?.id === pane.id ? "dragging" : ""}`}
       onPointerDown={() => !focused && focusPane(pane.id)}
     >
-      <div className="pane-header" title="Drag to move this pane" onPointerDown={(e) => ctx.startDrag(e, "pane", pane.id, title)}>
-        {s ? <SessionName s={s} className="pane-title" /> : <span className={`pane-title ${pane.session ? "" : "muted"}`}>{title}</span>}
-        {pane.session && <span className="session-id">{id.slice(0, 8)}</span>}
-        {s && <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>}
+      <div className="pane-header" title={file ? (shared?.caption ?? file.path) : "Drag to move this pane"} onPointerDown={(e) => ctx.startDrag(e, "pane", pane.id, title)}>
+        {file ? (
+          <>
+            <FileText size={13} className="muted" />
+            <span className="pane-title">{title}</span>
+            <span className="session-id">{s ? displayName(s) : id.slice(0, 8)}</span>
+          </>
+        ) : (
+          <>
+            {s ? <SessionName s={s} className="pane-title" /> : <span className={`pane-title ${pane.view ? "" : "muted"}`}>{title}</span>}
+            {pane.view && <span className="session-id">{id.slice(0, 8)}</span>}
+            {s && <span className={`badge ${s.activity}`}>{ACTIVITY_LABEL[s.activity]}</span>}
+          </>
+        )}
         <span className="pane-header-spacer" />
         <button
           className="pane-button"
-          title={pane.session ? "Close pane (the session keeps running)" : "Close pane"}
+          title={pane.view && !file ? "Close pane (the session keeps running)" : "Close pane"}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => closePane(pane.id)}
         >
@@ -225,8 +243,13 @@ const PaneView = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
         </button>
       </div>
       <div className="pane-body">
-        {pane.session ? (
-          <TerminalView machine={machine} session={id} focused={focused} onFocus={() => focusPane(pane.id)} onGone={() => ctx.onGone(pane)} />
+        {file ? (
+          <FileView machine={machine} session={id} path={file.path} version={shared?.shared_at_ms ?? 0} />
+        ) : pane.view ? (
+          <>
+            <TerminalView machine={machine} session={id} focused={focused} onFocus={() => focusPane(pane.id)} onGone={() => ctx.onGone(pane)} />
+            {s && <SharedFileStrip s={s} />}
+          </>
         ) : (
           <EmptyPane pane={pane} ctx={ctx} />
         )}
@@ -303,7 +326,7 @@ export const Workspace = ({ sessions, onNewSession, onGone, onRefuse, overlay }:
       clearTimeout(hold.timer);
       hold = { tab: tabId };
       if (!tabId || tabId === currentLayout().active) return;
-      hold.timer = window.setTimeout(() => (holdsSessionOf(srcTab, id, tabId) ? onRefuse(alreadyOpen(tabId)) : selectTab(tabId)), HOLD_MS);
+      hold.timer = window.setTimeout(() => (holdsViewOf(srcTab, id, tabId) ? onRefuse(alreadyOpen(tabId)) : selectTab(tabId)), HOLD_MS);
     };
     const move = (ev: PointerEvent) => {
       if (!current && Math.hypot(ev.clientX - sx, ev.clientY - sy) < DRAG_THRESHOLD) return;
@@ -317,8 +340,6 @@ export const Workspace = ({ sessions, onNewSession, onGone, onRefuse, overlay }:
       setDrag(current);
     };
     const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
       clearTimeout(hold.timer);
       setDrag(null);
       if (!current) return;
@@ -331,11 +352,10 @@ export const Workspace = ({ sessions, onNewSession, onGone, onRefuse, overlay }:
       if (!t) return refuse("Drop the pane on a pane or a tab to move it");
       if (t.kind === "self") return selectTab(srcTab);
       const to: MoveTarget = t.kind === "pane" ? { tab: currentLayout().active, pane: t.id, side: t.side } : { tab: t.id };
-      if (to.tab && holdsSessionOf(srcTab, id, to.tab)) return refuse(alreadyOpen(to.tab));
+      if (to.tab && holdsViewOf(srcTab, id, to.tab)) return refuse(alreadyOpen(to.tab));
       movePane(srcTab, id, to);
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    trackPointer(move, up);
   };
 
   const ctx: Ctx = {
@@ -344,7 +364,7 @@ export const Workspace = ({ sessions, onNewSession, onGone, onRefuse, overlay }:
     drag,
     startDrag,
     onNewSession,
-    onGone: (p) => p.session && onGone(p.session),
+    onGone: (p) => p.view && onGone(p.view),
   };
   const zoomed = tab.zoom ? panesOf(tab.root).find((p) => p.id === tab.zoom) : undefined;
   const preview = drag?.target?.kind === "pane" ? drag.target.preview : null;

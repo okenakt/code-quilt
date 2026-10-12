@@ -17,7 +17,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Version of the daemon protocol (machine-tagged relay through `cq daemon`). Versioned
 /// separately so running hosts stay reachable when only the daemon protocol changes.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 2;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 3;
 
 /// Machine id under which a daemon reports its own sessions.
 pub const LOCAL_MACHINE: &str = "local";
@@ -83,7 +83,24 @@ pub struct SessionMeta {
     /// resumed session keeps its id and counts its earlier turns again, not twice).
     #[serde(default)]
     pub tokens_by_hour: BTreeMap<String, TokenCounts>,
+    /// Files the agent shared for the user to view, oldest first. Only these can be read back
+    /// through [`ReadFile`].
+    #[serde(default)]
+    pub files: Vec<SharedFile>,
 }
+
+/// A file an agent shared with the user.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedFile {
+    /// Absolute path on the session's machine.
+    pub path: String,
+    #[serde(default)]
+    pub caption: Option<String>,
+    pub shared_at_ms: u64,
+}
+
+/// Largest file that can be shared and read back.
+pub const MAX_SHARED_FILE_LEN: u64 = 10 * 1024 * 1024;
 
 /// Token counts of one or more API responses.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,6 +354,16 @@ pub struct ListDir {
     pub path: String,
 }
 
+/// Request to read a file a session shared.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadFile {
+    pub id: u64,
+    #[serde(default = "local_machine")]
+    pub machine: String,
+    pub session: String,
+    pub path: String,
+}
+
 /// Failure reply to an id-carrying request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestFailed {
@@ -397,6 +424,12 @@ pub enum Message {
     ListDir(ListDir),
     /// Daemon to client: directory listing.
     DirList(DirList),
+    /// Client to host: add a file to the session's shared files.
+    ShareFile(SharedFile),
+    /// Client to daemon: read a shared file.
+    ReadFile(ReadFile),
+    /// Daemon to client: contents of the file of the [`ReadFile`] request `id`.
+    FileContent { id: u64, data: Vec<u8> },
     /// Daemon to client: an id-carrying request failed.
     RequestFailed(RequestFailed),
     /// Client to daemon: stop the local daemon. Sessions keep running; the next connection starts
@@ -445,6 +478,9 @@ mod kind {
     pub const MACHINE_LIST: u8 = 0x39;
     pub const REQUEST_FAILED: u8 = 0x3a;
     pub const SHUTDOWN: u8 = 0x3b;
+    pub const READ_FILE: u8 = 0x3c;
+    pub const FILE_CONTENT: u8 = 0x3d;
+    pub const SHARE_FILE: u8 = 0x26;
     pub const INJECT: u8 = 0x23;
     pub const RENAME: u8 = 0x24;
     pub const TERMINATE: u8 = 0x25;
@@ -459,6 +495,17 @@ mod kind {
 }
 
 impl Message {
+    /// Id of a request that expects a reply or [`Message::RequestFailed`].
+    pub fn request_id(&self) -> Option<u64> {
+        match self {
+            Message::Launch(l) => Some(l.id),
+            Message::Resume(r) => Some(r.id),
+            Message::ListDir(l) => Some(l.id),
+            Message::ReadFile(r) => Some(r.id),
+            _ => None,
+        }
+    }
+
     /// Encodes the message into a complete frame.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let (k, payload) = self.encode_parts()?;
@@ -506,6 +553,10 @@ impl Message {
             Message::ListDir(v) => (kind::LIST_DIR, serde_json::to_vec(v)?),
             Message::DirList(v) => (kind::DIR_LIST, serde_json::to_vec(v)?),
             Message::RequestFailed(v) => (kind::REQUEST_FAILED, serde_json::to_vec(v)?),
+            Message::ShareFile(v) => (kind::SHARE_FILE, serde_json::to_vec(v)?),
+            Message::ReadFile(v) => (kind::READ_FILE, serde_json::to_vec(v)?),
+            // [u64 LE id][raw bytes]
+            Message::FileContent { id, data } => (kind::FILE_CONTENT, [&id.to_le_bytes()[..], data].concat()),
             Message::Shutdown => (kind::SHUTDOWN, Vec::new()),
             Message::Inject(v) => (kind::INJECT, serde_json::to_vec(v)?),
             Message::Rename(v) => (kind::RENAME, serde_json::to_vec(v)?),
@@ -565,6 +616,12 @@ impl Message {
             kind::LIST_DIR => Message::ListDir(serde_json::from_slice(&payload)?),
             kind::DIR_LIST => Message::DirList(serde_json::from_slice(&payload)?),
             kind::REQUEST_FAILED => Message::RequestFailed(serde_json::from_slice(&payload)?),
+            kind::SHARE_FILE => Message::ShareFile(serde_json::from_slice(&payload)?),
+            kind::READ_FILE => Message::ReadFile(serde_json::from_slice(&payload)?),
+            kind::FILE_CONTENT => {
+                let Some(id) = payload.first_chunk::<8>() else { bail!("short file content frame") };
+                Message::FileContent { id: u64::from_le_bytes(*id), data: payload[8..].to_vec() }
+            }
             kind::SHUTDOWN => Message::Shutdown,
             kind::INJECT => Message::Inject(serde_json::from_slice(&payload)?),
             kind::RENAME => Message::Rename(serde_json::from_slice(&payload)?),
@@ -650,6 +707,7 @@ mod tests {
                 session: "abc".into(),
                 inner: Box::new(Message::Input(b"x".to_vec())),
             },
+            Message::FileContent { id: 7, data: vec![0, 255, 1] },
         ];
         let mut buf = Vec::new();
         for m in &msgs {
@@ -667,6 +725,7 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+        assert!(matches!(read_message(&mut cur).await.unwrap(), Some(Message::FileContent { id: 7, data }) if data == [0, 255, 1]));
         assert!(read_message(&mut cur).await.unwrap().is_none());
     }
 }
