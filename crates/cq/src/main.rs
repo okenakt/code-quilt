@@ -21,7 +21,7 @@ mod usage;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
-use cq_proto::{SessionStatus, Size};
+use cq_protocol::{SessionStatus, Size};
 use std::ffi::OsString;
 use std::time::Duration;
 
@@ -268,20 +268,20 @@ async fn run(cmd: Cmd) -> Result<i32> {
             if name.is_none() && !clear {
                 anyhow::bail!("give a name or --clear");
             }
-            let r = cq_proto::Rename { name: if clear { None } else { name } };
-            let id = cli::session_op(&target, cq_proto::Message::Rename(r), "meta").await?;
+            let r = cq_protocol::Rename { name: if clear { None } else { name } };
+            let id = cli::session_op(&target, cq_protocol::Message::Rename(r), "meta").await?;
             println!("renamed {id}");
             Ok(0)
         }
         Cmd::Inject { target, text, submit, quiet_ms } => {
-            let inj = cq_proto::Inject { id: session::now_ms(), text, submit, quiet_ms };
-            let id = cli::session_op(&target, cq_proto::Message::Inject(inj), "inject_queued").await?;
+            let inj = cq_protocol::Inject { id: session::now_ms(), text, submit, quiet_ms };
+            let id = cli::session_op(&target, cq_protocol::Message::Inject(inj), "inject_queued").await?;
             println!("queued for {id}; it is typed once the session is idle");
             Ok(0)
         }
         Cmd::Kill { target, force, grace } => {
-            let t = cq_proto::Terminate { grace_ms: grace * 1000, force };
-            let id = cli::session_op(&target, cq_proto::Message::Terminate(t), cli::EXITED).await?;
+            let t = cq_protocol::Terminate { grace_ms: grace * 1000, force };
+            let id = cli::session_op(&target, cq_protocol::Message::Terminate(t), cli::EXITED).await?;
             println!("session {id} ended");
             Ok(0)
         }

@@ -2,7 +2,7 @@
 
 use crate::{attach, paths, session};
 use anyhow::{Context, Result};
-use cq_proto::Size;
+use cq_protocol::Size;
 use serde_json::json;
 use std::process::Command;
 use std::time::Duration;
@@ -119,7 +119,7 @@ fn agent_command(agent: &str, resume: Option<&str>, mcp: bool, args: &[String]) 
 }
 
 /// Starts a session without a local terminal (dashboard launch or resume). Returns the id.
-pub fn launch_detached(req: &cq_proto::Launch) -> Result<String> {
+pub fn launch_detached(req: &cq_protocol::Launch) -> Result<String> {
     let cwd = crate::config::check_allowed(&req.cwd)?;
     paths::ensure_dirs()?;
     let id = session::new_id();

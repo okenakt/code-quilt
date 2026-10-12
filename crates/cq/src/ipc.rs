@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 
-pub use cq_proto::local::{BoxStream, connect};
+pub use cq_protocol::local::{BoxStream, connect};
 
 #[cfg(windows)]
 mod imp {

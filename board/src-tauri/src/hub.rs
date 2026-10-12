@@ -3,8 +3,8 @@
 
 use anyhow::{Context, Result, bail};
 use base64::Engine;
-use cq_proto::local::BoxStream;
-use cq_proto::{
+use cq_protocol::local::BoxStream;
+use cq_protocol::{
     AgentEvent, ClientKind, CommandInfo, DAEMON_PROTOCOL_VERSION, InvokeCommand, Hello, MachineInfo, Message, SessionMeta, SessionRef,
     Subscribe, spawn_reader, write_message,
 };
@@ -122,7 +122,7 @@ impl Hub {
         if online && !cached.is_empty() {
             return cached;
         }
-        vec![MachineInfo { id: cq_proto::LOCAL_MACHINE.into(), label: "local".into(), online: false, error }]
+        vec![MachineInfo { id: cq_protocol::LOCAL_MACHINE.into(), label: "local".into(), online: false, error }]
     }
 
     fn send(&self, msg: Message) -> Result<()> {
@@ -169,12 +169,12 @@ impl Hub {
         if let Some(s) = self.subs.lock().unwrap().get_mut(&r) {
             *s = (cols, rows);
         }
-        self.routed(machine, session, Message::Resize(cq_proto::Size { cols, rows }))
+        self.routed(machine, session, Message::Resize(cq_protocol::Size { cols, rows }))
     }
 
     /// Answers a specific permission prompt.
     pub fn approve(&self, machine: &str, session: &str, option: u8, prompt_id: Option<String>) -> Result<()> {
-        self.routed(machine, session, Message::Approve(cq_proto::Approve { option, prompt_id }))
+        self.routed(machine, session, Message::Approve(cq_protocol::Approve { option, prompt_id }))
     }
 
     /// Stops the local daemon; the board reconnects and starts a new one.
@@ -200,12 +200,12 @@ impl Hub {
 
     /// Names a session (`None` clears the name); the host refuses a name another running session has.
     pub fn rename(&self, machine: &str, session: &str, name: Option<String>) -> Result<()> {
-        self.routed(machine, session, Message::Rename(cq_proto::Rename { name }))
+        self.routed(machine, session, Message::Rename(cq_protocol::Rename { name }))
     }
 
     /// Asks a session to end gracefully; the host kills it after the grace period.
     pub fn terminate(&self, machine: &str, session: &str) -> Result<()> {
-        let t = cq_proto::Terminate { grace_ms: 10_000, force: false };
+        let t = cq_protocol::Terminate { grace_ms: 10_000, force: false };
         self.routed(machine, session, Message::Terminate(t))
     }
 

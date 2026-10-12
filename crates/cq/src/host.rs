@@ -4,7 +4,7 @@
 use crate::agent::{self, PermissionPrompt};
 use crate::{ipc, paths, session, usage};
 use anyhow::{Context, Result, bail};
-use cq_proto::{
+use cq_protocol::{
     AgentEvent, ClientKind, Exit, Hello, Inject, InputOwner, Message, PROTOCOL_VERSION, SessionMeta, Rename,
     SessionStatus, Size, Terminate, Welcome, read_message, write_message,
 };

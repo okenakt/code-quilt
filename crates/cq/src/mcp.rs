@@ -3,7 +3,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use cq_client::{Activity, MAX_TURNS, Model, Session};
-use cq_proto::{LOCAL_MACHINE, Message};
+use cq_protocol::{LOCAL_MACHINE, Message};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -116,7 +116,7 @@ impl Server {
             let own = self.own.as_deref().and_then(|id| m.sessions.get(&(LOCAL_MACHINE.to_owned(), id.to_owned())));
             own.map_or_else(|| "outside CodeQuilt".to_owned(), |o| format!("{} ({})", o.label(), o.key()))
         };
-        let inject = cq_proto::Inject { id: crate::session::now_ms(), text: format!("[from {from}] {text}"), submit: true, quiet_ms: 3000 };
+        let inject = cq_protocol::Inject { id: crate::session::now_ms(), text: format!("[from {from}] {text}"), submit: true, quiet_ms: 3000 };
         self.tx
             .send(Message::Routed { machine: s.machine.clone(), session: s.meta.id.clone(), inner: Box::new(Message::Inject(inject)) })
             .map_err(|_| anyhow!("daemon connection closed"))?;
@@ -151,7 +151,7 @@ impl Server {
         }
         let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
         let mut conn = cq_client::DaemonClient::open(machine != LOCAL_MACHINE).await?;
-        let launch = cq_proto::Launch {
+        let launch = cq_protocol::Launch {
             id: 1,
             machine: machine.clone(),
             agent: agent.to_owned(),
@@ -167,7 +167,7 @@ impl Server {
             .map_err(|_| anyhow!("the session did not start within 30s"))??;
         let mut out = json!({ "session": format!("{machine}:{session}"), "name": name });
         if let Some(prompt) = args.get("prompt").and_then(Value::as_str) {
-            let inject = cq_proto::Inject { id: crate::session::now_ms(), text: prompt.to_owned(), submit: true, quiet_ms: 3000 };
+            let inject = cq_protocol::Inject { id: crate::session::now_ms(), text: prompt.to_owned(), submit: true, quiet_ms: 3000 };
             conn.send(&Message::Routed { machine: machine.clone(), session: session.clone(), inner: Box::new(Message::Inject(inject)) }).await?;
             let queued = async {
                 while let Some(msg) = conn.msgs.recv().await {
@@ -192,7 +192,7 @@ impl Server {
         let prompt_id = str_arg(args, "prompt_id")?.to_owned();
         let (tx, rx) = oneshot::channel();
         self.approvals.lock().unwrap().insert((s.machine.clone(), s.meta.id.clone()), tx);
-        let approve = cq_proto::Approve { option, prompt_id: Some(prompt_id) };
+        let approve = cq_protocol::Approve { option, prompt_id: Some(prompt_id) };
         self.tx
             .send(Message::Routed { machine: s.machine.clone(), session: s.meta.id.clone(), inner: Box::new(Message::Approve(approve)) })
             .map_err(|_| anyhow!("daemon connection closed"))?;
@@ -275,7 +275,7 @@ async fn daemon_loop(
             let mut conn = cq_client::DaemonClient::open(true).await?;
             conn.send(&Message::ListSessions).await?;
             if let Some((name, _)) = &channel {
-                let cmd = cq_proto::CommandInfo { name: name.clone(), title: "Deliver a channel message".into(), ..Default::default() };
+                let cmd = cq_protocol::CommandInfo { name: name.clone(), title: "Deliver a channel message".into(), ..Default::default() };
                 conn.send(&Message::RegisterCommand(cmd)).await?;
             }
             loop {

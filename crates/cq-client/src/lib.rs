@@ -2,8 +2,8 @@
 //! built from the daemon's messages. Used by `cq mcp`, `cq-orchestrator`, and other clients.
 
 use anyhow::{Context, Result};
-use cq_proto::local::{self, BoxStream};
-use cq_proto::{AgentEvent, MachineInfo, Message, SessionMeta, SessionStatus};
+use cq_protocol::local::{self, BoxStream};
+use cq_protocol::{AgentEvent, MachineInfo, Message, SessionMeta, SessionStatus};
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -119,7 +119,7 @@ impl Model {
                 entry.prompt = None;
             }
         }
-        if machine == cq_proto::LOCAL_MACHINE {
+        if machine == cq_protocol::LOCAL_MACHINE {
             self.synced = true;
         }
     }
@@ -271,10 +271,10 @@ impl DaemonClient {
     /// relays every registered remote machine.
     pub async fn open(federate: bool) -> Result<Self> {
         let (rd, wr) = tokio::io::split(connect_daemon().await?);
-        let mut client = Self { msgs: cq_proto::spawn_reader(rd), wr, federate };
-        let hello = cq_proto::Hello {
-            protocol_version: cq_proto::DAEMON_PROTOCOL_VERSION,
-            kind: cq_proto::ClientKind::Hub,
+        let mut client = Self { msgs: cq_protocol::spawn_reader(rd), wr, federate };
+        let hello = cq_protocol::Hello {
+            protocol_version: cq_protocol::DAEMON_PROTOCOL_VERSION,
+            kind: cq_protocol::ClientKind::Hub,
             cols: 0,
             rows: 0,
             federate,
@@ -284,11 +284,11 @@ impl DaemonClient {
     }
 
     pub async fn send(&mut self, msg: &Message) -> Result<()> {
-        cq_proto::write_message(&mut self.wr, msg).await
+        cq_protocol::write_message(&mut self.wr, msg).await
     }
 
     /// Launches a session through the daemon and returns its id.
-    pub async fn launch(&mut self, launch: cq_proto::Launch) -> Result<String> {
+    pub async fn launch(&mut self, launch: cq_protocol::Launch) -> Result<String> {
         let id = launch.id;
         self.send(&Message::Launch(launch)).await?;
         while let Some(msg) = self.msgs.recv().await {

@@ -6,7 +6,7 @@
 mod hub;
 mod settings;
 
-use cq_proto::{CommandInfo, MachineInfo};
+use cq_protocol::{CommandInfo, MachineInfo};
 use hub::Hub;
 use std::sync::Arc;
 use tauri::{Manager, State};
@@ -122,28 +122,28 @@ fn ui_config() -> settings::UiConfig {
 
 #[tauri::command]
 fn set_focus(hub: State<'_, HubState>, machine: Option<String>, session: Option<String>) -> Result<(), String> {
-    let focus = machine.zip(session).map(|(machine, session)| cq_proto::SessionRef { machine, session });
+    let focus = machine.zip(session).map(|(machine, session)| cq_protocol::SessionRef { machine, session });
     hub.set_focus(focus).map_err(err)
 }
 
 #[tauri::command]
 async fn launch(hub: State<'_, HubState>, machine: String, agent: String, cwd: String, args: Vec<String>) -> Result<String, String> {
     let id = hub.next_id();
-    let req = cq_proto::Launch { id, machine, agent, cwd, args, name: None, no_mcp: false, cols: 120, rows: 36 };
-    launched(&hub, id, cq_proto::Message::Launch(req)).await
+    let req = cq_protocol::Launch { id, machine, agent, cwd, args, name: None, no_mcp: false, cols: 120, rows: 36 };
+    launched(&hub, id, cq_protocol::Message::Launch(req)).await
 }
 
 #[tauri::command]
 async fn resume(hub: State<'_, HubState>, machine: String, session: String) -> Result<String, String> {
     let id = hub.next_id();
-    let req = cq_proto::Resume { id, machine, session, cols: 120, rows: 36 };
-    launched(&hub, id, cq_proto::Message::Resume(req)).await
+    let req = cq_protocol::Resume { id, machine, session, cols: 120, rows: 36 };
+    launched(&hub, id, cq_protocol::Message::Resume(req)).await
 }
 
 /// Sends a request that starts a session and returns the session's id.
-async fn launched(hub: &HubState, id: u64, msg: cq_proto::Message) -> Result<String, String> {
+async fn launched(hub: &HubState, id: u64, msg: cq_protocol::Message) -> Result<String, String> {
     match hub.call(id, msg).await.map_err(err)? {
-        cq_proto::Message::Launched(l) => Ok(l.session),
+        cq_protocol::Message::Launched(l) => Ok(l.session),
         other => Err(format!("unexpected reply {other:?}")),
     }
 }
@@ -153,10 +153,10 @@ async fn list_dir(
     hub: State<'_, HubState>,
     machine: String,
     path: String,
-) -> Result<cq_proto::DirList, String> {
+) -> Result<cq_protocol::DirList, String> {
     let id = hub.next_id();
-    match hub.call(id, cq_proto::Message::ListDir(cq_proto::ListDir { id, machine, path })).await.map_err(err)? {
-        cq_proto::Message::DirList(l) => Ok(l),
+    match hub.call(id, cq_protocol::Message::ListDir(cq_protocol::ListDir { id, machine, path })).await.map_err(err)? {
+        cq_protocol::Message::DirList(l) => Ok(l),
         other => Err(format!("unexpected reply {other:?}")),
     }
 }

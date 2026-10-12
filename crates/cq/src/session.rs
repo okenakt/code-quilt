@@ -2,7 +2,7 @@
 
 use crate::paths;
 use anyhow::{Context, Result};
-use cq_proto::{SessionMeta, SessionStatus};
+use cq_protocol::{SessionMeta, SessionStatus};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Milliseconds since the Unix epoch.

@@ -1,4 +1,4 @@
-/** Session metadata as persisted by `cq host` (mirrors `cq_proto::SessionMeta`). */
+/** Session metadata as persisted by `cq host` (mirrors `cq_protocol::SessionMeta`). */
 export type SessionMeta = {
   id: string;
   agent: string;

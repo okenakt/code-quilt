@@ -3,11 +3,11 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-pub use cq_proto::local::{daemon_endpoint, session_endpoint};
+pub use cq_protocol::local::{daemon_endpoint, session_endpoint};
 
 /// Root directory of CodeQuilt state (`~/.codequilt`).
 pub fn root() -> Result<PathBuf> {
-    cq_proto::local::state_root()
+    cq_protocol::local::state_root()
 }
 
 /// Directory holding `<id>.json` session metadata.

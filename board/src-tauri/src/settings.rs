@@ -16,7 +16,7 @@ pub struct UiConfig {
 }
 
 fn file(name: &str) -> Option<PathBuf> {
-    cq_proto::local::state_root().ok().map(|r| r.join(name))
+    cq_protocol::local::state_root().ok().map(|r| r.join(name))
 }
 
 /// Reads a TOML file as JSON; a missing file is empty, a broken one is reported.

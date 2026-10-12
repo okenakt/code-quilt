@@ -3,7 +3,7 @@
 use crate::term::{self, RawTerminal, TermEvent};
 use crate::{ipc, paths};
 use anyhow::{Result, bail};
-use cq_proto::{
+use cq_protocol::{
     ClientKind, Hello, Message, PROTOCOL_VERSION, Size, read_message, spawn_reader, write_message,
 };
 use std::io::Write;

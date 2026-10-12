@@ -110,12 +110,12 @@ pub fn check_allowed(path: &str) -> Result<PathBuf> {
 
 /// Lists subdirectories of an allowed directory, or for an empty path the roots and the trusted
 /// directories.
-pub fn list_dir(path: &str) -> Result<cq_proto::DirList> {
+pub fn list_dir(path: &str) -> Result<cq_protocol::DirList> {
     let shown = |ds: Vec<PathBuf>| -> Vec<String> { ds.iter().map(|d| display_path(d).to_string_lossy().into_owned()).collect() };
     let roots = shown(allowed_roots());
     if path.is_empty() {
         let known = shown(trusted_dirs());
-        return Ok(cq_proto::DirList { id: 0, path: String::new(), parent: None, entries: roots.clone(), roots, known });
+        return Ok(cq_protocol::DirList { id: 0, path: String::new(), parent: None, entries: roots.clone(), roots, known });
     }
     let dir = check_allowed(path)?;
     let mut entries: Vec<String> = std::fs::read_dir(&dir)?
@@ -130,7 +130,7 @@ pub fn list_dir(path: &str) -> Result<cq_proto::DirList> {
         .parent()
         .filter(|p| check_allowed(&p.to_string_lossy()).is_ok())
         .map(|p| p.to_string_lossy().into_owned());
-    Ok(cq_proto::DirList { id: 0, path: dir.to_string_lossy().into_owned(), parent, entries, roots, known: Vec::new() })
+    Ok(cq_protocol::DirList { id: 0, path: dir.to_string_lossy().into_owned(), parent, entries, roots, known: Vec::new() })
 }
 
 /// Subcommand aliases: the built-in `o = orchestrator` plus the user's own, which take precedence.

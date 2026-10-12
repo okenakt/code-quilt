@@ -512,7 +512,7 @@ dependencies = [
  "anyhow",
  "clap",
  "cq-client",
- "cq-proto",
+ "cq-protocol",
  "dirs",
  "libc",
  "portable-pty",
@@ -533,7 +533,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "cq-client",
- "cq-proto",
+ "cq-protocol",
  "dirs",
  "serde",
  "serde_json",
@@ -549,7 +549,7 @@ name = "cq-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cq-proto",
+ "cq-protocol",
  "libc",
  "serde_json",
  "tokio",
@@ -563,7 +563,7 @@ dependencies = [
  "anyhow",
  "clap",
  "cq-client",
- "cq-proto",
+ "cq-protocol",
  "serde",
  "serde_json",
  "tokio",
@@ -571,7 +571,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cq-proto"
+name = "cq-protocol"
 version = "0.1.0"
 dependencies = [
  "anyhow",

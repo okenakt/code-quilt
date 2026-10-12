@@ -5,7 +5,7 @@
 //! so all format knowledge stays in this module and every read degrades to "unknown" instead of
 //! failing.
 
-pub use cq_proto::TokenCounts as Counts;
+pub use cq_protocol::TokenCounts as Counts;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Seek, SeekFrom};

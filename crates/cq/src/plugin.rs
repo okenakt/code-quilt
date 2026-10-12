@@ -4,7 +4,7 @@
 
 use crate::{config, paths};
 use anyhow::{Context, Result, bail};
-use cq_proto::{CommandArg, CommandInfo};
+use cq_protocol::{CommandArg, CommandInfo};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -294,7 +294,7 @@ pub fn expand_args(
     template: &[String],
     declared: &[CommandArg],
     given: &serde_json::Value,
-    context: Option<&cq_proto::SessionRef>,
+    context: Option<&cq_protocol::SessionRef>,
 ) -> Result<Vec<String>> {
     let lookup = |key: &str| -> Option<String> {
         match key {
@@ -361,7 +361,7 @@ mod tests {
     fn expands_given_default_and_context_values() {
         let template = ["start".to_owned(), "${name}".to_owned(), "--in=${machine}/${session}".to_owned()];
         let declared = [arg("name", Some("orchestrator"))];
-        let context = cq_proto::SessionRef { machine: "wsl".into(), session: "abc".into() };
+        let context = cq_protocol::SessionRef { machine: "wsl".into(), session: "abc".into() };
         let given = serde_json::json!({ "name": "main" });
         assert_eq!(
             expand_args(&template, &declared, &given, Some(&context)).unwrap(),

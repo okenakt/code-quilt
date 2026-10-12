@@ -1,6 +1,6 @@
 //! Local terminal handling for terminal clients: raw mode, size, input capture and raw output.
 
-use cq_proto::Size;
+use cq_protocol::Size;
 
 /// Events produced by the local console.
 pub enum TermEvent {
@@ -54,7 +54,7 @@ impl PasteTracker {
 mod imp {
     use super::{PasteTracker, SHIFT_ENTER, TermEvent};
     use anyhow::{Result, bail};
-    use cq_proto::Size;
+    use cq_protocol::Size;
     use tokio::sync::mpsc::UnboundedSender as Sender;
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::WriteFile;
@@ -228,7 +228,7 @@ mod imp {
 mod imp {
     use super::TermEvent;
     use anyhow::{Result, bail};
-    use cq_proto::Size;
+    use cq_protocol::Size;
     use std::io::{Read, Write};
     use tokio::sync::mpsc::UnboundedSender as Sender;
 

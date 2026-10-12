@@ -8,7 +8,7 @@ mod courier;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use config::{Delivery, OrchestratorConfig};
-use cq_proto::{LOCAL_MACHINE, Launch, Message, SessionStatus};
+use cq_protocol::{LOCAL_MACHINE, Launch, Message, SessionStatus};
 use serde_json::json;
 
 #[derive(Parser)]
@@ -175,7 +175,7 @@ async fn launch_detached(name: &str, agent: &str, cwd: &std::path::Path, args: V
 }
 
 /// The running local session of the orchestrator `name`, if any (session names are unique).
-async fn running_orchestrator(name: &str) -> Result<Option<cq_proto::SessionMeta>> {
+async fn running_orchestrator(name: &str) -> Result<Option<cq_protocol::SessionMeta>> {
     let mut conn = cq_client::DaemonClient::open(false).await?;
     conn.send(&Message::ListSessions).await?;
     while let Some(msg) = conn.msgs.recv().await {

@@ -526,3 +526,7 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 - 蜂の巣になぞらえてQueen（cq-queen）と呼んでいたが、由来を知らないと役割が伝わらないため、一般的な名前のorchestratorに改めた。プラグインは `cq-orchestrator`、サブコマンドは `cq orchestrator`、組み込みのエイリアスは `o`、パレットのコマンドは `orchestrator.start`、既定のセッション名は `orchestrator`、設定は `~/.codequilt/orchestrators/` にした。過去の記録の名前もあわせて直した。
 - 後方互換は持たない。既存の `queens/` と `ui.toml` の `queen` は手で移す。
 - 検討した選択肢：エイリアスを `orch` にする案（意味は読み取りやすいが長い）、既定のセッション名だけ `orch` と短くする案（コマンド名と揃わない）。
+
+## 68. 共有crateの名前をcq-protocolにする
+
+- `cq-proto` は略称で何の crate か分かりにくいため、略さず `cq-protocol` にした。

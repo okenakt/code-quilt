@@ -1,7 +1,7 @@
 //! CLI operations on sessions of any machine, performed through the local daemon.
 
 use anyhow::{Context, Result, bail};
-use cq_proto::{
+use cq_protocol::{
     LOCAL_MACHINE, Message, SessionStatus,
 };
 use std::time::Duration;
@@ -9,7 +9,7 @@ use std::time::Duration;
 #[derive(Default)]
 struct UsageSession {
     machine: String,
-    meta: Option<cq_proto::SessionMeta>,
+    meta: Option<cq_protocol::SessionMeta>,
     status: Option<(u64, serde_json::Value)>,
     account: Option<serde_json::Value>,
     tokens: Option<serde_json::Value>,
@@ -46,7 +46,7 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
     conn.send(&Message::ListSessions).await?;
 
     let mut sessions: HashMap<(String, String), UsageSession> = HashMap::new();
-    let mut machines: Vec<cq_proto::MachineInfo> = Vec::new();
+    let mut machines: Vec<cq_protocol::MachineInfo> = Vec::new();
     let mut listed: Vec<String> = Vec::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     // Hosts replay their latest status on connect; stop once every reachable machine has
@@ -265,7 +265,7 @@ pub async fn run_command(name: &str, args: &[String]) -> Result<i32> {
         map.insert(k.to_owned(), serde_json::Value::String(v.to_owned()));
     }
     let mut conn = cq_client::DaemonClient::open(false).await?;
-    let inv = cq_proto::InvokeCommand {
+    let inv = cq_protocol::InvokeCommand {
         name: name.to_owned(),
         args: serde_json::Value::Object(map),
         id: Some(1),
@@ -291,11 +291,11 @@ pub async fn run_command(name: &str, args: &[String]) -> Result<i32> {
 }
 
 async fn local_daemon_running() -> Result<bool> {
-    Ok(cq_proto::local::connect(&cq_proto::local::daemon_endpoint()?, Duration::ZERO).await.is_ok())
+    Ok(cq_protocol::local::connect(&cq_protocol::local::daemon_endpoint()?, Duration::ZERO).await.is_ok())
 }
 
 /// Waits until every machine is reachable or failed, and returns the latest list.
-async fn settled_machines(conn: &mut cq_client::DaemonClient, limit: Duration) -> Vec<cq_proto::MachineInfo> {
+async fn settled_machines(conn: &mut cq_client::DaemonClient, limit: Duration) -> Vec<cq_protocol::MachineInfo> {
     let deadline = tokio::time::Instant::now() + limit;
     let mut machines = Vec::new();
     while let Ok(Some(Ok(msg))) = tokio::time::timeout_at(deadline, conn.msgs.recv()).await {
@@ -350,9 +350,9 @@ pub async fn screen_snapshot(target: &str) -> Result<Vec<u8>> {
     let id = crate::session::pick(&crate::session::list()?, target)?.id.clone();
     let stream = crate::ipc::connect(&crate::paths::session_endpoint(&id)?, Duration::from_secs(2)).await?;
     let (mut rd, mut wr) = tokio::io::split(stream);
-    let hello = cq_proto::Hello { protocol_version: cq_proto::PROTOCOL_VERSION, kind: cq_proto::ClientKind::Hub, cols: 0, rows: 0, federate: false };
-    cq_proto::write_message(&mut wr, &Message::Hello(hello)).await?;
-    while let Some(msg) = cq_proto::read_message(&mut rd).await? {
+    let hello = cq_protocol::Hello { protocol_version: cq_protocol::PROTOCOL_VERSION, kind: cq_protocol::ClientKind::Hub, cols: 0, rows: 0, federate: false };
+    cq_protocol::write_message(&mut wr, &Message::Hello(hello)).await?;
+    while let Some(msg) = cq_protocol::read_message(&mut rd).await? {
         if let Message::Snapshot(bytes) = msg {
             return Ok(bytes);
         }

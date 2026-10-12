@@ -9,7 +9,7 @@
 use crate::machine::{self, MachineEntry};
 use crate::{ipc, paths, plugin, remote, session};
 use anyhow::{Result, bail};
-use cq_proto::{
+use cq_protocol::{
     ClientKind, CommandInfo, CommandResult, DirList, Hello, InvokeCommand, DAEMON_PROTOCOL_VERSION, LOCAL_MACHINE, Launched, MachineInfo, Message, PROTOCOL_VERSION,
     RequestFailed, SessionList, SessionMeta, SessionStatus, Size, Subscribe, read_message, spawn_reader,
     write_message,
@@ -279,7 +279,7 @@ struct Pending {
 struct Desktop {
     next_client: u64,
     clients: HashMap<u64, UnboundedSender<Message>>,
-    focus: Option<cq_proto::SessionRef>,
+    focus: Option<cq_protocol::SessionRef>,
     commands: HashMap<String, (u64, CommandInfo)>,
     plugins: Vec<(String, plugin::Installed)>,
     pending: Vec<Pending>,

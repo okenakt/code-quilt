@@ -58,7 +58,7 @@ impl Default for OrchestratorConfig {
 
 /// Directory holding orchestrator configurations and generated files.
 pub fn orchestrators_dir() -> Result<PathBuf> {
-    Ok(cq_proto::local::state_root()?.join("orchestrators"))
+    Ok(cq_protocol::local::state_root()?.join("orchestrators"))
 }
 
 /// Loads `<name>.toml` (writing the defaults first if it does not exist) and applies `KEY=VALUE`

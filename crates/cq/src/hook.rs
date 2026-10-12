@@ -5,7 +5,7 @@
 
 use crate::{ipc, paths, session};
 use anyhow::Result;
-use cq_proto::{AgentEvent, ClientKind, Hello, Message, PROTOCOL_VERSION, write_message};
+use cq_protocol::{AgentEvent, ClientKind, Hello, Message, PROTOCOL_VERSION, write_message};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::Duration;

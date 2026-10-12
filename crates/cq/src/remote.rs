@@ -6,8 +6,8 @@
 
 use crate::machine::MachineEntry;
 use anyhow::{Context, Result, bail};
-use cq_proto::local::BoxStream;
-use cq_proto::{
+use cq_protocol::local::BoxStream;
+use cq_protocol::{
     ClientKind, DAEMON_PROTOCOL_VERSION, Hello, LOCAL_MACHINE, MachineInfo, Message, SessionList,
     SessionRef, Subscribe, spawn_reader, write_message,
 };
@@ -157,7 +157,7 @@ pub async fn run(
 }
 
 fn fail(out: &UnboundedSender<Message>, id: u64, error: &str) {
-    let _ = out.send(Message::RequestFailed(cq_proto::RequestFailed { id, error: error.into() }));
+    let _ = out.send(Message::RequestFailed(cq_protocol::RequestFailed { id, error: error.into() }));
 }
 
 async fn relay(

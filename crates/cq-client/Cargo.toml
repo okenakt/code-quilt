@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
-cq-proto = { path = "../cq-proto", features = ["local"] }
+cq-protocol = { path = "../cq-protocol", features = ["local"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["full"] }
 

@@ -8,7 +8,7 @@ license.workspace = true
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 cq-client = { path = "../cq-client" }
-cq-proto = { path = "../cq-proto", features = ["local"] }
+cq-protocol = { path = "../cq-protocol", features = ["local"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["full"] }

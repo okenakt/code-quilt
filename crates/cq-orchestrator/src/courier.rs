@@ -4,7 +4,7 @@
 use crate::config::{Delivery, OrchestratorConfig};
 use anyhow::{Result, bail};
 use cq_client::{Activity, Model, Session};
-use cq_proto::{
+use cq_protocol::{
     CommandInfo, InvokeCommand, LOCAL_MACHINE, Message,
 };
 use serde_json::{Value, json};
@@ -235,7 +235,7 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                     }
                     Delivery::Pty => {
                         inject_id += 1;
-                        let inj = cq_proto::Inject { id: inject_id, text: content, submit: true, quiet_ms: 3000 };
+                        let inj = cq_protocol::Inject { id: inject_id, text: content, submit: true, quiet_ms: 3000 };
                         Message::Routed { machine: LOCAL_MACHINE.to_owned(), session: oid, inner: Box::new(Message::Inject(inj)) }
                     }
                 };
