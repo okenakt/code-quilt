@@ -63,7 +63,7 @@
 | `cq plugin list \| add NAME \| remove NAME \| refresh` | プラグインの一覧・導入・削除・manifestの再読込 |
 | `cq machine list \| add [HOST] [--label L] [--cq-path P] [--login-shell] \| remove ID` | リモートマシンの一覧・登録・削除。HOSTを省くと `~/.ssh/config` から選ぶ |
 | `cq daemon` | daemonを動かす（通常は自動で起動される） |
-| `cq daemon status \| stop \| restart` | daemonの状態（ローカルと各リモートマシン）、ローカルのdaemonの停止・再起動。止めてもセッションは動き続ける。リモートのdaemonはそのマシンで `cq daemon restart` する |
+| `cq daemon status \| stop \| restart` | daemonの状態（ローカルと各リモートマシン）、ローカルのdaemonの停止・再起動。止めてもセッションは動き続ける。リモートのdaemonはそのマシンで `cq daemon restart` する。プロトコルのバージョンが違うdaemonは停止の要求を受け付けないため、止められなかったときはそのPIDを表示して失敗する |
 | `cq mcp [--scope machine:ID]… [--channel] [--worker]` | MCPサーバー（stdio）。`--channel` はClaude Codeのチャネルとしても動く。`--worker` はワーカー用（`list_sessions` / `get_turns` / `message` / `share_file` だけ） |
 | `cq bridge` | 標準入出力をこのマシンのdaemonにつなぐ（`ssh HOST cq bridge` 用） |
 | `cq NAME …` | 組み込みにない名前は `cq-NAME …` を実行する（例 `cq orchestrator`、`cq board`） |
