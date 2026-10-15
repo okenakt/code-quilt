@@ -437,25 +437,3 @@ impl std::fmt::Display for Incompatible {
 }
 
 impl std::error::Error for Incompatible {}
-
-/// Which machines' sessions an orchestrator may see and drive (`machine:NAME` entries; none
-/// means every machine).
-#[derive(Debug, Clone, Default)]
-pub struct Scope {
-    machines: Vec<String>,
-}
-
-impl Scope {
-    pub fn parse(entries: &[String]) -> Result<Self> {
-        let machines = entries
-            .iter()
-            .map(|e| e.strip_prefix("machine:").map(str::to_owned).with_context(|| format!("invalid scope '{e}' (use machine:NAME)")))
-            .collect::<Result<_>>()?;
-        Ok(Self { machines })
-    }
-
-    /// Whether the machine called `name` is in scope.
-    pub fn admits(&self, name: &str) -> bool {
-        self.machines.is_empty() || self.machines.iter().any(|m| m == name)
-    }
-}

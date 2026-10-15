@@ -43,7 +43,7 @@
 - 他のセッションの承認待ち・質問・ターン終了をまとめて報告し、ユーザーの指示や承認を各セッションに送るオーケストレーター。オーケストレーター自身は代わりに判断しない。
 - 頼めば、指定したディレクトリで新しいセッションを起動し、最初の指示を渡す（確認なし）。
 - エージェントはClaude CodeかCodex。担当するマシン、モデル、人格、届け方は設定で変えられ、起動時に `KEY=VALUE` で一時的に上書きできる（例 `agent=codex`）。名前の違うオーケストレーターを複数動かせる。
-- どのマシンでも、そのマシンで `cq orchestrator start` すれば動く。マシンごとにオーケストレーターを置き、`scope` で自分のマシンだけを担当させることもできる。リモートのオーケストレーターとも、手元のboardからほかのセッションと同じように対話できる。オーケストレーター同士はマシンをまたいでも互いを報告しない。
+- どのマシンでも、そのマシンで `cq orchestrator start` すれば動く。マシンごとにオーケストレーターを置き、`scope` で自分のマシンだけを担当させることもできる。`scope` は報告するマシンを絞るだけで、オーケストレーターは頼めばどのマシンのセッションにも話しかけられる。設定は `cq orchestrator set` か、オーケストレーターに頼んで変えられ、報告に関わるもの（`scope`、`wake_on`、`batch_seconds`）は動いているオーケストレーターにもすぐ反映される。リモートのオーケストレーターとも、手元のboardからほかのセッションと同じように対話できる。オーケストレーター同士はマシンをまたいでも互いを報告しない。
 
 ### プラグイン
 
@@ -72,7 +72,7 @@
 | `cq machine remove MACHINE` (`rm`) | 登録を消す |
 | `cq daemon` | daemonを動かす（通常は自動で起動される） |
 | `cq daemon status \| stop \| restart` | daemonの状態（ローカルと各リモートマシン）、ローカルのdaemonの停止・再起動。止めてもセッションは動き続ける。リモートのdaemonはそのマシンで `cq daemon restart` する。プロトコルのバージョンが違うdaemonは停止の要求を受け付けないため、止められなかったときはそのPIDを表示して失敗する |
-| `cq mcp [--scope machine:NAME]… [--channel] [--worker]` | MCPサーバー（stdio）。`--channel` はClaude Codeのチャネルとしても動く。`--worker` はワーカー用（`list_sessions` / `get_turns` / `message` / `share_file` だけ） |
+| `cq mcp [--channel] [--worker]` | MCPサーバー（stdio）。全マシンのセッションを扱う。`--channel` はClaude Codeのチャネルとしても動く。`--worker` はワーカー用（`list_sessions` / `get_turns` / `message` / `share_file` だけ） |
 | `cq bridge` | 標準入出力をこのマシンのdaemonにつなぐ（`ssh HOST cq bridge` 用） |
 | `cq NAME …` | 組み込みにない名前は `cq-NAME …` を実行する（例 `cq orchestrator`、`cq board`） |
 
@@ -83,7 +83,8 @@
 | コマンド | 内容 |
 | --- | --- |
 | `cq orchestrator start [NAME] [KEY=VALUE]… [--detach] [-- エージェントの引数…]` | オーケストレーターを起動する（既定の名前は `orchestrator`）。`KEY=VALUE` は `NAME.toml` のキーをこの起動だけ上書きする（値はTOMLとして読み、読めなければ文字列。空の値は上書きしない）。同名のオーケストレーターが動いていれば何もしない。`--detach` は端末に付けずに起動する |
-| `cq orchestrator config [NAME]` | 設定ファイルのパスを出す（無ければ既定値で作る） |
+| `cq orchestrator show [NAME]` | 設定ファイルのパスと中身を出す（無ければ既定値で作る） |
+| `cq orchestrator set [NAME] KEY=VALUE…` | 設定を `NAME.toml` に保存する（値の読み方は `start` と同じ。空の値は既定に戻す。コメントは残る）。不正な値なら保存しない。動いているオーケストレーターには `scope`・`wake_on`・`batch_seconds` をすぐ反映し、それ以外は次の起動から効く |
 
 エイリアスの既定で `cq o` は `cq orchestrator` になる。
 
@@ -130,6 +131,7 @@
 | コマンド | プラグイン | 内容 |
 | --- | --- | --- |
 | `orchestrator.start` | orchestrator | オーケストレーターを起動する（引数 `name`、既定 `orchestrator`。`agent` は `claude` か `codex`、空なら設定のまま） |
+| `orchestrator.set` | orchestrator | 設定を1つ保存する（引数 `name` と `setting`（`KEY=VALUE`）。`cq orchestrator set` と同じ。boardのマシンのオーケストレーターが対象） |
 
 ## 設定
 
@@ -187,14 +189,14 @@ command = "-pane.close"     # "-" removes a default binding (all of its keys wit
 
 ### `~/.codequilt/orchestrators/NAME.toml`
 
-無ければ既定値で作られる。知らないキーはエラーになる。
+無ければ既定値で作られる。`NAME` はオーケストレーターの名前（既定 `orchestrator`、セッション名にもなる）。知らないキーはエラーになる。起動時の `KEY=VALUE` はその起動だけ、`cq orchestrator set` は保存する。
 
 | キー | 既定 | 内容 |
 | --- | --- | --- |
 | `agent` | `"claude"` | オーケストレーターのエージェント（`claude` か `codex`） |
 | `model` | Claudeは `"sonnet"`、Codexはユーザーの既定 | モデル。既定のときはファイルに書かれない |
 | `persona` | `"default"` | 人格（指示文）。`default` かファイルのパス |
-| `scope` | `[]` | 担当するマシン（`machine:名前`）。空なら全マシン |
+| `scope` | `[]` | 報告するマシン（`machine:名前`）。空なら全マシン。オーケストレーターのツールはこれによらず全マシンを扱う |
 | `delivery` | Claudeは `"channels"`、Codexは `"pty"` | 届け方。`channels` か `pty`。Codexは `pty` だけ。既定のときはファイルに書かれない |
 | `wake_on` | `["permission", "question", "stop"]` | オーケストレーターに届けるイベント |
 | `allow_approve` | `false` | `approve` ツールを確認なしで使わせる |

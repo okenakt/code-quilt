@@ -8,7 +8,7 @@ mod courier;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use config::{Delivery, OrchestratorConfig};
-use cq_protocol::{Launch, Message, SessionStatus};
+use cq_protocol::{InvokeCommand, Launch, Message, SessionStatus};
 use serde_json::json;
 
 #[derive(Parser)]
@@ -36,9 +36,16 @@ enum Cmd {
     #[command(hide = true)]
     Run { name: String, overrides: Vec<String> },
     /// Print the settings file of an orchestrator, creating it with defaults if missing.
-    Config {
+    Show {
         #[arg(default_value = "orchestrator")]
         name: String,
+    },
+    /// Save settings to the orchestrator's settings file (an empty value restores the default). A running
+    /// orchestrator takes `scope`, `wake_on` and `batch_seconds` at once, the others from its next start.
+    Set {
+        /// [NAME] KEY=VALUE…; the name defaults to `orchestrator`.
+        #[arg(required = true)]
+        args: Vec<String>,
     },
     /// Print the commands this plugin provides (read by `cq plugin`).
     #[command(hide = true)]
@@ -46,7 +53,7 @@ enum Cmd {
 }
 
 /// Commands for the palette and key bindings. `orchestrator.start` runs `cq-orchestrator start NAME --detach`;
-/// an empty agent keeps the one in the settings file.
+/// an empty agent keeps the one in the settings file. `orchestrator.set` saves one setting.
 fn manifest() -> serde_json::Value {
     serde_json::json!({
         "name": "orchestrator",
@@ -58,6 +65,14 @@ fn manifest() -> serde_json::Value {
                 { "name": "agent", "title": "Agent (claude / codex; empty: as in the settings)", "default": "" },
             ],
             "run": { "exec": ["start", "${name}", "agent=${agent}", "--detach"] },
+        }, {
+            "name": "orchestrator.set",
+            "title": "Orchestrator: Set",
+            "args": [
+                { "name": "name", "title": "Orchestrator name", "default": "orchestrator" },
+                { "name": "setting", "title": "KEY=VALUE (e.g. scope=[\"machine:wsl\"]; scope=[] for all machines)", "default": "" },
+            ],
+            "run": { "exec": ["set", "${name}", "${setting}"] },
         }],
     })
 }
@@ -66,9 +81,6 @@ fn manifest() -> serde_json::Value {
 /// need no confirmation, the persona and the model.
 fn agent_args(name: &str, cfg: &OrchestratorConfig) -> Result<Vec<String>> {
     let mut mcp_args = vec!["mcp".to_owned()];
-    for s in &cfg.scope {
-        mcp_args.extend(["--scope".to_owned(), s.clone()]);
-    }
     if cfg.delivery() == Delivery::Channels {
         mcp_args.push("--channel".into());
     }
@@ -81,8 +93,16 @@ fn agent_args(name: &str, cfg: &OrchestratorConfig) -> Result<Vec<String>> {
     if cfg.allow_approve {
         tools.push("approve");
     }
+    let persona = format!(
+        "{}\n\nYou are the orchestrator named \"{name}\". Updates cover the machines in your `scope` setting (empty: all \
+         machines); your tools still reach every machine. When the user asks to change which machines you get updates \
+         about, run `\"{}\" orchestrator set {name} scope='[\"machine:NAME\", ...]'` (`scope=[]` for all machines) in your \
+         shell. It is saved and applies at once.",
+        config::persona(cfg)?,
+        cq.display()
+    );
     if cfg.agent == "codex" {
-        return codex_args(cfg, &cq, &mcp_args, &tools);
+        return codex_args(cfg, &cq, &mcp_args, &tools, &persona);
     }
 
     let mcp = json!({ "mcpServers": { "cq": { "command": cq, "args": mcp_args } } });
@@ -95,7 +115,7 @@ fn agent_args(name: &str, cfg: &OrchestratorConfig) -> Result<Vec<String>> {
         "--mcp-config".to_owned(),
         mcp_path.to_string_lossy().into_owned(),
         "--append-system-prompt".to_owned(),
-        config::persona(cfg)?,
+        persona,
         "--allowedTools".to_owned(),
         tools.join(","),
     ];
@@ -125,7 +145,7 @@ fn toml_string(s: &str) -> String {
 }
 
 /// Codex takes the same profile as `-c` config overrides.
-fn codex_args(cfg: &OrchestratorConfig, cq: &std::path::Path, mcp_args: &[String], tools: &[&str]) -> Result<Vec<String>> {
+fn codex_args(cfg: &OrchestratorConfig, cq: &std::path::Path, mcp_args: &[String], tools: &[&str], persona: &str) -> Result<Vec<String>> {
     let args_toml: Vec<String> = mcp_args.iter().map(|a| toml_string(a)).collect();
     let mut set = vec![
         format!("mcp_servers.cq.command={}", toml_string(&cq.to_string_lossy().replace('\\', "/"))),
@@ -133,7 +153,7 @@ fn codex_args(cfg: &OrchestratorConfig, cq: &std::path::Path, mcp_args: &[String
         // Codex passes MCP servers only a few variables; the server needs to know its session.
         r#"mcp_servers.cq.env_vars=["CQ_SESSION_ID"]"#.to_owned(),
         r#"mcp_servers.cq.default_tools_approval_mode="prompt""#.to_owned(),
-        format!("developer_instructions={}", toml_string(&config::persona(cfg)?)),
+        format!("developer_instructions={}", toml_string(persona)),
     ];
     set.extend(tools.iter().map(|t| format!(r#"mcp_servers.cq.tools.{t}.approval_mode="approve""#)));
     let mut args: Vec<String> = set.into_iter().flat_map(|s| ["-c".to_owned(), s]).collect();
@@ -223,6 +243,54 @@ async fn start(args: Vec<String>, detach: bool, extra: Vec<String>) -> Result<i3
     Ok(status.code().unwrap_or(1))
 }
 
+/// `set`: saves the settings, then hands the courier's keys to the running courier, if any.
+async fn set(args: Vec<String>) -> Result<i32> {
+    let (name, assignments) = name_and_overrides(args);
+    if assignments.is_empty() {
+        bail!("give KEY=VALUE");
+    }
+    let (cfg, path) = config::set(&name, &assignments)?;
+    println!("saved {}", path.display());
+    let keys: Vec<&str> = assignments.iter().filter_map(|a| a.split_once('=')).map(|(k, _)| k).collect();
+    let (live, later): (Vec<&str>, Vec<&str>) = keys.into_iter().partition(|k| config::LIVE_KEYS.contains(k));
+    if !live.is_empty() {
+        let all = serde_json::to_value(&cfg)?;
+        let changes: serde_json::Map<_, _> = live.iter().map(|k| (k.to_string(), all[*k].clone())).collect();
+        if tell_courier(&name, changes.into()).await? {
+            println!("applied to the running orchestrator '{name}': {}", live.join(", "));
+        }
+    }
+    if !later.is_empty() {
+        println!("takes effect from the next start: {}", later.join(", "));
+    }
+    Ok(0)
+}
+
+/// Hands settings changes to the courier of `name`. Returns false if no courier is running.
+async fn tell_courier(name: &str, changes: serde_json::Value) -> Result<bool> {
+    let mut conn = cq_client::DaemonClient::open(false).await?;
+    let command = format!("orchestrator:{name}");
+    // The daemon sends the registered commands first.
+    loop {
+        match conn.msgs.recv().await.context("daemon connection closed")?? {
+            Message::CommandList(l) if l.iter().any(|c| c.name == command) => break,
+            Message::CommandList(_) => return Ok(false),
+            _ => {}
+        }
+    }
+    let inv = InvokeCommand { name: command, args: changes, id: Some(1), context: None };
+    conn.send(&Message::InvokeCommand(inv)).await?;
+    while let Some(msg) = conn.msgs.recv().await {
+        if let Message::CommandResult(r) = msg? {
+            if !r.ok {
+                bail!("could not reach the courier: {}", r.message);
+            }
+            return Ok(true);
+        }
+    }
+    bail!("daemon connection closed")
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -232,10 +300,11 @@ async fn main() {
             Ok((cfg, _)) => courier::run(&name, cfg).await.map(|()| 0),
             Err(e) => Err(e),
         },
-        Cmd::Config { name } => config::load(&name, &[]).map(|(_, p)| {
-            println!("{}", p.display());
+        Cmd::Show { name } => config::orchestrators_dir().and_then(|dir| config::read_or_create(&dir, &name)).map(|(text, path)| {
+            println!("# {}\n{}", path.display(), text.trim_end());
             0
         }),
+        Cmd::Set { args } => set(args).await,
         Cmd::Manifest => {
             println!("{}", manifest());
             Ok(0)

@@ -118,9 +118,6 @@ enum Cmd {
     },
     /// MCP server (stdio) exposing the sessions to an agent, e.g. an orchestrator.
     Mcp {
-        /// Limit to the sessions of a machine: `machine:ID` (repeatable).
-        #[arg(long)]
-        scope: Vec<String>,
         /// Also act as a Claude Code channel that orchestrators can push messages into.
         #[arg(long)]
         channel: bool,
@@ -359,8 +356,8 @@ async fn run(cmd: Cmd) -> Result<i32> {
             cli::usage(local, json).await?;
             Ok(0)
         }
-        Cmd::Mcp { scope, channel, worker } => {
-            mcp::run(cq_client::Scope::parse(&scope)?, channel, worker).await?;
+        Cmd::Mcp { channel, worker } => {
+            mcp::run(channel, worker).await?;
             Ok(0)
         }
         Cmd::Daemon { action } => {

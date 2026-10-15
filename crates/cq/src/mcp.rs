@@ -17,7 +17,6 @@ struct Server {
     model: Arc<Mutex<Model>>,
     approvals: Approvals,
     tx: mpsc::UnboundedSender<Message>,
-    scope: cq_client::Scope,
     /// Declare the Claude Code channel capability.
     channel: bool,
     /// Serve a worker session (only [`WORKER_TOOLS`]) rather than an orchestrator.
@@ -40,15 +39,15 @@ fn snippet(s: &str, n: usize) -> String {
 }
 
 impl Server {
-    fn visible(&self, m: &Model, s: &Session) -> bool {
-        self.scope.admits(m.machine_name(&s.machine)) && self.own.as_deref() != Some(&s.meta.id)
+    fn visible(&self, s: &Session) -> bool {
+        self.own.as_deref() != Some(&s.meta.id)
     }
 
     /// Resolves `machine:id`, a session name, or an id prefix to one visible session, returned
     /// with its `machine:id` key.
     fn resolve(&self, target: &str) -> Result<(Session, String)> {
         let m = self.model.lock().unwrap();
-        let live: Vec<&Session> = m.sessions.values().filter(|s| self.visible(&m, s) && s.activity != Activity::Exited).collect();
+        let live: Vec<&Session> = m.sessions.values().filter(|s| self.visible(s) && s.activity != Activity::Exited).collect();
         let (machine, rest) = match target.split_once(':') {
             Some((name, r)) => match cq_client::machine_id(&m.machines, name) {
                 Some(id) => (Some(id), r),
@@ -74,7 +73,7 @@ impl Server {
                 n => bail!("'{target}' matches {n} sessions; use machine:id"),
             }
         }
-        bail!("no running session in scope matches '{target}'")
+        bail!("no running session matches '{target}'")
     }
 
     fn describe(m: &Model, s: &Session) -> Value {
@@ -98,7 +97,7 @@ impl Server {
         let mut out: Vec<_> = m
             .sessions
             .values()
-            .filter(|s| self.visible(&m, s) && (include_exited || s.activity != Activity::Exited))
+            .filter(|s| self.visible(s) && (include_exited || s.activity != Activity::Exited))
             .collect();
         out.sort_by_key(|s| (s.machine.clone(), s.meta.started_at_ms));
         let machines: Vec<_> = m.machines.iter().map(|x| json!({ "name": x.name, "online": x.online })).collect();
@@ -179,9 +178,6 @@ impl Server {
         }
         let here_name = crate::machine::local()?.name;
         let machine_name = args.get("machine").and_then(Value::as_str).unwrap_or(&here_name);
-        if !self.scope.admits(machine_name) {
-            bail!("machine '{machine_name}' is outside this server's scope");
-        }
         let machine = crate::machine::id_of(machine_name)?;
         let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
         let mut conn = cq_client::DaemonClient::open(machine != here()).await?;
@@ -265,7 +261,7 @@ fn tools(worker: bool) -> Value {
         },
         {
             "name": "list_sessions",
-            "description": "List coding agent sessions in scope: machine, name, directory, state (working / idle / approval / exited), any pending permission prompt, and the start of the last prompt and reply.",
+            "description": "List coding agent sessions on all machines: machine, name, directory, state (working / idle / approval / exited), any pending permission prompt, and the start of the last prompt and reply.",
             "inputSchema": { "type": "object", "properties": { "include_exited": { "type": "boolean" } } }
         },
         {
@@ -372,7 +368,7 @@ async fn daemon_loop(
 
 /// Runs the MCP server on stdin/stdout. With `channel`, the server is also a Claude Code channel:
 /// invoking the desktop command [`channel_command`] for this session pushes a message into it.
-pub async fn run(scope: cq_client::Scope, channel: bool, worker: bool) -> Result<()> {
+pub async fn run(channel: bool, worker: bool) -> Result<()> {
     let own = std::env::var("CQ_SESSION_ID").ok();
     if channel && own.is_none() {
         bail!("--channel needs to run inside a CodeQuilt session (CQ_SESSION_ID is not set)");
@@ -393,7 +389,7 @@ pub async fn run(scope: cq_client::Scope, channel: bool, worker: bool) -> Result
     let channel_cfg = if channel { own.as_deref().map(|id| (channel_command(id), out_tx.clone())) } else { None };
     let approvals: Approvals = Arc::default();
     tokio::spawn(daemon_loop(model.clone(), approvals.clone(), rx, channel_cfg));
-    let server = Arc::new(Server { model, approvals, tx, scope, channel, worker, own });
+    let server = Arc::new(Server { model, approvals, tx, channel, worker, own });
 
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     while let Some(line) = lines.next_line().await? {

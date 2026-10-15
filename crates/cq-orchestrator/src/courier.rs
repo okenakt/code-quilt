@@ -1,7 +1,7 @@
 //! The courier (`cq-orchestrator run`): watches the sessions in the orchestrator's scope, gathers what needs
 //! the user's attention, and delivers it to the orchestrator session when the orchestrator is idle.
 
-use crate::config::{Delivery, OrchestratorConfig};
+use crate::config::{Delivery, OrchestratorConfig, Scope};
 use anyhow::{Result, bail};
 use cq_client::{Activity, Model, Session};
 use cq_protocol::{
@@ -111,8 +111,8 @@ fn find_orchestrator<'a>(model: &'a Model, name: &str) -> Option<&'a Session> {
 }
 
 /// Runs the courier until the orchestrator session exits.
-pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
-    let scope = cq_client::Scope::parse(&cfg.scope)?;
+pub async fn run(name: &str, mut cfg: OrchestratorConfig) -> Result<()> {
+    let mut scope = Scope::parse(&cfg.scope)?;
     let mut started = now_ms();
     let mut conn = cq_client::DaemonClient::open(true).await?;
     conn.send(&Message::ListSessions).await?;
@@ -129,7 +129,6 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
     let mut open: Vec<Item> = Vec::new();
     let mut first_pending: Option<Instant> = None;
     let mut inject_id = 0u64;
-    let wake = |w: &str| cfg.wake_on.iter().any(|x| x == w);
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     let give_up = Instant::now() + Duration::from_secs(300);
 
@@ -158,6 +157,17 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                         registered = conn.send(&Message::RegisterCommand(cmd)).await.is_ok();
                     }
                 }
+                // `cq-orchestrator set` changed settings this courier uses.
+                if let Message::InvokeCommand(inv) = &msg && inv.name == me {
+                    match cfg.apply(&inv.args).and_then(|()| Scope::parse(&cfg.scope)) {
+                        Ok(s) => {
+                            scope = s;
+                            eprintln!("settings changed: {}", inv.args);
+                        }
+                        Err(e) => eprintln!("ignored settings {}: {e:#}", inv.args),
+                    }
+                    continue;
+                }
                 let Some((machine, session, ev)) = model.apply(&msg) else { continue };
                 // History replayed on connect predates this courier; only live events count.
                 if ev.received_at_ms + 1000 < started {
@@ -177,7 +187,7 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                     (_, Some("permission_prompt")) => {
                         let prompt = ev.payload.get("prompt").cloned().unwrap_or(Value::Null);
                         let is_dialog = prompt.get("kind").and_then(Value::as_str) == Some("dialog");
-                        wake(if is_dialog { "question" } else { "permission" }).then(|| item(ItemKind::Prompt { prompt }))
+                        cfg.wakes_on(if is_dialog { "question" } else { "permission" }).then(|| item(ItemKind::Prompt { prompt }))
                     }
                     (_, Some("permission_resolved")) => {
                         pending.retain(|i| !(i.key == key && matches!(i.kind, ItemKind::Prompt { .. })));
@@ -186,7 +196,7 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                     }
                     (Some("Stop"), _) => {
                         let reply = ev.payload.get("last_assistant_message").and_then(Value::as_str).unwrap_or_default();
-                        (wake("stop") && !reply.trim().is_empty()).then(|| item(ItemKind::Done { reply: reply.to_owned() }))
+                        (cfg.wakes_on("stop") && !reply.trim().is_empty()).then(|| item(ItemKind::Done { reply: reply.to_owned() }))
                     }
                     (Some("UserPromptSubmit"), _) => {
                         // The session got its answer (from the user directly or via the orchestrator).

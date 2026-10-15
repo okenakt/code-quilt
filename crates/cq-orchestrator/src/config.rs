@@ -61,29 +61,59 @@ pub fn orchestrators_dir() -> Result<PathBuf> {
     Ok(cq_protocol::local::state_root()?.join("orchestrators"))
 }
 
+/// The keys the courier uses; `set` applies them to a running orchestrator at once.
+pub const LIVE_KEYS: [&str; 3] = ["scope", "wake_on", "batch_seconds"];
+
+/// Splits `KEY=VALUE`. The value is read as TOML, else as a plain string; an empty value is `None`.
+fn assignment(a: &str) -> Result<(&str, Option<toml_edit::Value>)> {
+    let (key, value) = a.split_once('=').with_context(|| format!("expected KEY=VALUE, got '{a}'"))?;
+    Ok((key, (!value.is_empty()).then(|| value.parse().unwrap_or_else(|_| value.into()))))
+}
+
 /// Loads `<name>.toml` (writing the defaults first if it does not exist) and applies `KEY=VALUE`
-/// overrides on top without saving them. A value is read as TOML, else as a plain string; an empty
-/// value leaves the key as it is.
+/// overrides on top without saving them. An empty value leaves the key as it is.
 pub fn load(name: &str, overrides: &[String]) -> Result<(OrchestratorConfig, PathBuf)> {
-    let (text, path) = read_or_create(name)?;
-    let mut table: toml::Table = toml::from_str(&text).with_context(|| format!("invalid {}", path.display()))?;
+    let (mut doc, path) = read(&orchestrators_dir()?, name)?;
     for o in overrides {
-        let (key, value) = o.split_once('=').with_context(|| format!("expected KEY=VALUE, got '{o}'"))?;
-        if value.is_empty() {
-            continue;
+        if let (key, Some(value)) = assignment(o)? {
+            doc[key] = toml_edit::Item::Value(value);
         }
-        let value = toml::from_str::<toml::Table>(&format!("v = {value}"))
-            .ok()
-            .and_then(|mut t| t.remove("v"))
-            .unwrap_or_else(|| toml::Value::String(value.to_owned()));
-        table.insert(key.to_owned(), value);
     }
-    let cfg: OrchestratorConfig = table.try_into().with_context(|| format!("invalid settings for orchestrator '{name}'"))?;
-    match (cfg.agent.as_str(), cfg.delivery) {
-        ("claude", _) | ("codex", None | Some(Delivery::Pty)) => Ok((cfg, path)),
-        ("codex", Some(Delivery::Channels)) => bail!("a Codex orchestrator supports only delivery = \"pty\""),
-        (other, _) => bail!("unknown agent '{other}' (claude or codex)"),
+    Ok((parse(name, &doc)?, path))
+}
+
+/// Saves `KEY=VALUE` assignments to `<name>.toml`, keeping its comments. An empty value removes the
+/// key, so the default applies. Nothing is saved unless the result is valid.
+pub fn set(name: &str, assignments: &[String]) -> Result<(OrchestratorConfig, PathBuf)> {
+    set_in(&orchestrators_dir()?, name, assignments)
+}
+
+fn set_in(dir: &std::path::Path, name: &str, assignments: &[String]) -> Result<(OrchestratorConfig, PathBuf)> {
+    let (mut doc, path) = read(dir, name)?;
+    for a in assignments {
+        match assignment(a)? {
+            (key, Some(value)) => doc[key] = toml_edit::Item::Value(value),
+            (key, None) => {
+                doc.remove(key);
+            }
+        }
     }
+    let cfg = parse(name, &doc)?;
+    std::fs::write(&path, doc.to_string()).with_context(|| format!("write {}", path.display()))?;
+    Ok((cfg, path))
+}
+
+fn read(dir: &std::path::Path, name: &str) -> Result<(toml_edit::DocumentMut, PathBuf)> {
+    let (text, path) = read_or_create(dir, name)?;
+    let doc = text.parse().with_context(|| format!("invalid {}", path.display()))?;
+    Ok((doc, path))
+}
+
+fn parse(name: &str, doc: &toml_edit::DocumentMut) -> Result<OrchestratorConfig> {
+    let cfg: OrchestratorConfig =
+        toml::from_str(&doc.to_string()).with_context(|| format!("invalid settings for orchestrator '{name}'"))?;
+    cfg.check()?;
+    Ok(cfg)
 }
 
 impl OrchestratorConfig {
@@ -91,15 +121,59 @@ impl OrchestratorConfig {
     pub fn delivery(&self) -> Delivery {
         self.delivery.unwrap_or(if self.agent == "claude" { Delivery::Channels } else { Delivery::Pty })
     }
+
+    pub fn wakes_on(&self, event: &str) -> bool {
+        self.wake_on.iter().any(|w| w == event)
+    }
+
+    fn check(&self) -> Result<()> {
+        Scope::parse(&self.scope)?;
+        match (self.agent.as_str(), self.delivery) {
+            ("claude", _) | ("codex", None | Some(Delivery::Pty)) => Ok(()),
+            ("codex", Some(Delivery::Channels)) => bail!("a Codex orchestrator supports only delivery = \"pty\""),
+            (other, _) => bail!("unknown agent '{other}' (claude or codex)"),
+        }
+    }
+
+    /// Takes new values for some keys (a JSON object, as `set` sends to the courier).
+    pub fn apply(&mut self, changes: &serde_json::Value) -> Result<()> {
+        let mut v = serde_json::to_value(&*self)?;
+        if let (Some(v), Some(changes)) = (v.as_object_mut(), changes.as_object()) {
+            v.extend(changes.clone());
+        }
+        let cfg: Self = serde_json::from_value(v)?;
+        cfg.check()?;
+        *self = cfg;
+        Ok(())
+    }
+}
+
+/// Which machines' sessions are reported (`machine:NAME` entries; none means every machine).
+pub struct Scope {
+    machines: Vec<String>,
+}
+
+impl Scope {
+    pub fn parse(entries: &[String]) -> Result<Self> {
+        let machines = entries
+            .iter()
+            .map(|e| e.strip_prefix("machine:").map(str::to_owned).with_context(|| format!("invalid scope '{e}' (use machine:NAME)")))
+            .collect::<Result<_>>()?;
+        Ok(Self { machines })
+    }
+
+    /// Whether the machine called `name` is in scope.
+    pub fn admits(&self, name: &str) -> bool {
+        self.machines.is_empty() || self.machines.iter().any(|m| m == name)
+    }
 }
 
 /// The settings file's text, writing the defaults first if it does not exist.
-fn read_or_create(name: &str) -> Result<(String, PathBuf)> {
+pub fn read_or_create(dir: &std::path::Path, name: &str) -> Result<(String, PathBuf)> {
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         bail!("orchestrator names may only contain letters, digits, '-' and '_'");
     }
-    let dir = orchestrators_dir()?;
-    std::fs::create_dir_all(&dir)?;
+    std::fs::create_dir_all(dir)?;
     let path = dir.join(format!("{name}.toml"));
     if !path.exists() {
         std::fs::write(&path, toml::to_string_pretty(&OrchestratorConfig::default())?)?;
@@ -140,3 +214,37 @@ name, with a short name and their instruction as the prompt.
 
 Use `list_sessions` and `get_turns` when you need more context. Do not do the sessions' work \
 yourself: you coordinate, they code.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_saves_valid_settings_and_keeps_comments() {
+        let dir = std::env::temp_dir().join(format!("cq-orchestrator-config-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let set = |a: &[&str]| set_in(&dir, "o", &a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+
+        set(&[]).unwrap();
+        let path = dir.join("o.toml");
+        std::fs::write(&path, format!("# mine\n{}", std::fs::read_to_string(&path).unwrap())).unwrap();
+        let (cfg, _) = set(&[r#"scope=["machine:wsl"]"#, "batch_seconds=1"]).unwrap();
+        assert_eq!((cfg.scope, cfg.batch_seconds), (vec!["machine:wsl".to_owned()], 1.0));
+
+        // Invalid results are not saved.
+        assert!(set(&["scope=wsl"]).is_err());
+        assert!(set(&["nope=1"]).is_err());
+        // An empty value restores the default.
+        let (cfg, _) = set(&["batch_seconds="]).unwrap();
+        assert_eq!(cfg.batch_seconds, 2.5);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# mine\n") && text.contains(r#"scope = ["machine:wsl"]"#), "{text}");
+
+        let mut cfg = cfg;
+        cfg.apply(&serde_json::json!({ "scope": [], "wake_on": ["stop"] })).unwrap();
+        assert!(cfg.scope.is_empty() && cfg.wakes_on("stop") && !cfg.wakes_on("permission"));
+        assert!(cfg.apply(&serde_json::json!({ "scope": ["wsl"] })).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

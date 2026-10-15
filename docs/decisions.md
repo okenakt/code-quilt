@@ -613,3 +613,12 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 - セッションに印を持たせた。`SessionMeta` の `orchestrator` をcq hostが保存し、courierはどのマシンのセッションでもこれで判定する。起動要求の `no_mcp` は使っていたのがオーケストレーターだけだったので `orchestrator` に置き換え、オーケストレーターにはワーカー用のMCPを入れない。`cq claude/codex` には `--cq-orchestrator` を足した（`--cq-no-mcp` は残す）。再開したセッションは印を引き継ぐ。
 - **検討した選択肢**：courierのコマンドを他のマシンにも中継する案（コマンドはそのデスクトップのものという方針を崩す）。`scope` が重ならないよう設定する運用で避ける案（既定の全マシン担当のままでループする）。
 - daemonのプロトコルのバージョンを8に上げた。印の無い（更新前に起動した）オーケストレーターは、起動し直すまで報告される。
+
+## 79. `scope` は報告の範囲だけにし、設定は `cq orchestrator set` で変える
+
+- `scope` はcourierの報告の範囲だけでなく、オーケストレーターのMCP（`cq mcp --scope`）にも渡り、担当外のマシンのセッションは見ることも話しかけることもできなかった。マシンごとにオーケストレーターを置くと、WSLのオーケストレーターからWindowsのセッションが一切見えない。
+- `scope` は報告するマシンだけを絞り、オーケストレーターのツールは全マシンを扱うようにした。`cq mcp --scope` は使う場所がなくなったので消し、`Scope` はcq-clientからcq-orchestratorに移した。
+- 設定を変えるのは `NAME.toml` を書き換えて起動し直すしかなかった。`cq orchestrator set [NAME] KEY=VALUE…` で保存し（`toml_edit` でコメントを保つ。値の読み方は `start` の上書きと同じで、空の値は既定に戻す）、courierが使うキー（`scope`、`wake_on`、`batch_seconds`）は動いているcourierにその場で渡す。courierが登録しているコマンド `orchestrator:NAME` の呼び出しで渡すので、新しい通信の仕組みは要らない。設定のパスを出すだけだった `cq orchestrator config` は、パスと中身を出す `cq orchestrator show` にした。パレットには `orchestrator.set` を足した。
+- コマンドの形は、`cq machine set` にそろえて動詞のサブコマンド（`show` / `set`）にした。`KEY=VALUE` の書き方は `start` にそろえ、`start` はその起動だけ、`set` は保存、という対にした。
+- リモートのオーケストレーターの設定はパレットからは変えられない（パレットのコマンドはboardのマシンで動く）。オーケストレーターには人格の後に自分の名前と `cq orchestrator set` の使い方を伝え、会話で頼めば自分のマシンで実行できるようにした。
+- **検討した選択肢**：MCPに `set_scope` ツールを足す案（ツールとcourierへの伝え方が増える。実体はサブコマンドにして、オーケストレーターはそれを実行すればよい）。`scope` 専用のサブコマンド（`cq orchestrator scope --set wsl,pc`）の案（打ちやすいが、キーごとにコマンドが増える）。`cq orchestrator config` を広げて `KEY=VALUE` を保存し、`cq machine` も `config` にそろえる案（`machine` の `add` / `remove` / `list` と動詞・名詞が混ざる）。変更を保存せずその起動の間だけにする案（ユーザーは保存を望んだ）。パレットの `orchestrator.start` に `scope` の欄を足す案（起動後に `set` で変えられる）。
