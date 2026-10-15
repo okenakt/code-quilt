@@ -241,7 +241,7 @@ export const App = () => {
         }
         case "daemon.restart":
           restartDaemon()
-            .then(() => showToast(true, "Restarting the daemon"))
+            .then(() => showToast(true, "Restarted the daemon"))
             .catch((e: unknown) => showToast(false, `daemon.restart: ${String(e)}`));
           return;
         case "session.end":

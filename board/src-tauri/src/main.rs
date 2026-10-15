@@ -100,9 +100,11 @@ async fn invoke_command(hub: State<'_, HubState>, name: String, args: serde_json
     hub.invoke_command(name, args).await.map_err(err)
 }
 
+/// Stops the local daemon and starts a new one; the board's own connection follows by itself.
 #[tauri::command]
-fn restart_daemon(hub: State<'_, HubState>) -> Result<(), String> {
-    hub.restart_daemon().map_err(err)
+async fn restart_daemon() -> Result<(), String> {
+    cq_client::stop_daemon().await.map_err(err)?;
+    cq_client::connect_daemon().await.map(drop).map_err(err)
 }
 
 #[tauri::command]

@@ -122,7 +122,7 @@
 | `pane.close` | ペインを閉じる（セッションはデタッチ。空のペイン1つだけのタブではタブを閉じる） | Ctrl+Shift+W |
 | `pane.zoom` | ペインを最大化 / 戻す | Ctrl+Shift+Z |
 | `session.end` / `session.pin` / `session.copyId` | フォーカス中のセッションを終了（確認のモーダルを出す） / ピン留めの切り替え / idのコピー | なし |
-| `daemon.restart` | ローカルのdaemonを再起動 | なし |
+| `daemon.restart` | ローカルのdaemonを再起動し、結果をトーストで知らせる（止められなかったときは `cq daemon restart` と同じくPIDと理由を出す） | なし |
 
 ### プラグインのコマンド
 

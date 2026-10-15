@@ -552,3 +552,7 @@ M0〜M4（音声入力を除く）の実装中に決めたこと。「仮」は�
 - **`login_shell` をやめてOSで決める**：登録時に調べたOSがUnixなら常に `sh -lc` 経由で `cq bridge` を起動し、Windowsなら直接起動する。毎回フラグで指定させる理由がないため。
 - **つながらない理由を見せる**：sshの標準エラーを捨てていたため、オフラインの理由が「disconnected」としか出なかった。最後の1行を保持して `MachineInfo` の `error` に入れる。
 - `MachineInfo` の `label` を `name` にしたので、daemonのプロトコルのバージョンを4に上げた。
+
+## 71. boardからのdaemonの再起動の結果を出す
+
+- boardの `daemon.restart` は自分の接続に `Shutdown` を流すだけで結果を待たず、プロトコルの違うdaemonにつながらないときは要求が黙って捨てられ、成功したのか分からなかった。`cq daemon restart` の停止を待ち、止まらなければPIDと理由を付けて失敗する処理をcq-clientの `stop_daemon` に移し、CLIとboardの両方から使う。boardは再起動が終わってから成功か失敗をトーストで出す。

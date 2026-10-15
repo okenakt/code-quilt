@@ -274,6 +274,51 @@ pub async fn connect_daemon() -> Result<BoxStream> {
     local::connect(&endpoint, Duration::from_secs(5)).await
 }
 
+/// Whether the local daemon accepts connections.
+pub async fn daemon_running() -> Result<bool> {
+    Ok(local::connect(&local::daemon_endpoint()?, Duration::ZERO).await.is_ok())
+}
+
+/// The process id of the local daemon, asked from the OS through its endpoint.
+#[cfg(windows)]
+async fn daemon_pid() -> Option<u32> {
+    use std::os::windows::io::AsRawHandle;
+    let pipe = tokio::net::windows::named_pipe::ClientOptions::new().open(local::daemon_endpoint().ok()?).ok()?;
+    let mut pid = 0;
+    let ok = unsafe { windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId(pipe.as_raw_handle(), &mut pid) };
+    (ok != 0).then_some(pid)
+}
+
+/// The process id of the local daemon, asked from the OS through its endpoint.
+#[cfg(unix)]
+async fn daemon_pid() -> Option<u32> {
+    let sock = tokio::net::UnixStream::connect(local::daemon_endpoint().ok()?).await.ok()?;
+    Some(sock.peer_cred().ok()?.pid()? as u32)
+}
+
+/// Stops the local daemon and waits until it is gone; false when it was not running. Sessions
+/// keep running. Fails with the daemon's pid when it does not exit.
+pub async fn stop_daemon() -> Result<bool> {
+    if !daemon_running().await? {
+        return Ok(false);
+    }
+    let mut conn = DaemonClient::open(false).await?;
+    conn.send(&Message::Shutdown).await?;
+    for _ in 0..50 {
+        if !daemon_running().await? {
+            return Ok(true);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // A daemon of another protocol version refuses the connection before the request.
+    let reason = match conn.msgs.try_recv() {
+        Ok(Ok(Message::Error(e))) => e,
+        _ => "it did not exit".to_owned(),
+    };
+    let pid = daemon_pid().await.map_or_else(|| "unknown pid".to_owned(), |p| format!("pid {p}"));
+    anyhow::bail!("could not stop the local daemon ({pid}): {reason}; stop that process yourself")
+}
+
 /// A hub connection to the local daemon.
 pub struct DaemonClient {
     pub msgs: tokio::sync::mpsc::UnboundedReceiver<Result<Message>>,

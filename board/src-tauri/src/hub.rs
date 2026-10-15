@@ -177,11 +177,6 @@ impl Hub {
         self.routed(machine, session, Message::Approve(cq_protocol::Approve { option, prompt_id }))
     }
 
-    /// Stops the local daemon; the board reconnects and starts a new one.
-    pub fn restart_daemon(&self) -> Result<()> {
-        self.send(Message::Shutdown)
-    }
-
     /// Commands known to the daemon (plugin manifests and running clients).
     pub fn commands(&self) -> Vec<CommandInfo> {
         self.cache.lock().unwrap().commands.clone()

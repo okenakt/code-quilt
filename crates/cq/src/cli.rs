@@ -295,27 +295,6 @@ pub async fn run_command(name: &str, args: &[String]) -> Result<i32> {
     Ok(if r.ok { 0 } else { 1 })
 }
 
-async fn local_daemon_running() -> Result<bool> {
-    Ok(cq_protocol::local::connect(&cq_protocol::local::daemon_endpoint()?, Duration::ZERO).await.is_ok())
-}
-
-/// The process id of the local daemon, asked from the OS through its endpoint.
-#[cfg(windows)]
-async fn daemon_pid() -> Option<u32> {
-    use std::os::windows::io::AsRawHandle;
-    let pipe = tokio::net::windows::named_pipe::ClientOptions::new().open(cq_protocol::local::daemon_endpoint().ok()?).ok()?;
-    let mut pid = 0;
-    let ok = unsafe { windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId(pipe.as_raw_handle(), &mut pid) };
-    (ok != 0).then_some(pid)
-}
-
-/// The process id of the local daemon, asked from the OS through its endpoint.
-#[cfg(unix)]
-async fn daemon_pid() -> Option<u32> {
-    let sock = tokio::net::UnixStream::connect(cq_protocol::local::daemon_endpoint().ok()?).await.ok()?;
-    Some(sock.peer_cred().ok()?.pid()? as u32)
-}
-
 /// Waits until every machine is reachable or failed, and returns the latest list.
 async fn settled_machines(conn: &mut cq_client::DaemonClient, limit: Duration) -> Vec<cq_protocol::MachineInfo> {
     let deadline = tokio::time::Instant::now() + limit;
@@ -333,7 +312,7 @@ async fn settled_machines(conn: &mut cq_client::DaemonClient, limit: Duration) -
 
 /// `cq daemon status`: the local daemon and every registered machine.
 pub async fn daemon_status() -> Result<()> {
-    if !local_daemon_running().await? {
+    if !cq_client::daemon_running().await? {
         println!("{LOCAL_MACHINE:<12} not running");
         return Ok(());
     }
@@ -347,30 +326,13 @@ pub async fn daemon_status() -> Result<()> {
 
 /// `cq daemon stop|restart`: the local daemon. Sessions keep running either way.
 pub async fn daemon_stop(restart: bool) -> Result<()> {
-    if local_daemon_running().await? {
-        let mut conn = cq_client::DaemonClient::open(false).await?;
-        conn.send(&Message::Shutdown).await?;
-        for _ in 0..50 {
-            if !local_daemon_running().await? {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        if local_daemon_running().await? {
-            // A daemon of another protocol version refuses the connection before the request.
-            let reason = match conn.msgs.try_recv() {
-                Ok(Ok(Message::Error(e))) => e,
-                _ => "it did not exit".to_owned(),
-            };
-            let pid = daemon_pid().await.map_or_else(|| "unknown pid".to_owned(), |p| format!("pid {p}"));
-            bail!("could not stop the local daemon ({pid}): {reason}; stop that process yourself");
-        }
+    if cq_client::stop_daemon().await? {
         println!("stopped the local daemon");
     } else {
         println!("the local daemon is not running");
     }
     if restart {
-        drop(cq_client::DaemonClient::open(false).await?);
+        drop(cq_client::connect_daemon().await?);
         println!("started the local daemon");
     }
     Ok(())
