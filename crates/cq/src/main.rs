@@ -290,7 +290,7 @@ async fn run(cmd: Cmd) -> Result<i32> {
             Ok(0)
         }
         Cmd::Inject { target, text, submit, quiet_ms } => {
-            let inj = cq_protocol::Inject { id: session::now_ms(), text, submit, quiet_ms };
+            let inj = cq_protocol::Inject { id: session::now_ms(), text, submit, quiet_ms, from: None };
             let id = cli::session_op(&target, cq_protocol::Message::Inject(inj), "inject_queued").await?;
             println!("queued for {id}; it is typed once the session is idle");
             Ok(0)

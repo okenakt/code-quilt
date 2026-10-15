@@ -17,7 +17,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Version of the daemon protocol (machine-tagged relay through `cq daemon`). Versioned
 /// separately so running hosts stay reachable when only the daemon protocol changes.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 6;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 7;
 
 /// Upper bound for a single frame, to reject corrupted or hostile length prefixes.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -195,6 +195,25 @@ pub struct Inject {
     /// How long terminal input must have been quiet before injecting.
     #[serde(default = "default_quiet_ms")]
     pub quiet_ms: u64,
+    /// The session this is a message from. The receiving daemon puts a `[from …]` line in front,
+    /// naming the sender as the receiving machine knows it.
+    #[serde(default)]
+    pub from: Option<SessionRef>,
+}
+
+/// A daemon asking the machine a message came from what it calls that message's sender.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Names {
+    pub id: u64,
+    pub sender: SessionRef,
+}
+
+/// Answer to [`Names`]: what the answering machine knows, if anything.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NamesReply {
+    pub id: u64,
+    pub machine: Option<String>,
+    pub session: Option<String>,
 }
 
 fn default_quiet_ms() -> u64 {
@@ -462,6 +481,10 @@ pub enum Message {
     Upstream { conn: u64, inner: Box<Message> },
     /// Remote daemon to its upstream: client `conn` went away.
     UpstreamClose(u64),
+    /// Between daemons, back along the way a message came: who sent it?
+    Names(Names),
+    /// Answer to [`Message::Names`].
+    NamesReply(NamesReply),
 }
 
 mod kind {
@@ -491,6 +514,8 @@ mod kind {
     pub const FILE_CONTENT: u8 = 0x3d;
     pub const UPSTREAM: u8 = 0x50;
     pub const UPSTREAM_CLOSE: u8 = 0x51;
+    pub const NAMES: u8 = 0x52;
+    pub const NAMES_REPLY: u8 = 0x53;
     pub const SHARE_FILE: u8 = 0x26;
     pub const INJECT: u8 = 0x23;
     pub const RENAME: u8 = 0x24;
@@ -560,6 +585,8 @@ impl Message {
             Message::MachineList(v) => (kind::MACHINE_LIST, serde_json::to_vec(v)?),
             Message::Launch(v) => (kind::LAUNCH, serde_json::to_vec(v)?),
             Message::Resume(v) => (kind::RESUME, serde_json::to_vec(v)?),
+            Message::Names(v) => (kind::NAMES, serde_json::to_vec(v)?),
+            Message::NamesReply(v) => (kind::NAMES_REPLY, serde_json::to_vec(v)?),
             Message::Launched(v) => (kind::LAUNCHED, serde_json::to_vec(v)?),
             Message::ListDir(v) => (kind::LIST_DIR, serde_json::to_vec(v)?),
             Message::DirList(v) => (kind::DIR_LIST, serde_json::to_vec(v)?),
@@ -629,6 +656,8 @@ impl Message {
             kind::MACHINE_LIST => Message::MachineList(serde_json::from_slice(&payload)?),
             kind::LAUNCH => Message::Launch(serde_json::from_slice(&payload)?),
             kind::RESUME => Message::Resume(serde_json::from_slice(&payload)?),
+            kind::NAMES => Message::Names(serde_json::from_slice(&payload)?),
+            kind::NAMES_REPLY => Message::NamesReply(serde_json::from_slice(&payload)?),
             kind::LAUNCHED => Message::Launched(serde_json::from_slice(&payload)?),
             kind::LIST_DIR => Message::ListDir(serde_json::from_slice(&payload)?),
             kind::DIR_LIST => Message::DirList(serde_json::from_slice(&payload)?),

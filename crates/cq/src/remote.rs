@@ -235,6 +235,8 @@ async fn relay(
                     Message::UpstreamClose(conn) => {
                         proxies.remove(&conn);
                     }
+                    // Who sent a message that came from here, asked by the remote daemon it went to.
+                    Message::Names(q) => write_message(&mut wr, &Message::NamesReply(crate::daemon::answer_names(&q))).await?,
                     msg if desktop_only(&msg) || matches!(msg, Message::MachineList(_)) => {}
                     msg => {
                         let _ = out.send(msg);
@@ -261,8 +263,8 @@ fn desktop_only(msg: &Message) -> bool {
     matches!(msg, Message::Focus(_) | Message::CommandList(_) | Message::InvokeCommand(_) | Message::CommandResult(_))
 }
 
-/// Requests a remote machine's client may make of this daemon: seeing and driving sessions, not
-/// stopping the daemon or acting for this desktop.
+/// What a remote machine's client may send this daemon: requests that see and drive sessions
+/// (not stopping the daemon or acting for this desktop), and answers to this daemon's questions.
 fn serves_remote(msg: &Message) -> bool {
     matches!(
         msg,
@@ -274,6 +276,7 @@ fn serves_remote(msg: &Message) -> bool {
             | Message::Resume(_)
             | Message::ListDir(_)
             | Message::ReadFile(_)
+            | Message::NamesReply(_)
     )
 }
 

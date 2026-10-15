@@ -124,12 +124,10 @@ impl Server {
     fn message(&self, args: &Value) -> Result<Value> {
         let (s, key) = self.resolve(str_arg(args, "session")?)?;
         let text = str_arg(args, "text")?;
-        let from = {
-            let m = self.model.lock().unwrap();
-            let own = self.own.as_deref().and_then(|id| m.sessions.get(&(here().to_owned(), id.to_owned())));
-            own.map_or_else(|| "outside CodeQuilt".to_owned(), |o| format!("{} ({})", o.label(), m.key(o)))
-        };
-        let inject = cq_protocol::Inject { id: crate::session::now_ms(), text: format!("[from {from}] {text}"), submit: true, quiet_ms: 3000 };
+        // Only ids travel; the receiving machine writes the [from …] line with the names it knows.
+        let from = self.own.clone().map(|session| cq_protocol::SessionRef { machine: here().to_owned(), session });
+        let text = if from.is_some() { text.to_owned() } else { format!("[from outside CodeQuilt]\n{text}") };
+        let inject = cq_protocol::Inject { id: crate::session::now_ms(), text, submit: true, quiet_ms: 3000, from };
         self.tx
             .send(Message::Routed { machine: s.machine.clone(), session: s.meta.id.clone(), inner: Box::new(Message::Inject(inject)) })
             .map_err(|_| anyhow!("daemon connection closed"))?;
@@ -203,7 +201,7 @@ impl Server {
             .map_err(|_| anyhow!("the session did not start within 30s"))??;
         let mut out = json!({ "session": format!("{machine_name}:{session}"), "name": name });
         if let Some(prompt) = args.get("prompt").and_then(Value::as_str) {
-            let inject = cq_protocol::Inject { id: crate::session::now_ms(), text: prompt.to_owned(), submit: true, quiet_ms: 3000 };
+            let inject = cq_protocol::Inject { id: crate::session::now_ms(), text: prompt.to_owned(), submit: true, quiet_ms: 3000, from: None };
             conn.send(&Message::Routed { machine: machine.clone(), session: session.clone(), inner: Box::new(Message::Inject(inject)) }).await?;
             let queued = async {
                 while let Some(msg) = conn.msgs.recv().await {

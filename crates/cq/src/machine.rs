@@ -234,9 +234,14 @@ fn known() -> Result<Vec<(String, String)>> {
     Ok(std::iter::once((me.id, me.name)).chain(load().into_iter().map(|m| (m.id, m.name))).collect())
 }
 
+/// What this machine calls machine `id`, if it knows it.
+pub fn known_name(id: &str) -> Option<String> {
+    known().ok()?.into_iter().find(|(i, _)| i == id).map(|(_, n)| n)
+}
+
 /// What this machine calls machine `id` (the id itself when it does not know it).
 pub fn name_of(id: &str) -> String {
-    known().ok().and_then(|k| k.into_iter().find(|(i, _)| i == id)).map_or_else(|| id.to_owned(), |(_, n)| n)
+    known_name(id).unwrap_or_else(|| id.to_owned())
 }
 
 /// The id of the machine this machine calls `name`.

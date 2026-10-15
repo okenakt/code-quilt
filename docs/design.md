@@ -128,6 +128,15 @@ sequenceDiagram
 - 上流がいないときは、リモートのクライアントには自分のマシン（と自分が登録したマシン）だけを見せ、上流から見えていたマシンはオフラインにする。上流がつながると開き直す。クライアントが去ったら `UpstreamClose` で代理を閉じる。
 - daemonは上流の一覧を持たず、つながっている上流の接続（とそれに頼むクライアントの返事の行き先）だけを覚える。
 
+### メッセージの送信元
+
+- 送る側は名前を付けない。`Inject` の `from` に送信元のマシンidとセッションidだけを載せる。
+- 受け取ったマシンのdaemonが、cq hostに渡す前に `[from セッション名 (マシン名:セッションid)]` の行を付ける（名前の無いセッションは `[from マシン名:セッションid]`）。名前は受け取ったマシンでの呼び方にする。
+  1. 自分が持っている情報：マシン名は `config.toml`（自分の `name` と `[[machines]]`）、セッション名は自分のマシンのセッションなら `sessions/`。
+  2. 足りなければ、メッセージが届いた接続を逆にたどって送信元のマシンに `Names` で聞く。送信元のdaemonは自分が持っている情報から答える（マシン名は自分の名前）。上流を通って届いたものは `Upstream` に包んで返す。
+  3. 3秒で答えがなければidを出す。
+- daemonは名前を覚えず、メッセージを受けるたびにその場で読むか聞く。
+
 ### プロトコルと安全性
 
 - メッセージは `[u32 長さ][u8 種類][本体]` のフレーム。セッション単位では、ハンドシェイク、画面スナップショット、以降は出力・入力・リサイズ・入力権・イベントと、操作（承認・注入・改名・終了）。daemon経由では、どのマシンのどのセッションかを付けて（`Routed`）中継する。daemon宛ての要求（起動、再開、ディレクトリの一覧、共有ファイルの読み出し）はidを持ち、応答か `RequestFailed` が同じidで返る。ファイルの中身（`FileContent`）はJSONにせず、idに続けて生のバイト列で送る。
@@ -150,7 +159,7 @@ sequenceDiagram
 
 - Claude Codeは `claude --settings ~/.codequilt/claude.json` で起動し、hooksとstatusLineだけを注入する。`~/.claude` 配下には書き込まない。
 - Codexは `-c hooks.<Event>=[...]` で同じhooksを渡す。
-- **セッション同士のメッセージ**：cqで起動したセッションには、ワーカー用のcqのMCP（`cq mcp --worker`）を入れる。Claudeには `--mcp-config ~/.codequilt/worker.mcp.json` と `--allowedTools`、Codexには `-c mcp_servers.cq.*` とツールごとの `approval_mode = "approve"` で渡す。ワーカーが使えるのは `list_sessions` / `get_turns` / `message` / `share_file` だけで、人に代わる入力（`send`）・承認・起動はオーケストレーターに残す。`message` は相手のアイドル時の注入の待ち行列に入れ、先頭に送信元（名前と `machine:id`）を付けて、人からの指示ではないと分かるようにする。オーケストレーターは自分のcqのMCPを持つので入れない（起動要求の `no_mcp`、`cq claude --cq-no-mcp`）。
+- **セッション同士のメッセージ**：cqで起動したセッションには、ワーカー用のcqのMCP（`cq mcp --worker`）を入れる。Claudeには `--mcp-config ~/.codequilt/worker.mcp.json` と `--allowedTools`、Codexには `-c mcp_servers.cq.*` とツールごとの `approval_mode = "approve"` で渡す。ワーカーが使えるのは `list_sessions` / `get_turns` / `message` / `share_file` だけで、人に代わる入力（`send`）・承認・起動はオーケストレーターに残す。`message` は相手のアイドル時の注入の待ち行列に入れ、人からの指示ではないと分かるよう先頭に送信元を付ける（下の「メッセージの送信元」）。オーケストレーターは自分のcqのMCPを持つので入れない（起動要求の `no_mcp`、`cq claude --cq-no-mcp`）。
 - **ファイルの共有**：エージェントが見せたいファイルは `share_file` で渡す。MCPがパスを解決して存在と大きさ（10MBまで）を確かめ、自分のセッションのcq hostに `ShareFile` を送ると（daemonは改名などの操作と同じく、常に張っているmonitorの接続で届ける）、hostがメタデータの `files` に足す（同じパスは最新の1件にする）。ダッシュボードは一覧の更新で気づき、中身はそのマシンのdaemonに `ReadFile` で求める。daemonはメタデータの `files` にあるパスしか読まないので、ダッシュボードから任意のファイルは読めない。中身をイベントに載せないのは、cq hostのイベントの履歴（全クライアントに再送する）を大きくしないため。端末に出たパスを拾う方式は、折り返しや相対パスの判定が不安定なので採らない。
 - **hooksは何も出力しない**：標準出力はコンテキストに注入されるため。イベントをcq hostに送って正常終了するだけにし、トークン消費を増やさない。cq hostが不在でもすぐ終わる。
 - **statusLineはユーザー設定に連鎖させる**：`cq statusline` はデータをcq hostに送ったうえで、ユーザーの `settings.json` にある元のコマンドを呼び、その出力を表示する。ローカルの見た目は変わらない。

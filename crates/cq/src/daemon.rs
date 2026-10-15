@@ -10,13 +10,14 @@ use crate::machine::{self, MachineEntry};
 use crate::{ipc, paths, plugin, remote, session};
 use anyhow::{Result, bail};
 use cq_protocol::{
-    ClientKind, CommandInfo, CommandResult, DirList, Hello, InvokeCommand, DAEMON_PROTOCOL_VERSION, Launched, MachineInfo, Message, PROTOCOL_VERSION,
-    RequestFailed, SessionList, SessionMeta, SessionStatus, Size, Subscribe, read_message, spawn_reader,
-    write_message,
+    ClientKind, CommandInfo, CommandResult, DAEMON_PROTOCOL_VERSION, DirList, Hello, Inject, InvokeCommand, Launched, MachineInfo, Message, Names,
+    NamesReply, PROTOCOL_VERSION, RequestFailed, SessionList, SessionMeta, SessionRef, SessionStatus, Size, Subscribe, read_message,
+    spawn_reader, write_message,
 };
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -131,6 +132,9 @@ struct LocalRelay {
     subs: HashMap<String, Conn>,
     sessions: Vec<SessionMeta>,
     last_key: String,
+    /// Questions sent back along this connection about who sent a message, by id.
+    asked: HashMap<u64, oneshot::Sender<NamesReply>>,
+    next_ask: u64,
 }
 
 impl LocalRelay {
@@ -143,6 +147,8 @@ impl LocalRelay {
             subs: HashMap::new(),
             sessions: Vec::new(),
             last_key: String::new(),
+            asked: HashMap::new(),
+            next_ask: 0,
         }
     }
 
@@ -201,6 +207,46 @@ impl LocalRelay {
         });
     }
 
+    /// Types a message from another session once the `[from …]` line is written: names this
+    /// machine knows first, then whatever the machine it came from answers, else the ids.
+    fn inject_from(&mut self, session: String, mut inject: Inject) {
+        let sender = inject.from.take().expect("checked by the caller");
+        let (machine, name) = known_names(&sender);
+        let answer = (machine.is_none() || name.is_none()).then(|| {
+            self.next_ask += 1;
+            let (tx, rx) = oneshot::channel();
+            self.asked.insert(self.next_ask, tx);
+            let _ = self.out.send(Message::Names(Names { id: self.next_ask, sender: sender.clone() }));
+            rx
+        });
+        if !self.monitors.contains_key(&session) {
+            self.refresh();
+        }
+        let Some(host) = self.monitors.get(&session).map(|c| c.tx.clone()) else { return };
+        tokio::spawn(async move {
+            let reply = match answer {
+                Some(rx) => tokio::time::timeout(Duration::from_secs(3), rx).await.ok().and_then(Result::ok),
+                None => None,
+            };
+            let (reply_machine, reply_name) = reply.map_or((None, None), |r| (r.machine, r.session));
+            let machine = machine.or(reply_machine).unwrap_or_else(|| sender.machine.clone());
+            let from = match name.or(reply_name) {
+                Some(name) => format!("{name} ({machine}:{})", sender.session),
+                None => format!("{machine}:{}", sender.session),
+            };
+            inject.text = format!("[from {from}]\n{}", inject.text);
+            let _ = host.send(Message::Inject(inject));
+        });
+    }
+
+    /// Hands an answer to the message waiting for it.
+    fn answered(&mut self, reply: NamesReply) {
+        if let Some(tx) = self.asked.remove(&reply.id) {
+            let _ = tx.send(reply);
+        }
+        self.asked.retain(|_, tx| !tx.is_closed());
+    }
+
     fn handle(&mut self, msg: Message) {
         match msg {
             Message::ListSessions => {
@@ -246,6 +292,10 @@ impl LocalRelay {
                 };
                 let _ = self.out.send(reply);
             }
+            Message::Routed { session, inner, .. } if matches!(&*inner, Message::Inject(i) if i.from.is_some()) => {
+                let Message::Inject(inject) = *inner else { unreachable!() };
+                self.inject_from(session, inject);
+            }
             Message::Routed { session, inner, .. } => {
                 if self.route(&session, &inner).is_none() {
                     // The host may have started after the last scan.
@@ -258,6 +308,25 @@ impl LocalRelay {
             _ => {}
         }
     }
+}
+
+/// What this machine calls the sender of a message: the machine by the name it gave it (or its
+/// own name), and the session by its name when the session runs here.
+fn known_names(sender: &SessionRef) -> (Option<String>, Option<String>) {
+    let machine = machine::known_name(&sender.machine);
+    let here = cq_client::local_machine_id().is_ok_and(|id| id == sender.machine);
+    let session = here
+        .then(|| session::list().ok())
+        .flatten()
+        .and_then(|l| l.into_iter().find(|m| m.id == sender.session))
+        .and_then(|m| m.name);
+    (machine, session)
+}
+
+/// Answers a [`Names`] question from what this machine knows.
+pub fn answer_names(q: &Names) -> NamesReply {
+    let (machine, session) = known_names(&q.sender);
+    NamesReply { id: q.id, machine, session }
 }
 
 /// Machine id a client request is addressed to.
@@ -636,12 +705,32 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                     None => break Ok(()),
                     Some(Err(e)) => break Err(e),
                 };
-                // An upstream hands back what it answered for one of this daemon's clients.
-                if let Message::Upstream { conn, inner } = msg {
-                    if let (true, Some(tx)) = (hello.relay, links().lock().unwrap().inboxes.get(&conn)) {
-                        let _ = tx.send(*inner);
+                match msg {
+                    // Who sent a message this connection carried, asked by the daemon it went to.
+                    Message::Names(q) => {
+                        let _ = out.send(Message::NamesReply(answer_names(&q)));
+                        continue;
                     }
-                    continue;
+                    Message::NamesReply(r) => {
+                        local.answered(r);
+                        continue;
+                    }
+                    Message::Upstream { conn, inner } if hello.relay => {
+                        match *inner {
+                            Message::Names(q) => {
+                                let reply = Message::NamesReply(answer_names(&q));
+                                let _ = out.send(Message::Upstream { conn, inner: Box::new(reply) });
+                            }
+                            // An upstream hands back what it answered for one of this daemon's clients.
+                            inner => {
+                                if let Some(tx) = links().lock().unwrap().inboxes.get(&conn) {
+                                    let _ = tx.send(inner);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    _ => {}
                 }
                 let Some(msg) = handle_desktop(client_id, msg) else { continue };
                 match target_machine(&msg).filter(|id| *id != me.id) {

@@ -240,7 +240,7 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                     }
                     Delivery::Pty => {
                         inject_id += 1;
-                        let inj = cq_protocol::Inject { id: inject_id, text: content, submit: true, quiet_ms: 3000 };
+                        let inj = cq_protocol::Inject { id: inject_id, text: content, submit: true, quiet_ms: 3000, from: None };
                         Message::Routed { machine: here().to_owned(), session: oid, inner: Box::new(Message::Inject(inj)) }
                     }
                 };
