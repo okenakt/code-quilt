@@ -93,6 +93,10 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
         }
     }
 
+    for s in sessions.values_mut() {
+        s.machine = cq_client::machine_name(&machines, &s.machine).to_owned();
+    }
+
     // Latest rate limit reading per account.
     let mut accounts: BTreeMap<String, (String, u64, Value, Vec<String>)> = BTreeMap::new();
     for s in sessions.values() {
@@ -179,12 +183,12 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
         );
     }
     for m in machines.iter().filter(|m| !m.online) {
-        println!("({} offline: {})", m.label, m.error.as_deref().unwrap_or("not connected"));
+        println!("({} offline: {})", m.name, m.error.as_deref().unwrap_or("not connected"));
     }
     Ok(())
 }
 
-/// Splits `machine:id` (or a bare local id) into its parts.
+/// Splits `machine:id` (or a bare local id) into the machine's name and the session.
 pub fn parse_target(target: &str) -> (String, String) {
     match target.split_once(':') {
         Some((m, id)) if !m.is_empty() && !m.contains(['\\', '/']) => (m.to_owned(), id.to_owned()),
@@ -203,7 +207,8 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
             Message::Terminate(t) => Duration::from_millis(t.grace_ms),
             _ => Duration::ZERO,
         };
-    let (machine, key) = parse_target(target);
+    let (name, key) = parse_target(target);
+    let machine = crate::machine::id_of(&name)?;
     let mut conn = cq_client::DaemonClient::open(machine != LOCAL_MACHINE).await?;
     conn.send(&Message::ListSessions).await?;
 
@@ -226,10 +231,10 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
                 }
                 Message::MachineList(list) => {
                     if let Some(m) = list.iter().find(|m| m.id == machine && !m.online && m.error.is_some()) {
-                        bail!("machine {} is offline: {}", m.id, m.error.as_deref().unwrap_or_default());
+                        bail!("machine {name} is offline: {}", m.error.as_deref().unwrap_or_default());
                     }
                     if list.iter().all(|m| m.id != machine) {
-                        bail!("unknown machine '{machine}'");
+                        bail!("unknown machine '{name}'");
                     }
                 }
                 Message::Routed { machine: m, session: s, inner } if m == machine && Some(&s) == session.as_ref() => {
@@ -335,7 +340,7 @@ pub async fn daemon_status() -> Result<()> {
     let mut conn = cq_client::DaemonClient::open(true).await?;
     for m in settled_machines(&mut conn, Duration::from_secs(10)).await {
         let state = if m.online { "running".to_owned() } else { m.error.unwrap_or_else(|| "connecting".into()) };
-        println!("{:<12} {state}", m.id);
+        println!("{:<12} {state}", m.name);
     }
     Ok(())
 }

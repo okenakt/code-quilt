@@ -201,21 +201,37 @@ enum PluginCmd {
 #[derive(Subcommand)]
 enum MachineCmd {
     /// List registered machines.
+    #[command(visible_alias = "ls")]
     List,
-    /// Register a machine; without HOST, choose from ~/.ssh/config.
+    /// Register a machine reachable with `ssh` without a password prompt (keys or ssh-agent).
     Add {
-        host: Option<String>,
-        #[arg(long)]
-        label: Option<String>,
+        /// `[USER@]HOST`: an address, a host name or a ~/.ssh/config alias.
+        host: String,
+        #[arg(short, long)]
+        port: Option<u16>,
+        /// Name to address the machine by (default: its host name).
+        #[arg(short, long)]
+        name: Option<String>,
         /// Path of `cq` on the remote machine (default: `cq` on PATH).
         #[arg(long)]
         cq_path: Option<String>,
-        /// Run `cq bridge` through a login shell (Linux/macOS remotes whose PATH is set in ~/.profile).
+    },
+    /// Change a registered machine; `--port 0` and `--cq-path ""` restore the defaults.
+    Set {
+        machine: String,
+        #[arg(short, long)]
+        name: Option<String>,
+        /// `[USER@]HOST` to connect to.
+        #[arg(short = 'H', long)]
+        host: Option<String>,
+        #[arg(short, long)]
+        port: Option<u16>,
         #[arg(long)]
-        login_shell: bool,
+        cq_path: Option<String>,
     },
     /// Unregister a machine.
-    Remove { id: String },
+    #[command(visible_alias = "rm")]
+    Remove { machine: String },
 }
 
 /// Takes `--cq-name NAME` and `--cq-no-mcp` out of the agent arguments: the session's name and
@@ -322,8 +338,9 @@ async fn run(cmd: Cmd) -> Result<i32> {
         Cmd::Machine { action } => {
             match action {
                 MachineCmd::List => machine::list()?,
-                MachineCmd::Add { host, label, cq_path, login_shell } => machine::add(host, label, cq_path, login_shell)?,
-                MachineCmd::Remove { id } => machine::remove(&id)?,
+                MachineCmd::Add { host, port, name, cq_path } => machine::add(host, port, name, cq_path).await?,
+                MachineCmd::Set { machine, name, host, port, cq_path } => machine::set(&machine, name, host, port, cq_path).await?,
+                MachineCmd::Remove { machine } => machine::remove(&machine)?,
             }
             Ok(0)
         }

@@ -40,7 +40,7 @@ const SessionDetails = ({ s, machine }: { s: SessionState; machine: MachineInfo 
   const tokens = t ? t.input + t.output + t.cacheRead + t.cacheCreation : (st?.inputTokens ?? 0) + (st?.outputTokens ?? 0);
   const ctx = st?.contextPercent ?? null;
   const rows: [string, ReactNode][] = [
-    ["machine", machine?.label ?? s.machine],
+    ["machine", machine?.name ?? s.machine],
     ["cwd", <DirName path={s.meta.cwd} />],
     ...(st?.model ? [["model", st.model] as [string, ReactNode]] : []),
     ...(ctx !== null
@@ -387,7 +387,7 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
                   <Fold open={open} />
                 </button>
                 <span className={`dot ${m.online ? "online" : "offline"}`} />
-                {m.label}
+                {m.name}
                 {!m.online && <span className="machine-offline">offline</span>}
                 {m.online && (
                   <button className="machine-new" title="New session" onClick={() => onNew(m.id)}>

@@ -51,6 +51,9 @@ export const displayName = (s: SessionState): string => {
   return `${base} #${s.meta.id.slice(0, 4)}`;
 };
 
+/** Returns the name of machine `id` (the id itself when unknown). */
+export const machineName = (list: MachineInfo[], id: string): string => list.find((m) => m.id === id)?.name ?? id;
+
 /** Replaces the machine list. */
 export const setMachines = (m: MachineInfo[]): void => {
   machines = m;

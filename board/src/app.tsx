@@ -34,7 +34,7 @@ import { toggleSidebar, usePrefs } from "./prefs";
 import { applyEvent, displayName, markExited, markResumed, setMachines, setSessions, useStore } from "./store";
 import { sharedFiles } from "./files";
 import { baseName } from "./path";
-import type { SessionState } from "./types";
+import type { MachineInfo, SessionState } from "./types";
 
 const sideOf = (command: string): Side => {
   const dir = command.replace(/^pane\.(split|focus)/, "").toLowerCase();
@@ -59,6 +59,8 @@ export const App = () => {
     });
     setApprovalFocus((f) => ({ key, token: (f?.token ?? 0) + 1 }));
   }, []);
+  const machinesRef = useRef<MachineInfo[]>(machines);
+  machinesRef.current = machines;
   const sessionsRef = useRef<SessionState[]>(sessions);
   sessionsRef.current = sessions;
 
@@ -231,9 +233,12 @@ export const App = () => {
         case "ui.toggleRightSidebar":
           toggleSidebar(name === "ui.toggleLeftSidebar" ? "left" : "right");
           return;
-        case "ui.newSession":
-          setNewSessionFor(args.machine || "local");
+        case "ui.newSession": {
+          const m = machinesRef.current.find((x) => x.name === (args.machine || "local"));
+          if (!m) return showToast(false, `Unknown machine '${args.machine}'`);
+          setNewSessionFor(m.id);
           return;
+        }
         case "daemon.restart":
           restartDaemon()
             .then(() => showToast(true, "Restarting the daemon"))

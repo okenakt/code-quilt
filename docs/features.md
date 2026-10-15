@@ -18,6 +18,10 @@
 ### マシン
 
 - sshで届くマシンを登録すると、そのマシンのセッションも同じ一覧・同じ操作で扱える（Windows・Linux）。
+- 接続にはパスワードを聞かれないssh（鍵認証。パスフレーズ付きの鍵はssh-agentに載せる）が必要。鍵の用意はユーザーが行う。ユーザー名・ポート・鍵などは `~/.ssh/config` に書いてもよく、sshがそのまま使う。
+- `cq machine add [USER@]HOST` は、daemonと同じ方法でそのマシンにつないでOSとホスト名を調べ、`cq bridge` がこのcqと同じプロトコルで応えることを確かめてから登録する。つながらなければsshの出したエラーを表示して登録しない。
+- マシンは名前で指定する（`名前:セッション`、`scope` の `machine:名前`）。名前は既定でそのマシンのホスト名で、`--name` や `cq machine set` で変えられる。手元のマシンの名前は `local`。名前を変えても、ペインの配置やピンはそのまま残る。
+- つながらないマシンは、sshが出した最後のエラーをboardのMachines欄（オフラインの表示にカーソルを置く）と `cq daemon status` に出す。
 - 各マシンのdaemonは必要になったときに自動で起動する。止めたり入れ替えたりしても、セッションは動き続ける。
 
 ### ダッシュボード（cq-board）
@@ -61,10 +65,13 @@
 | `cq usage [--local] [--json]` | アカウントごとのレート制限と、セッションごとのトークン |
 | `cq run NAME [--arg KEY=VALUE]…` | プラグインのコマンドを実行する |
 | `cq plugin list \| add NAME \| remove NAME \| refresh` | プラグインの一覧・導入・削除・manifestの再読込 |
-| `cq machine list \| add [HOST] [--label L] [--cq-path P] [--login-shell] \| remove ID` | リモートマシンの一覧・登録・削除。HOSTを省くと `~/.ssh/config` から選ぶ |
+| `cq machine list` (`ls`) | 登録したマシンの一覧（名前、接続先、OS、cqのパス） |
+| `cq machine add [USER@]HOST [-p PORT] [-n NAME] [--cq-path P]` | マシンを登録する。HOSTはIPアドレス、ホスト名、`~/.ssh/config` のHostのどれでもよい。つないで確かめてから登録する |
+| `cq machine set MACHINE [-n NAME] [-H [USER@]HOST] [-p PORT] [--cq-path P]` | 登録した内容を変える。接続先・ポート・cqのパスを変えたときはつなぎ直して確かめる。`-p 0` と `--cq-path ""` で既定に戻す |
+| `cq machine remove MACHINE` (`rm`) | 登録を消す |
 | `cq daemon` | daemonを動かす（通常は自動で起動される） |
 | `cq daemon status \| stop \| restart` | daemonの状態（ローカルと各リモートマシン）、ローカルのdaemonの停止・再起動。止めてもセッションは動き続ける。リモートのdaemonはそのマシンで `cq daemon restart` する。プロトコルのバージョンが違うdaemonは停止の要求を受け付けないため、止められなかったときはそのPIDを表示して失敗する |
-| `cq mcp [--scope machine:ID]… [--channel] [--worker]` | MCPサーバー（stdio）。`--channel` はClaude Codeのチャネルとしても動く。`--worker` はワーカー用（`list_sessions` / `get_turns` / `message` / `share_file` だけ） |
+| `cq mcp [--scope machine:NAME]… [--channel] [--worker]` | MCPサーバー（stdio）。`--channel` はClaude Codeのチャネルとしても動く。`--worker` はワーカー用（`list_sessions` / `get_turns` / `message` / `share_file` だけ） |
 | `cq bridge` | 標準入出力をこのマシンのdaemonにつなぐ（`ssh HOST cq bridge` 用） |
 | `cq NAME …` | 組み込みにない名前は `cq-NAME …` を実行する（例 `cq orchestrator`、`cq board`） |
 
@@ -106,7 +113,7 @@
 | `ui.approvals` | 承認待ちを表示 | Ctrl+Shift+A |
 | `ui.toggleLeftSidebar` | 左サイドバーの開閉 | なし |
 | `ui.toggleRightSidebar` | 右サイドバーの開閉 | なし |
-| `ui.newSession` | 新しいセッション（引数 `machine`） | なし |
+| `ui.newSession` | 新しいセッション（引数 `machine` はマシンの名前） | なし |
 | `tab.new` / `tab.close` / `tab.rename` | タブの追加 / 閉じる（セッションは動き続ける） / 名前の変更（引数 `name`） | Ctrl+Shift+T / なし / なし |
 | `tab.next` / `tab.prev` | 次 / 前のタブ | Ctrl+Shift+PageDown / PageUp |
 | `tab.goTo` | 番号のタブ（引数 `index`） | Alt+1〜9 |
@@ -134,12 +141,13 @@ allowed_roots = ["C:/Users/me/work"]   # folders under which the board may start
 o = "orchestrator"              # built in; user aliases take precedence
 os = "orchestrator start main"  # several words are fine
 
-[[machines]]
-id = "wsl"
-label = "wsl"
-ssh = "wsl"                                   # host as known to ssh
+[[machines]]                  # written by `cq machine add` / `set`
+id = "m3f9a2c"                # internal, fixed at registration
+name = "wsl"                  # what you type: wsl:SESSION
+ssh = "me@192.168.1.10"       # [user@]host as given to ssh
+port = 2222                   # optional
+os = "unix"                   # detected; unix starts `cq bridge` via `sh -lc` so ~/.profile applies
 cq_path = "/home/me/.cache/code-quilt/target/debug/cq"   # optional; default "cq"
-login_shell = true                            # run `cq bridge` via `sh -lc` so ~/.profile applies
 ```
 
 組み込みのサブコマンドとその別名（`a`）はエイリアスで上書きできない。
@@ -185,7 +193,7 @@ command = "-pane.close"     # "-" removes a default binding (all of its keys wit
 | `agent` | `"claude"` | オーケストレーターのエージェント（`claude` か `codex`） |
 | `model` | Claudeは `"sonnet"`、Codexはユーザーの既定 | モデル。既定のときはファイルに書かれない |
 | `persona` | `"default"` | 人格（指示文）。`default` かファイルのパス |
-| `scope` | `[]` | 担当するマシン（`machine:ID`）。空なら全マシン |
+| `scope` | `[]` | 担当するマシン（`machine:名前`）。空なら全マシン |
 | `delivery` | Claudeは `"channels"`、Codexは `"pty"` | 届け方。`channels` か `pty`。Codexは `pty` だけ。既定のときはファイルに書かれない |
 | `wake_on` | `["permission", "question", "stop"]` | オーケストレーターに届けるイベント |
 | `allow_approve` | `false` | `approve` ツールを確認なしで使わせる |

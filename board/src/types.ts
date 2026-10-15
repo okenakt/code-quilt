@@ -33,7 +33,7 @@ export type AgentEvent = {
 
 export type MachineInfo = {
   id: string;
-  label: string;
+  name: string;
   online: boolean;
   error: string | null;
 };

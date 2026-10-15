@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { baseName } from "../path";
 import { setTokenPrefs, toggleFold, usePrefs, type TokenPeriod } from "../prefs";
 import type { MachineInfo, SessionState, TokenCounts } from "../types";
+import { machineName } from "../store";
 import { AgentHeading } from "./limits-panel";
 import { Fold, isExpanded } from "./sidebar-section";
 
@@ -62,7 +63,7 @@ const usages = (sessions: SessionState[], machines: MachineInfo[], period: Token
     const key = `${s.machine}\n${s.meta.cwd}\n${s.meta.agent}`;
     const u = out.get(key) ?? {
       machine: s.machine,
-      machineLabel: machines.find((m) => m.id === s.machine)?.label ?? s.machine,
+      machineLabel: machineName(machines, s.machine),
       cwd: s.meta.cwd,
       agent: s.meta.agent,
       counts: zero(),

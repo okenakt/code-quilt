@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Minus } from "lucide-react";
 import { approve } from "../api";
-import { displayName } from "../store";
+import { displayName, machineName } from "../store";
 import type { MachineInfo, SessionState } from "../types";
 import { DirName } from "./dir-name";
 
@@ -90,7 +90,7 @@ export const ApprovalCards = ({ sessions, machines, minimized, onMinimize, focus
         <Card
           key={promptKey(s)}
           s={s}
-          machine={machines.find((m) => m.id === s.machine)?.label ?? s.machine}
+          machine={machineName(machines, s.machine)}
           focusToken={focus?.key === promptKey(s) ? focus.token : 0}
           onMinimize={() => onMinimize(promptKey(s))}
         />

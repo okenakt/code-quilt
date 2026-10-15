@@ -75,7 +75,7 @@ export const NewSessionDialog = ({ machines, initialMachine, onLaunch, onClose }
           <select value={machine} onChange={(e) => setMachine(e.target.value)}>
             {online.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.label}
+                {m.name}
               </option>
             ))}
           </select>

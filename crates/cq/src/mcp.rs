@@ -35,17 +35,22 @@ fn snippet(s: &str, n: usize) -> String {
 }
 
 impl Server {
-    fn visible(&self, s: &Session) -> bool {
-        self.scope.admits(&s.machine) && self.own.as_deref() != Some(&s.meta.id)
+    fn visible(&self, m: &Model, s: &Session) -> bool {
+        self.scope.admits(m.machine_name(&s.machine)) && self.own.as_deref() != Some(&s.meta.id)
     }
 
-    /// Resolves `machine:id`, a session name, or an id prefix to one visible session.
-    fn resolve(&self, target: &str) -> Result<Session> {
+    /// Resolves `machine:id`, a session name, or an id prefix to one visible session, returned
+    /// with its `machine:id` key.
+    fn resolve(&self, target: &str) -> Result<(Session, String)> {
         let m = self.model.lock().unwrap();
-        let live: Vec<&Session> = m.sessions.values().filter(|s| self.visible(s) && s.activity != Activity::Exited).collect();
+        let live: Vec<&Session> = m.sessions.values().filter(|s| self.visible(&m, s) && s.activity != Activity::Exited).collect();
         let (machine, rest) = match target.split_once(':') {
-            Some((mm, r)) if m.machines.iter().any(|x| x.id == mm) || mm == LOCAL_MACHINE => (Some(mm), r),
-            _ => (None, target),
+            Some((name, r)) if name == LOCAL_MACHINE => (Some(LOCAL_MACHINE), r),
+            Some((name, r)) => match cq_client::machine_id(&m.machines, name) {
+                Some(id) => (Some(id), r),
+                None => (None, target),
+            },
+            None => (None, target),
         };
         let pick = |pred: &dyn Fn(&Session) -> bool| -> Vec<Session> {
             live.iter().filter(|s| machine.is_none_or(|mm| s.machine == mm) && pred(s)).map(|s| (*s).clone()).collect()
@@ -57,19 +62,23 @@ impl Server {
         ] {
             match hits.len() {
                 0 => continue,
-                1 => return Ok(hits.into_iter().next().unwrap()),
+                1 => {
+                    let s = hits.into_iter().next().unwrap();
+                    let key = m.key(&s);
+                    return Ok((s, key));
+                }
                 n => bail!("'{target}' matches {n} sessions; use machine:id"),
             }
         }
         bail!("no running session in scope matches '{target}'")
     }
 
-    fn describe(s: &Session) -> Value {
+    fn describe(m: &Model, s: &Session) -> Value {
         let last = s.turns.back();
         json!({
-            "session": s.key(),
+            "session": m.key(s),
             "name": s.meta.name,
-            "machine": s.machine,
+            "machine": m.machine_name(&s.machine),
             "agent": s.meta.agent,
             "cwd": s.meta.cwd,
             "state": s.activity.as_str(),
@@ -85,15 +94,15 @@ impl Server {
         let mut out: Vec<_> = m
             .sessions
             .values()
-            .filter(|s| self.visible(s) && (include_exited || s.activity != Activity::Exited))
+            .filter(|s| self.visible(&m, s) && (include_exited || s.activity != Activity::Exited))
             .collect();
         out.sort_by_key(|s| (s.machine.clone(), s.meta.started_at_ms));
-        let machines: Vec<_> = m.machines.iter().map(|x| json!({ "id": x.id, "label": x.label, "online": x.online })).collect();
-        Ok(json!({ "machines": machines, "sessions": out.into_iter().map(Self::describe).collect::<Vec<_>>() }))
+        let machines: Vec<_> = m.machines.iter().map(|x| json!({ "name": x.name, "online": x.online })).collect();
+        Ok(json!({ "machines": machines, "sessions": out.into_iter().map(|s| Self::describe(&m, s)).collect::<Vec<_>>() }))
     }
 
     fn get_turns(&self, args: &Value) -> Result<Value> {
-        let s = self.resolve(str_arg(args, "session")?)?;
+        let (s, key) = self.resolve(str_arg(args, "session")?)?;
         let n = args.get("turns").and_then(Value::as_u64).unwrap_or(1).clamp(1, MAX_TURNS as u64) as usize;
         let turns: Vec<_> = s
             .turns
@@ -103,24 +112,24 @@ impl Server {
             .rev()
             .map(|t| json!({ "prompt": t.prompt, "reply": t.reply, "at_ms": t.at_ms }))
             .collect();
-        Ok(json!({ "session": s.key(), "name": s.meta.name, "state": s.activity.as_str(), "permission_prompt": s.prompt, "turns": turns }))
+        Ok(json!({ "session": key, "name": s.meta.name, "state": s.activity.as_str(), "permission_prompt": s.prompt, "turns": turns }))
     }
 
     /// Queues a message from this session for another one: it is typed in once that session is
     /// idle and nobody is typing there, marked with who sent it.
     fn message(&self, args: &Value) -> Result<Value> {
-        let s = self.resolve(str_arg(args, "session")?)?;
+        let (s, key) = self.resolve(str_arg(args, "session")?)?;
         let text = str_arg(args, "text")?;
         let from = {
             let m = self.model.lock().unwrap();
             let own = self.own.as_deref().and_then(|id| m.sessions.get(&(LOCAL_MACHINE.to_owned(), id.to_owned())));
-            own.map_or_else(|| "outside CodeQuilt".to_owned(), |o| format!("{} ({})", o.label(), o.key()))
+            own.map_or_else(|| "outside CodeQuilt".to_owned(), |o| format!("{} ({})", o.label(), m.key(o)))
         };
         let inject = cq_protocol::Inject { id: crate::session::now_ms(), text: format!("[from {from}] {text}"), submit: true, quiet_ms: 3000 };
         self.tx
             .send(Message::Routed { machine: s.machine.clone(), session: s.meta.id.clone(), inner: Box::new(Message::Inject(inject)) })
             .map_err(|_| anyhow!("daemon connection closed"))?;
-        Ok(json!({ "queued_for": s.key(), "name": s.meta.name }))
+        Ok(json!({ "queued_for": key, "name": s.meta.name }))
     }
 
     /// Adds a file to this session's shared files, which the board lists and opens.
@@ -145,7 +154,7 @@ impl Server {
     }
 
     fn send(&self, args: &Value) -> Result<Value> {
-        let s = self.resolve(str_arg(args, "session")?)?;
+        let (s, key) = self.resolve(str_arg(args, "session")?)?;
         let text = str_arg(args, "text")?;
         let submit = args.get("submit").and_then(Value::as_bool).unwrap_or(true);
         let mut bytes = format!("\x1b[200~{text}\x1b[201~").into_bytes();
@@ -155,7 +164,7 @@ impl Server {
         self.tx
             .send(Message::Routed { machine: s.machine.clone(), session: s.meta.id.clone(), inner: Box::new(Message::Input(bytes)) })
             .map_err(|_| anyhow!("daemon connection closed"))?;
-        Ok(json!({ "sent_to": s.key(), "name": s.meta.name, "submitted": submit }))
+        Ok(json!({ "sent_to": key, "name": s.meta.name, "submitted": submit }))
     }
 
     /// Starts a session and queues the first prompt, which is typed once the session is idle
@@ -166,10 +175,11 @@ impl Server {
         if !matches!(agent, "claude" | "codex") {
             bail!("unknown agent '{agent}' (claude or codex)");
         }
-        let machine = args.get("machine").and_then(Value::as_str).unwrap_or(LOCAL_MACHINE).to_owned();
-        if !self.scope.admits(&machine) {
-            bail!("machine '{machine}' is outside this server's scope");
+        let machine_name = args.get("machine").and_then(Value::as_str).unwrap_or(LOCAL_MACHINE);
+        if !self.scope.admits(machine_name) {
+            bail!("machine '{machine_name}' is outside this server's scope");
         }
+        let machine = crate::machine::id_of(machine_name)?;
         let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
         let mut conn = cq_client::DaemonClient::open(machine != LOCAL_MACHINE).await?;
         let launch = cq_protocol::Launch {
@@ -186,7 +196,7 @@ impl Server {
         let session = tokio::time::timeout(Duration::from_secs(30), conn.launch(launch))
             .await
             .map_err(|_| anyhow!("the session did not start within 30s"))??;
-        let mut out = json!({ "session": format!("{machine}:{session}"), "name": name });
+        let mut out = json!({ "session": format!("{machine_name}:{session}"), "name": name });
         if let Some(prompt) = args.get("prompt").and_then(Value::as_str) {
             let inject = cq_protocol::Inject { id: crate::session::now_ms(), text: prompt.to_owned(), submit: true, quiet_ms: 3000 };
             conn.send(&Message::Routed { machine: machine.clone(), session: session.clone(), inner: Box::new(Message::Inject(inject)) }).await?;
@@ -208,7 +218,7 @@ impl Server {
     }
 
     async fn approve(&self, args: &Value) -> Result<Value> {
-        let s = self.resolve(str_arg(args, "session")?)?;
+        let (s, key) = self.resolve(str_arg(args, "session")?)?;
         let option = args.get("option").and_then(Value::as_u64).ok_or_else(|| anyhow!("missing 'option'"))? as u8;
         let prompt_id = str_arg(args, "prompt_id")?.to_owned();
         let (tx, rx) = oneshot::channel();
@@ -221,7 +231,7 @@ impl Server {
         if result.get("ok").and_then(Value::as_bool) != Some(true) {
             bail!("approval refused: {}", result.get("reason").and_then(Value::as_str).unwrap_or("unknown"));
         }
-        Ok(json!({ "session": s.key(), "option": option, "ok": true }))
+        Ok(json!({ "session": key, "option": option, "ok": true }))
     }
 }
 
@@ -271,7 +281,7 @@ fn tools(worker: bool) -> Value {
             "inputSchema": { "type": "object", "properties": {
                 "cwd": { "type": "string", "description": "Working directory on the target machine" },
                 "agent": { "type": "string", "enum": ["claude", "codex"] },
-                "machine": { "type": "string", "description": "Machine id; the local machine by default" },
+                "machine": { "type": "string", "description": "Machine name; the local machine by default" },
                 "name": { "type": "string" },
                 "prompt": { "type": "string", "description": "First instruction for the new session" }
             }, "required": ["cwd"] }

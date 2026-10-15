@@ -56,11 +56,6 @@ pub struct Session {
 }
 
 impl Session {
-    /// `machine:id`.
-    pub fn key(&self) -> String {
-        format!("{}:{}", self.machine, self.meta.id)
-    }
-
     /// The user-given name, or the id.
     pub fn label(&self) -> &str {
         self.meta.name.as_deref().unwrap_or(&self.meta.id)
@@ -77,6 +72,16 @@ pub struct Model {
 }
 
 impl Model {
+    /// The name users know the machine `id` by.
+    pub fn machine_name<'a>(&'a self, id: &'a str) -> &'a str {
+        machine_name(&self.machines, id)
+    }
+
+    /// `machine:id` of a session, with the machine's name.
+    pub fn key(&self, s: &Session) -> String {
+        format!("{}:{}", self.machine_name(&s.machine), s.meta.id)
+    }
+
     /// Applies a daemon message; returns the session event it carried, if any.
     pub fn apply(&mut self, msg: &Message) -> Option<(String, String, AgentEvent)> {
         match msg {
@@ -165,6 +170,16 @@ impl Model {
             s.activity = Activity::Exited;
         }
     }
+}
+
+/// The name of machine `id` among `machines` (the id itself when unknown).
+pub fn machine_name<'a>(machines: &'a [MachineInfo], id: &'a str) -> &'a str {
+    machines.iter().find(|m| m.id == id).map_or(id, |m| &m.name)
+}
+
+/// The id of the machine called `name` among `machines`.
+pub fn machine_id<'a>(machines: &'a [MachineInfo], name: &str) -> Option<&'a str> {
+    machines.iter().find(|m| m.name == name).map(|m| m.id.as_str())
 }
 
 /// Locates the `cq` binary: `CQ_BIN`, next to this executable, or on PATH.
@@ -314,7 +329,7 @@ impl DaemonClient {
     }
 }
 
-/// Which machines' sessions an orchestrator may see and drive (`machine:ID` entries; none
+/// Which machines' sessions an orchestrator may see and drive (`machine:NAME` entries; none
 /// means every machine).
 #[derive(Debug, Clone, Default)]
 pub struct Scope {
@@ -325,12 +340,13 @@ impl Scope {
     pub fn parse(entries: &[String]) -> Result<Self> {
         let machines = entries
             .iter()
-            .map(|e| e.strip_prefix("machine:").map(str::to_owned).with_context(|| format!("invalid scope '{e}' (use machine:ID)")))
+            .map(|e| e.strip_prefix("machine:").map(str::to_owned).with_context(|| format!("invalid scope '{e}' (use machine:NAME)")))
             .collect::<Result<_>>()?;
         Ok(Self { machines })
     }
 
-    pub fn admits(&self, machine: &str) -> bool {
-        self.machines.is_empty() || self.machines.iter().any(|m| m == machine)
+    /// Whether the machine called `name` is in scope.
+    pub fn admits(&self, name: &str) -> bool {
+        self.machines.is_empty() || self.machines.iter().any(|m| m == name)
     }
 }

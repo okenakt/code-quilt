@@ -17,9 +17,9 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Version of the daemon protocol (machine-tagged relay through `cq daemon`). Versioned
 /// separately so running hosts stay reachable when only the daemon protocol changes.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 3;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 4;
 
-/// Machine id under which a daemon reports its own sessions.
+/// Machine id under which a daemon reports its own sessions; also the local machine's name.
 pub const LOCAL_MACHINE: &str = "local";
 
 fn local_machine() -> String {
@@ -288,11 +288,12 @@ pub struct SessionRef {
     pub session: String,
 }
 
-/// A machine known to the daemon and whether it is reachable.
+/// A machine known to the daemon and whether it is reachable. The id is internal and never
+/// changes; users see and address the machine by its name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MachineInfo {
     pub id: String,
-    pub label: String,
+    pub name: String,
     pub online: bool,
     pub error: Option<String>,
 }

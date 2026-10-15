@@ -4,7 +4,7 @@
 //! [`LOCAL_MACHINE`]; this module rewrites them to the machine's id so clients of the local daemon
 //! see every machine through one connection.
 
-use crate::machine::MachineEntry;
+use crate::machine::{MachineEntry, Os};
 use anyhow::{Context, Result, bail};
 use cq_protocol::local::BoxStream;
 use cq_protocol::{
@@ -12,56 +12,30 @@ use cq_protocol::{
     SessionRef, Subscribe, spawn_reader, write_message,
 };
 use std::collections::HashMap;
-use std::pin::Pin;
-use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinHandle;
 
 /// Delay before reconnecting to an unreachable machine.
 const RETRY: Duration = Duration::from_secs(5);
 
-/// Child process stdio presented as one stream; the child is killed when dropped.
-struct ChildStream {
-    io: tokio::io::Join<tokio::process::ChildStdout, tokio::process::ChildStdin>,
-    _child: tokio::process::Child,
-}
+/// Prefix of errors the remote daemon reported itself, which explain a failure better than
+/// whatever ssh prints once it is killed.
+const REMOTE_ERROR: &str = "remote daemon: ";
 
-impl AsyncRead for ChildStream {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.io).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for ChildStream {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.io).poll_write(cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.io).poll_flush(cx)
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.io).poll_shutdown(cx)
-    }
-}
-
-/// Runs `ssh <host> cq bridge`. No port is opened on the remote side and the user's ssh key
-/// authentication applies; `BatchMode` keeps ssh from ever prompting.
-fn open_ssh(host: &str, cq_path: &str, login_shell: bool) -> Result<BoxStream> {
+/// `ssh` to the machine. Authentication is left to ssh (keys, agent, `~/.ssh/config`), and
+/// `BatchMode` keeps it from ever prompting: the daemon has no terminal to ask on.
+fn ssh(e: &MachineEntry) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new("ssh");
-    cmd.args(["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", host]);
-    if login_shell {
-        // ssh joins the remote command into one string for the remote shell.
-        cmd.arg(format!("sh -lc 'exec \"{cq_path}\" bridge'"));
-    } else {
-        cmd.args([cq_path, "bridge"]);
+    cmd.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15"]);
+    if let Some(p) = e.port {
+        cmd.args(["-p", &p.to_string()]);
     }
-    cmd
+    cmd.arg(&e.ssh)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
     #[cfg(windows)]
     {
@@ -69,10 +43,95 @@ fn open_ssh(host: &str, cq_path: &str, login_shell: bool) -> Result<BoxStream> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let mut child = cmd.spawn().context("spawn ssh")?;
-    let stdout = child.stdout.take().context("ssh stdout")?;
-    let stdin = child.stdin.take().context("ssh stdin")?;
-    Ok(Box::new(ChildStream { io: tokio::io::join(stdout, stdin), _child: child }))
+    cmd
+}
+
+/// Learns the host name and OS of the machine. The command parses the same in sh, cmd and
+/// PowerShell: `uname` fails on Windows, where `ver` answers instead.
+pub async fn probe(e: &MachineEntry) -> Result<(String, Os)> {
+    let out = ssh(e).arg("hostname && uname -s || ver").stdin(std::process::Stdio::null()).output().await.context("spawn ssh")?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
+    let (Some(hostname), Some(system)) = (lines.next(), lines.next()) else {
+        let err = String::from_utf8_lossy(&out.stderr);
+        bail!("ssh {}: {}", e.ssh, err.trim().lines().last().unwrap_or("connection failed"));
+    };
+    let os = if system.contains("Windows") { Os::Windows } else { Os::Unix };
+    Ok((hostname.to_owned(), os))
+}
+
+/// `ssh <host> cq bridge` with its stdio as the stream to the remote daemon.
+struct Bridge {
+    child: tokio::process::Child,
+    stream: Option<BoxStream>,
+    /// The last line ssh (or the remote command) wrote to stderr.
+    stderr: JoinHandle<Option<String>>,
+}
+
+impl Bridge {
+    fn open(e: &MachineEntry) -> Result<Self> {
+        let cq = e.cq();
+        let mut cmd = ssh(e);
+        // ssh joins the remote command into one string for the remote shell.
+        match e.os {
+            Os::Unix => cmd.arg(format!("sh -lc 'exec \"{cq}\" bridge'")),
+            Os::Windows => cmd.arg(format!("\"{cq}\" bridge")),
+        };
+        let mut child = cmd.spawn().context("spawn ssh")?;
+        let stdout = child.stdout.take().context("ssh stdout")?;
+        let stdin = child.stdin.take().context("ssh stdin")?;
+        let mut lines = tokio::io::BufReader::new(child.stderr.take().context("ssh stderr")?).lines();
+        let stderr = tokio::spawn(async move {
+            let mut last = None;
+            while let Ok(Some(l)) = lines.next_line().await {
+                if !l.trim().is_empty() {
+                    last = Some(l.trim().to_owned());
+                }
+            }
+            last
+        });
+        Ok(Self { child, stream: Some(Box::new(tokio::io::join(stdout, stdin))), stderr })
+    }
+
+    /// Ends the connection and says why it failed: the remote daemon's own error, else what ssh
+    /// reported, else `err`.
+    async fn close(mut self, err: anyhow::Error) -> String {
+        let _ = self.child.start_kill();
+        let err = format!("{err:#}");
+        if err.starts_with(REMOTE_ERROR) {
+            return err;
+        }
+        match tokio::time::timeout(Duration::from_secs(2), self.stderr).await {
+            Ok(Ok(Some(line))) => line,
+            _ => err,
+        }
+    }
+}
+
+/// Connects through `cq bridge` as the daemon does and waits for the remote daemon to accept
+/// the protocol version.
+pub async fn check(e: &MachineEntry) -> Result<()> {
+    let mut b = Bridge::open(e)?;
+    let (rd, mut wr) = tokio::io::split(b.stream.take().expect("fresh"));
+    let mut msgs = spawn_reader(rd);
+    let answered = async {
+        write_message(&mut wr, &Message::Hello(hello())).await?;
+        match tokio::time::timeout(Duration::from_secs(20), msgs.recv()).await {
+            Ok(Some(Ok(Message::Error(err)))) => bail!("{REMOTE_ERROR}{err}"),
+            Ok(Some(Ok(_))) => Ok(()),
+            Ok(Some(Err(err))) => Err(err),
+            Ok(None) => bail!("`{} bridge` exited", e.cq()),
+            Err(_) => bail!("no answer from `{} bridge`", e.cq()),
+        }
+    };
+    match answered.await {
+        Ok(()) => Ok(()),
+        Err(err) => bail!(b.close(err).await),
+    }
+}
+
+fn hello() -> Hello {
+    Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: false }
 }
 
 /// Rewrites a message from a remote daemon so it carries the machine's id.
@@ -127,16 +186,15 @@ pub async fn run(
 ) {
     let mut subs: HashMap<String, Subscribe> = HashMap::new();
     let report = |online: bool, error: Option<String>| {
-        let _ = status.send(MachineInfo { id: entry.id.clone(), label: entry.label.clone(), online, error });
+        let _ = status.send(MachineInfo { id: entry.id.clone(), name: entry.name.clone(), online, error });
     };
     loop {
-        let host = entry.ssh.clone().unwrap_or_default();
-        let cq = entry.cq_path.clone().unwrap_or_else(|| "cq".into());
-        let err = match open_ssh(&host, &cq, entry.login_shell) {
-            Ok(stream) => match relay(&entry.id, stream, &mut subs, &mut rx, &out, &report).await {
-                Ok(()) => "disconnected".to_owned(),
-                Err(e) => format!("{e:#}"),
-            },
+        let err = match Bridge::open(&entry) {
+            Ok(mut b) => {
+                let stream = b.stream.take().expect("fresh");
+                let err = relay(&entry.id, stream, &mut subs, &mut rx, &out, &report).await.err();
+                b.close(err.unwrap_or_else(|| anyhow::anyhow!("disconnected"))).await
+            }
             Err(e) => format!("{e:#}"),
         };
         report(false, Some(err));
@@ -175,8 +233,7 @@ async fn relay(
 ) -> Result<()> {
     let (rd, mut wr) = tokio::io::split(stream);
     let mut msgs = spawn_reader(rd);
-    let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: false };
-    write_message(&mut wr, &Message::Hello(hello)).await?;
+    write_message(&mut wr, &Message::Hello(hello())).await?;
     write_message(&mut wr, &Message::ListSessions).await?;
     for s in subs.values() {
         write_message(&mut wr, &untag_outgoing(Message::Subscribe(s.clone()))).await?;
@@ -188,7 +245,7 @@ async fn relay(
                 let Some(msg) = msg else { return Ok(()) };
                 let msg = msg?;
                 if let Message::Error(e) = &msg {
-                    bail!("remote daemon: {e}");
+                    bail!("{REMOTE_ERROR}{e}");
                 }
                 // The first reply proves the bridge works (ssh may fail only after spawning).
                 if !online {

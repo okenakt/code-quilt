@@ -476,10 +476,7 @@ fn handle_desktop(client: u64, msg: Message) -> Option<Message> {
 }
 
 fn local_info() -> MachineInfo {
-    let label = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| LOCAL_MACHINE.to_owned());
-    MachineInfo { id: LOCAL_MACHINE.to_owned(), label, online: true, error: None }
+    MachineInfo { id: LOCAL_MACHINE.to_owned(), name: LOCAL_MACHINE.to_owned(), online: true, error: None }
 }
 
 async fn serve(stream: ipc::BoxStream) -> Result<()> {
@@ -505,7 +502,7 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
 
     // Remote machines, one relay task per machine for this client.
     let entries: Vec<MachineEntry> = if hello.federate {
-        machine::load().into_iter().filter(|m| m.ssh.is_some()).collect()
+        machine::load()
     } else {
         Vec::new()
     };
@@ -513,7 +510,7 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
     let mut machines: Vec<MachineInfo> = vec![local_info()];
     let mut remotes: HashMap<String, Conn> = HashMap::new();
     for e in entries {
-        machines.push(MachineInfo { id: e.id.clone(), label: e.label.clone(), online: false, error: None });
+        machines.push(MachineInfo { id: e.id.clone(), name: e.name.clone(), online: false, error: None });
         let (tx, rx) = mpsc::unbounded_channel();
         let id = e.id.clone();
         let task = tokio::spawn(remote::run(e, rx, out.clone(), status_tx.clone()));

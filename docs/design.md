@@ -94,9 +94,12 @@ flowchart TB
 
 ### リモート接続
 
-- ローカルのdaemonが `ssh -T -o BatchMode=yes -o ServerAliveInterval=15 <host> cq bridge` を実行し、その標準入出力をリモートのdaemonとの通信路にする。リモート側にポートを開けず、既存のSSH鍵認証を使う（鍵はパスフレーズなしかssh-agentで使える必要がある）。
-- リモートの `cq bridge` は、リモートのdaemonが無ければ起動する。`login_shell` を指定したマシンは `sh -lc` 経由で起動し、`~/.profile` のPATH（Volta、`~/.local/bin` など）をエージェントに届ける。
-- 中央サーバーは持たないので、マシンは `cq machine add` で事前に登録する。接続できないマシンは「オフライン」と表示し、5秒おきに再接続を試み続ける。
+- ローカルのdaemonが `ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 [-p PORT] <host> cq bridge` を実行し、その標準入出力をリモートのdaemonとの通信路にする。リモート側にポートを開けない。
+- 認証はsshに任せ、パスワードを聞かれない方法（鍵、ssh-agent）を前提にする。sshを張るのは端末を持たないdaemonで、クライアントの接続ごと・切れるたびに張り直すため、パスワードを聞く先も機会もない。
+- リモートの `cq bridge` は、リモートのdaemonが無ければ起動する。Unixのマシンでは `sh -lc` 経由で起動し、`~/.profile` のPATH（Volta、`~/.local/bin` など）をエージェントに届ける。WindowsのマシンではOpenSSHの既定のシェルから直接起動する。
+- 中央サーバーは持たないので、マシンは `cq machine add` で事前に登録する。登録時にdaemonと同じ方法で一度つなぎ、`hostname && uname -s || ver`（sh・cmd・PowerShellのどれでも同じ意味になる）でOSとホスト名を調べ、`cq bridge` との `Hello` でプロトコルのバージョンが合うことを確かめる。
+- マシンは、登録時に決めて変えない内部のidと、ユーザーが使う名前を持つ。プロトコル、boardのペインの配置・ピンはidで持ち、CLI・MCP・オーケストレーターの `scope`・boardのコマンドの引数では名前を使う。名前とidの対応はcq-clientの `Model`（daemonが送る `MachineInfo`）か `config.toml` で引く。手元のマシンはidも名前も `local`。
+- 接続できないマシンは「オフライン」と表示し、5秒おきに再接続を試み続ける。理由にはリモートのdaemonが返したエラー（プロトコルの不一致など）を、無ければsshが標準エラーに出した最後の行を使う。
 
 ### プロトコルと安全性
 

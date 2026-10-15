@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { MachineInfo, RateWindow, SessionState } from "../types";
 import { AgentBadge } from "./agent-badge";
+import { machineName } from "../store";
 
 type AccountUsage = {
   key: string;
@@ -37,7 +38,7 @@ const agentGroups = (sessions: SessionState[], machines: MachineInfo[]): AgentGr
       updatedAt: 0,
       machines: [],
     };
-    const machineLabel = machines.find((m) => m.id === s.machine)?.label ?? s.machine;
+    const machineLabel = machineName(machines, s.machine);
     if (s.activity !== "exited" && !row.machines.includes(machineLabel)) row.machines.push(machineLabel);
     if (s.status.receivedAt > row.updatedAt && (s.status.fiveHour || s.status.sevenDay)) {
       row.fiveHour = s.status.fiveHour;

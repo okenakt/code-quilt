@@ -163,11 +163,11 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                 // Orchestrators would keep answering each other's updates.
                 let is_orchestrator = machine == LOCAL_MACHINE
                     && (Some(&session) == orchestrator_id.as_ref() || s.meta.name.as_ref().is_some_and(|n| commands.contains(&format!("orchestrator:{n}"))));
-                if is_orchestrator || !scope.admits(&s.machine) {
+                if is_orchestrator || !scope.admits(model.machine_name(&s.machine)) {
                     continue;
                 }
-                let item = |kind| Item { key: s.key(), label: s.label().to_owned(), kind, at_ms: ev.received_at_ms };
-                let key = s.key();
+                let key = model.key(s);
+                let item = |kind| Item { key: key.clone(), label: s.label().to_owned(), kind, at_ms: ev.received_at_ms };
                 let hook = ev.payload.get("hook_event_name").and_then(Value::as_str);
                 let cq_type = if ev.source == "cq" { ev.payload.get("type").and_then(Value::as_str) } else { None };
                 let new = match (hook, cq_type) {

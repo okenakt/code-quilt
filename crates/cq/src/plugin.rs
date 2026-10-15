@@ -298,7 +298,7 @@ pub fn expand_args(
 ) -> Result<Vec<String>> {
     let lookup = |key: &str| -> Option<String> {
         match key {
-            "machine" => return context.map(|c| c.machine.clone()),
+            "machine" => return context.map(|c| crate::machine::name_of(&c.machine)),
             "session" => return context.map(|c| c.session.clone()),
             _ => {}
         }
