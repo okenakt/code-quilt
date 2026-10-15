@@ -43,6 +43,7 @@
 - 他のセッションの承認待ち・質問・ターン終了をまとめて報告し、ユーザーの指示や承認を各セッションに送るオーケストレーター。オーケストレーター自身は代わりに判断しない。
 - 頼めば、指定したディレクトリで新しいセッションを起動し、最初の指示を渡す（確認なし）。
 - エージェントはClaude CodeかCodex。担当するマシン、モデル、人格、届け方は設定で変えられ、起動時に `KEY=VALUE` で一時的に上書きできる（例 `agent=codex`）。名前の違うオーケストレーターを複数動かせる。
+- どのマシンでも、そのマシンで `cq orchestrator start` すれば動く。マシンごとにオーケストレーターを置き、`scope` で自分のマシンだけを担当させることもできる。リモートのオーケストレーターとも、手元のboardからほかのセッションと同じように対話できる。オーケストレーター同士はマシンをまたいでも互いを報告しない。
 
 ### プラグイン
 
@@ -54,8 +55,8 @@
 
 | コマンド | 内容 |
 | --- | --- |
-| `cq claude [--cq-name NAME] [--cq-no-mcp] [claudeの引数…]` | claudeをセッションとして起動し、この端末に付ける。`--cq-no-mcp` はcqのMCPを入れない |
-| `cq codex [--cq-name NAME] [--cq-no-mcp] [codexの引数…]` | codexをセッションとして起動し、この端末に付ける |
+| `cq claude [--cq-name NAME] [--cq-no-mcp] [--cq-orchestrator] [claudeの引数…]` | claudeをセッションとして起動し、この端末に付ける。`--cq-no-mcp` はcqのMCPを入れない。`--cq-orchestrator` はオーケストレーターの印を付け（courierはどのマシンでもこのセッションを報告しない）、cqのMCPを入れない（`cq orchestrator start` が使う） |
+| `cq codex [--cq-name NAME] [--cq-no-mcp] [--cq-orchestrator] [codexの引数…]` | codexをセッションとして起動し、この端末に付ける |
 | `cq attach TARGET`（`cq a`） | 動いているセッションにこの端末を付ける。Ctrl+\ で切り離す |
 | `cq resume ID` | 終了したセッション（cqのIDか一意な前方一致）を同じIDのまま起動し直し、この端末に付ける。エージェント・ディレクトリ・名前は記録から引き、`claude --resume` / `codex resume` で会話を引き継ぐ |
 | `cq ls [-a | --all]` | このマシンの動いているセッションの一覧。`--all` は終了したものも出す |

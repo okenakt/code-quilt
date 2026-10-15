@@ -22,6 +22,7 @@ pub struct HostArgs {
     pub cwd: String,
     pub size: Size,
     pub name: Option<String>,
+    pub orchestrator: bool,
     pub command: Vec<String>,
 }
 
@@ -465,6 +466,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
         name: args.name.clone(),
         account: earlier.as_ref().and_then(|m| m.account.clone()),
         files: earlier.map(|m| m.files).unwrap_or_default(),
+        orchestrator: args.orchestrator,
     };
     session::save(&meta)?;
 

@@ -164,11 +164,9 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                     continue;
                 }
                 let Some(s) = model.sessions.get(&(machine.clone(), session.clone())) else { continue };
-                // Orchestrators (this one and any other with a running courier) are not reported, or two
-                // Orchestrators would keep answering each other's updates.
-                let is_orchestrator = machine == here()
-                    && (Some(&session) == orchestrator_id.as_ref() || s.meta.name.as_ref().is_some_and(|n| commands.contains(&format!("orchestrator:{n}"))));
-                if is_orchestrator || !scope.admits(model.machine_name(&s.machine)) {
+                // Orchestrators on any machine are not reported, or two orchestrators would keep
+                // answering each other's updates.
+                if s.meta.orchestrator || !scope.admits(model.machine_name(&s.machine)) {
                     continue;
                 }
                 let key = model.key(s);

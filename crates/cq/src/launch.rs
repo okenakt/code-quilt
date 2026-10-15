@@ -32,7 +32,7 @@ fn cq_settings() -> Result<serde_json::Value> {
 }
 
 /// Spawns `cq host` for a new session.
-pub fn spawn_host(id: &str, agent: &str, cwd: &str, size: Size, name: Option<&str>, command: &[String]) -> Result<()> {
+pub fn spawn_host(id: &str, agent: &str, cwd: &str, size: Size, name: Option<&str>, orchestrator: bool, command: &[String]) -> Result<()> {
     let mut cmd = Command::new(std::env::current_exe()?);
     cmd.args(["host", "--id", id, "--agent", agent, "--cwd", cwd])
         .args(["--cols", &size.cols.to_string(), "--rows", &size.rows.to_string()]);
@@ -41,6 +41,9 @@ pub fn spawn_host(id: &str, agent: &str, cwd: &str, size: Size, name: Option<&st
             anyhow::bail!("session {other} is already named '{n}'");
         }
         cmd.args(["--name", n]);
+    }
+    if orchestrator {
+        cmd.arg("--orchestrator");
     }
     cmd.arg("--").args(command);
     cq_client::spawn_detached(&mut cmd, &cq_client::log_file(id)?)
@@ -129,9 +132,9 @@ pub fn launch_detached(req: &cq_protocol::Launch) -> Result<String> {
     let cwd = crate::config::check_allowed(&req.cwd)?;
     paths::ensure_dirs()?;
     let id = cq_client::new_id();
-    let command = agent_command(&req.agent, None, !req.no_mcp, &req.args)?;
+    let command = agent_command(&req.agent, None, !req.orchestrator, &req.args)?;
     let size = Size { cols: req.cols.max(20), rows: req.rows.max(5) };
-    spawn_host(&id, &req.agent, &cwd.to_string_lossy(), size, req.name.as_deref(), &command)?;
+    spawn_host(&id, &req.agent, &cwd.to_string_lossy(), size, req.name.as_deref(), req.orchestrator, &command)?;
     Ok(id)
 }
 
@@ -142,18 +145,18 @@ pub fn resume_detached(key: &str, size: Size) -> Result<String> {
     let list = session::list()?;
     let m = session::pick_ended(&list, key)?;
     let cwd = crate::config::check_allowed(&m.cwd)?;
-    let command = agent_command(&m.agent, m.agent_session_id.as_deref(), true, &[])?;
-    spawn_host(&m.id, &m.agent, &cwd.to_string_lossy(), size, m.name.as_deref(), &command)?;
+    let command = agent_command(&m.agent, m.agent_session_id.as_deref(), !m.orchestrator, &[])?;
+    spawn_host(&m.id, &m.agent, &cwd.to_string_lossy(), size, m.name.as_deref(), m.orchestrator, &command)?;
     Ok(m.id.clone())
 }
 
 /// Runs `cq claude|codex [args...]` in this terminal and returns the process exit code.
-pub async fn run_agent(agent: &str, name: Option<String>, mcp: bool, args: Vec<String>) -> Result<i32> {
+pub async fn run_agent(agent: &str, labels: crate::Labels, args: Vec<String>) -> Result<i32> {
     paths::ensure_dirs()?;
     let id = cq_client::new_id();
-    let command = agent_command(agent, None, mcp, &args)?;
+    let command = agent_command(agent, None, labels.mcp, &args)?;
     let cwd = std::env::current_dir()?.to_string_lossy().into_owned();
-    spawn_host(&id, agent, &cwd, crate::term::size(), name.as_deref(), &command)?;
+    spawn_host(&id, agent, &cwd, crate::term::size(), labels.name.as_deref(), labels.orchestrator, &command)?;
     attach_new(&id).await
 }
 

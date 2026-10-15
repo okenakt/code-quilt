@@ -16,7 +16,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Version of the daemon protocol (machine-tagged relay through `cq daemon`). Versioned
 /// separately so running hosts stay reachable when only the daemon protocol changes.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 7;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 8;
 
 /// Upper bound for a single frame, to reject corrupted or hostile length prefixes.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -89,6 +89,9 @@ pub struct SessionMeta {
     /// through [`ReadFile`].
     #[serde(default)]
     pub files: Vec<SharedFile>,
+    /// An orchestrator session: it brings its own cq MCP server, and couriers do not report it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub orchestrator: bool,
 }
 
 /// A file an agent shared with the user.
@@ -320,9 +323,9 @@ pub struct Launch {
     pub args: Vec<String>,
     #[serde(default)]
     pub name: Option<String>,
-    /// Leave out CodeQuilt's worker MCP server, for a session that brings its own (an orchestrator).
+    /// Start an orchestrator session (see [`SessionMeta::orchestrator`]).
     #[serde(default)]
-    pub no_mcp: bool,
+    pub orchestrator: bool,
     pub cols: u16,
     pub rows: u16,
 }

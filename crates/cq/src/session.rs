@@ -150,6 +150,7 @@ mod tests {
             name: name.map(Into::into),
             account: None,
             files: Vec::new(),
+            orchestrator: false,
         }
     }
 

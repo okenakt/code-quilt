@@ -192,7 +192,7 @@ impl Server {
             cwd,
             args: Vec::new(),
             name: name.clone(),
-            no_mcp: false,
+            orchestrator: false,
             cols: 120,
             rows: 36,
         };

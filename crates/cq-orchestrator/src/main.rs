@@ -168,8 +168,7 @@ async fn launch_detached(name: &str, agent: &str, cwd: &std::path::Path, args: V
         cwd: cwd.to_string_lossy().into_owned(),
         args,
         name: Some(name.into()),
-        // The orchestrator has its own cq MCP server (`agent_args`).
-        no_mcp: true,
+        orchestrator: true,
         cols: 120,
         rows: 36,
     };
@@ -216,7 +215,7 @@ async fn start(args: Vec<String>, detach: bool, extra: Vec<String>) -> Result<i3
         return Ok(0);
     }
     let status = std::process::Command::new(cq_client::cq_binary())
-        .args([cfg.agent.as_str(), "--cq-name", name, "--cq-no-mcp"])
+        .args([cfg.agent.as_str(), "--cq-name", name, "--cq-orchestrator"])
         .args(&args)
         .current_dir(&cwd)
         .status()
