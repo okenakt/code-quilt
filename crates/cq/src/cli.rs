@@ -195,7 +195,11 @@ async fn find_session(conn: &mut cq_client::DaemonClient, target: &str) -> Resul
         }
         match conn.msgs.recv().await.context("daemon connection closed")?? {
             Message::MachineList(l) => machines = l,
-            Message::SessionList(l) => lists.push((l.machine, l.sessions)),
+            // A machine's list is its latest snapshot; the daemon resends it when sessions change.
+            Message::SessionList(l) => {
+                lists.retain(|(id, _)| *id != l.machine);
+                lists.push((l.machine, l.sessions));
+            }
             Message::Error(e) => bail!("daemon: {e}"),
             _ => {}
         }
