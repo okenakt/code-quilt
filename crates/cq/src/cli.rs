@@ -352,7 +352,7 @@ pub async fn screen_snapshot(target: &str) -> Result<Vec<u8>> {
     let id = crate::session::pick(&crate::session::list()?, target)?.id.clone();
     let stream = crate::ipc::connect(&crate::paths::session_endpoint(&id)?, Duration::from_secs(2)).await?;
     let (mut rd, mut wr) = tokio::io::split(stream);
-    let hello = cq_protocol::Hello { protocol_version: cq_protocol::PROTOCOL_VERSION, kind: cq_protocol::ClientKind::Hub, cols: 0, rows: 0, federate: false };
+    let hello = cq_protocol::Hello::new(cq_protocol::PROTOCOL_VERSION, cq_protocol::ClientKind::Hub);
     cq_protocol::write_message(&mut wr, &Message::Hello(hello)).await?;
     while let Some(msg) = cq_protocol::read_message(&mut rd).await? {
         if let Message::Snapshot(bytes) = msg {

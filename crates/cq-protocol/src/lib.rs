@@ -17,7 +17,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Version of the daemon protocol (machine-tagged relay through `cq daemon`). Versioned
 /// separately so running hosts stay reachable when only the daemon protocol changes.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 5;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 6;
 
 /// Upper bound for a single frame, to reject corrupted or hostile length prefixes.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -46,6 +46,20 @@ pub struct Hello {
     /// Daemon clients only: also relay the registered remote machines.
     #[serde(default)]
     pub federate: bool,
+    /// With `federate`: machines to leave out (the remote machine asking through its upstream).
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    /// Daemon clients only: this is another daemon relaying its clients (an upstream), which
+    /// may serve this daemon's clients in turn.
+    #[serde(default)]
+    pub relay: bool,
+}
+
+impl Hello {
+    /// A hello without a terminal size or daemon options.
+    pub fn new(protocol_version: u32, kind: ClientKind) -> Self {
+        Self { protocol_version, kind, cols: 0, rows: 0, federate: false, exclude: Vec::new(), relay: false }
+    }
 }
 
 /// Static metadata describing a session, also persisted as `sessions/<id>.json`.
@@ -443,6 +457,11 @@ pub enum Message {
     InvokeCommand(InvokeCommand),
     /// Daemon to the invoking client: outcome of an invocation with an id.
     CommandResult(CommandResult),
+    /// Between a daemon and the daemon that connected to it over ssh (its upstream): a message of
+    /// the remote daemon's client `conn`, which the upstream serves like one of its own clients.
+    Upstream { conn: u64, inner: Box<Message> },
+    /// Remote daemon to its upstream: client `conn` went away.
+    UpstreamClose(u64),
 }
 
 mod kind {
@@ -470,6 +489,8 @@ mod kind {
     pub const SHUTDOWN: u8 = 0x3b;
     pub const READ_FILE: u8 = 0x3c;
     pub const FILE_CONTENT: u8 = 0x3d;
+    pub const UPSTREAM: u8 = 0x50;
+    pub const UPSTREAM_CLOSE: u8 = 0x51;
     pub const SHARE_FILE: u8 = 0x26;
     pub const INJECT: u8 = 0x23;
     pub const RENAME: u8 = 0x24;
@@ -547,6 +568,12 @@ impl Message {
             Message::ReadFile(v) => (kind::READ_FILE, serde_json::to_vec(v)?),
             // [u64 LE id][raw bytes]
             Message::FileContent { id, data } => (kind::FILE_CONTENT, [&id.to_le_bytes()[..], data].concat()),
+            Message::Upstream { conn, inner } => {
+                // [u64 LE conn][inner kind][inner payload]
+                let (ik, ip) = inner.encode_parts()?;
+                (kind::UPSTREAM, [&conn.to_le_bytes()[..], &[ik], &ip].concat())
+            }
+            Message::UpstreamClose(conn) => (kind::UPSTREAM_CLOSE, conn.to_le_bytes().to_vec()),
             Message::Shutdown => (kind::SHUTDOWN, Vec::new()),
             Message::Inject(v) => (kind::INJECT, serde_json::to_vec(v)?),
             Message::Rename(v) => (kind::RENAME, serde_json::to_vec(v)?),
@@ -611,6 +638,14 @@ impl Message {
             kind::FILE_CONTENT => {
                 let Some(id) = payload.first_chunk::<8>() else { bail!("short file content frame") };
                 Message::FileContent { id: u64::from_le_bytes(*id), data: payload[8..].to_vec() }
+            }
+            kind::UPSTREAM => {
+                let (Some(conn), Some(&ik)) = (payload.first_chunk::<8>(), payload.get(8)) else { bail!("short upstream frame") };
+                Message::Upstream { conn: u64::from_le_bytes(*conn), inner: Box::new(Message::decode(ik, payload[9..].to_vec())?) }
+            }
+            kind::UPSTREAM_CLOSE => {
+                let Some(conn) = payload.first_chunk::<8>() else { bail!("short upstream frame") };
+                Message::UpstreamClose(u64::from_le_bytes(*conn))
             }
             kind::SHUTDOWN => Message::Shutdown,
             kind::INJECT => Message::Inject(serde_json::from_slice(&payload)?),
@@ -698,6 +733,7 @@ mod tests {
                 inner: Box::new(Message::Input(b"x".to_vec())),
             },
             Message::FileContent { id: 7, data: vec![0, 255, 1] },
+            Message::Upstream { conn: 9, inner: Box::new(Message::Input(b"y".to_vec())) },
         ];
         let mut buf = Vec::new();
         for m in &msgs {
@@ -716,6 +752,10 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
         assert!(matches!(read_message(&mut cur).await.unwrap(), Some(Message::FileContent { id: 7, data }) if data == [0, 255, 1]));
+        match read_message(&mut cur).await.unwrap() {
+            Some(Message::Upstream { conn: 9, inner }) => assert!(matches!(*inner, Message::Input(b) if b == b"y")),
+            other => panic!("unexpected {other:?}"),
+        }
         assert!(read_message(&mut cur).await.unwrap().is_none());
     }
 }

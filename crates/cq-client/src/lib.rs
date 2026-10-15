@@ -367,13 +367,7 @@ impl DaemonClient {
     pub async fn open(federate: bool) -> Result<Self> {
         let (rd, wr) = tokio::io::split(connect_daemon().await?);
         let mut client = Self { msgs: cq_protocol::spawn_reader(rd), wr, federate };
-        let hello = cq_protocol::Hello {
-            protocol_version: cq_protocol::DAEMON_PROTOCOL_VERSION,
-            kind: cq_protocol::ClientKind::Hub,
-            cols: 0,
-            rows: 0,
-            federate,
-        };
+        let hello = cq_protocol::Hello { federate, ..cq_protocol::Hello::new(cq_protocol::DAEMON_PROTOCOL_VERSION, cq_protocol::ClientKind::Hub) };
         client.send(&Message::Hello(hello)).await?;
         Ok(client)
     }

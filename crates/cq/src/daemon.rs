@@ -17,6 +17,7 @@ use cq_protocol::{
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 /// Runs the daemon. Returns immediately if another daemon already owns the endpoint.
@@ -60,9 +61,10 @@ pub async fn bridge() -> Result<()> {
     Ok(())
 }
 
-struct Conn {
-    tx: UnboundedSender<Message>,
-    task: JoinHandle<()>,
+/// A task relaying one connection, fed through `tx`; dropping it ends the task.
+pub struct Conn {
+    pub tx: UnboundedSender<Message>,
+    pub task: JoinHandle<()>,
 }
 
 impl Drop for Conn {
@@ -86,7 +88,7 @@ fn open_host(machine: &str, meta: &SessionMeta, kind: ClientKind, cols: u16, row
             let stream = ipc::connect(&pipe, Duration::from_secs(1)).await?;
             let (rd, mut wr) = tokio::io::split(stream);
             let mut msgs = spawn_reader(rd);
-            let hello = Hello { protocol_version: PROTOCOL_VERSION, kind, cols, rows, federate: false };
+            let hello = Hello { cols, rows, ..Hello::new(PROTOCOL_VERSION, kind) };
             write_message(&mut wr, &Message::Hello(hello)).await?;
             loop {
                 tokio::select! {
@@ -478,6 +480,39 @@ fn handle_desktop(client: u64, msg: Message) -> Option<Message> {
     None
 }
 
+/// A connection from a daemon that reached this one over ssh (an upstream): its client id and
+/// where to send it messages.
+type Link = (u64, UnboundedSender<Message>);
+
+/// Upstreams connected to this daemon (newest last), and where the answers they give for each of
+/// this daemon's federated clients go.
+#[derive(Default)]
+struct Links {
+    upstreams: Vec<Link>,
+    inboxes: HashMap<u64, UnboundedSender<Message>>,
+}
+
+fn links() -> &'static std::sync::Mutex<Links> {
+    static LINKS: std::sync::OnceLock<std::sync::Mutex<Links>> = std::sync::OnceLock::new();
+    LINKS.get_or_init(Default::default)
+}
+
+/// The upstream federated clients use: the newest one.
+fn current_upstream() -> &'static watch::Sender<Option<Link>> {
+    static CURRENT: std::sync::OnceLock<watch::Sender<Option<Link>>> = std::sync::OnceLock::new();
+    CURRENT.get_or_init(|| watch::channel(None).0)
+}
+
+fn set_upstreams(f: impl FnOnce(&mut Vec<Link>)) {
+    let mut l = links().lock().unwrap();
+    f(&mut l.upstreams);
+    current_upstream().send_replace(l.upstreams.last().cloned());
+}
+
+fn machine_list(own: &[MachineInfo], upstream: &[MachineInfo]) -> Message {
+    Message::MachineList(own.iter().chain(upstream).cloned().collect())
+}
+
 async fn serve(stream: ipc::BoxStream) -> Result<()> {
     let (mut rd, mut wr) = tokio::io::split(stream);
     let hello = match tokio::time::timeout(Duration::from_secs(5), read_message(&mut rd)).await?? {
@@ -501,7 +536,7 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
 
     // Remote machines, one relay task per machine for this client.
     let entries: Vec<MachineEntry> = if hello.federate {
-        machine::load()
+        machine::load().into_iter().filter(|e| !hello.exclude.contains(&e.id)).collect()
     } else {
         Vec::new()
     };
@@ -529,6 +564,20 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
         id
     };
 
+    // A federated client also sees, through the upstream, the machines this one did not register.
+    if hello.relay {
+        set_upstreams(|u| u.push((client_id, out.clone())));
+    }
+    let (inbox_tx, mut inbox_rx) = mpsc::unbounded_channel::<Message>();
+    let mut upstream_rx = current_upstream().subscribe();
+    let mut upstream: Option<Link> = None;
+    let mut upstream_machines: Vec<MachineInfo> = Vec::new();
+    let mut upstream_subs: HashMap<String, Subscribe> = HashMap::new();
+    if hello.federate {
+        links().lock().unwrap().inboxes.insert(client_id, inbox_tx);
+        upstream_rx.mark_changed();
+    }
+
     let mut local = LocalRelay::new(me.id.clone(), out.clone());
     let mut msgs = spawn_reader(rd);
     let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -541,16 +590,59 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                 if let Some(m) = machines.iter_mut().find(|m| m.id == info.id) {
                     if *m != info {
                         *m = info;
-                        let _ = out.send(Message::MachineList(machines.clone()));
+                        let _ = out.send(machine_list(&machines, &upstream_machines));
                     }
                 }
             }
+            Ok(()) = upstream_rx.changed(), if hello.federate => {
+                let next = upstream_rx.borrow_and_update().clone();
+                if next.as_ref().map(|l| l.0) == upstream.as_ref().map(|l| l.0) {
+                    continue;
+                }
+                if let Some((_, tx)) = &upstream {
+                    let _ = tx.send(Message::UpstreamClose(client_id));
+                }
+                upstream = next;
+                match &upstream {
+                    Some((_, tx)) => {
+                        let exclude = machines.iter().map(|m| m.id.clone()).collect();
+                        let hello = Hello { federate: true, exclude, ..Hello::new(DAEMON_PROTOCOL_VERSION, ClientKind::Hub) };
+                        let resubscribe = upstream_subs.values().cloned().map(Message::Subscribe);
+                        for m in [Message::Hello(hello), Message::ListSessions].into_iter().chain(resubscribe) {
+                            let _ = tx.send(Message::Upstream { conn: client_id, inner: Box::new(m) });
+                        }
+                    }
+                    None => {
+                        for m in &mut upstream_machines {
+                            m.online = false;
+                            m.error = Some("unreachable while no upstream is connected to this machine".into());
+                        }
+                        let _ = out.send(machine_list(&machines, &upstream_machines));
+                    }
+                }
+            }
+            Some(msg) = inbox_rx.recv(), if hello.federate => match msg {
+                Message::MachineList(l) => {
+                    upstream_machines = l.into_iter().filter(|m| machines.iter().all(|x| x.id != m.id)).collect();
+                    let _ = out.send(machine_list(&machines, &upstream_machines));
+                }
+                msg => {
+                    let _ = out.send(msg);
+                }
+            },
             msg = msgs.recv() => {
                 let msg = match msg {
                     Some(Ok(m)) => m,
                     None => break Ok(()),
                     Some(Err(e)) => break Err(e),
                 };
+                // An upstream hands back what it answered for one of this daemon's clients.
+                if let Message::Upstream { conn, inner } = msg {
+                    if let (true, Some(tx)) = (hello.relay, links().lock().unwrap().inboxes.get(&conn)) {
+                        let _ = tx.send(*inner);
+                    }
+                    continue;
+                }
                 let Some(msg) = handle_desktop(client_id, msg) else { continue };
                 match target_machine(&msg).filter(|id| *id != me.id) {
                     None => {
@@ -562,14 +654,29 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                             for r in remotes.values() {
                                 let _ = r.tx.send(Message::ListSessions);
                             }
+                            if let Some((_, tx)) = &upstream {
+                                let _ = tx.send(Message::Upstream { conn: client_id, inner: Box::new(Message::ListSessions) });
+                            }
                         }
                         local.handle(msg);
                     }
-                    Some(id) => match remotes.get(id) {
-                        Some(r) => {
+                    Some(id) => match (remotes.get(id), &upstream) {
+                        (Some(r), _) => {
                             let _ = r.tx.send(msg);
                         }
-                        None => {
+                        (None, Some((_, tx))) if upstream_machines.iter().any(|m| m.id == id) => {
+                            match &msg {
+                                Message::Subscribe(s) => {
+                                    upstream_subs.insert(s.session.clone(), s.clone());
+                                }
+                                Message::Unsubscribe(r) => {
+                                    upstream_subs.remove(&r.session);
+                                }
+                                _ => {}
+                            }
+                            let _ = tx.send(Message::Upstream { conn: client_id, inner: Box::new(msg) });
+                        }
+                        _ => {
                             if let Some(rid) = msg.request_id() {
                                 let error = format!("unknown machine '{id}'");
                                 let _ = out.send(Message::RequestFailed(RequestFailed { id: rid, error }));
@@ -589,6 +696,13 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
             let list = d.command_list();
             d.broadcast(&list);
         }
+    }
+    if hello.relay {
+        set_upstreams(|u| u.retain(|(id, _)| *id != client_id));
+    }
+    links().lock().unwrap().inboxes.remove(&client_id);
+    if let Some((_, tx)) = &upstream {
+        let _ = tx.send(Message::UpstreamClose(client_id));
     }
     drop(local);
     drop(remotes);

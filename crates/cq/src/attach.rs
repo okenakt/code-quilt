@@ -38,13 +38,7 @@ pub async fn attach(endpoint: &str, connect_timeout: Duration) -> Result<Outcome
     let size = term::size();
     write_message(
         &mut wr,
-        &Message::Hello(Hello {
-            protocol_version: PROTOCOL_VERSION,
-            kind: ClientKind::Terminal,
-            cols: size.cols,
-            rows: size.rows,
-            federate: false,
-        }),
+        &Message::Hello(Hello { cols: size.cols, rows: size.rows, ..Hello::new(PROTOCOL_VERSION, ClientKind::Terminal) }),
     )
     .await?;
     match read_message(&mut rd).await? {

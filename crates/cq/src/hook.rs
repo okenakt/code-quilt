@@ -21,7 +21,7 @@ async fn send_event(ev: AgentEvent) -> Result<()> {
     let endpoint = paths::session_endpoint(&id)?;
     let mut s = ipc::connect_now(&endpoint).await?;
     let hello =
-        Hello { protocol_version: PROTOCOL_VERSION, kind: ClientKind::Event, cols: 0, rows: 0, federate: false };
+        Hello::new(PROTOCOL_VERSION, ClientKind::Event);
     write_message(&mut s, &Message::Hello(hello)).await?;
     write_message(&mut s, &Message::Event(ev)).await?;
     Ok(())

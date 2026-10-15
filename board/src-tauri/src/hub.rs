@@ -292,7 +292,7 @@ impl Hub {
 
     async fn run_connection(&self, stream: BoxStream, rx: &mut UnboundedReceiver<Message>) -> Result<()> {
         let (rd, mut wr) = tokio::io::split(stream);
-        let hello = Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: true };
+        let hello = Hello { federate: true, ..Hello::new(DAEMON_PROTOCOL_VERSION, ClientKind::Hub) };
         write_message(&mut wr, &Message::Hello(hello)).await?;
         write_message(&mut wr, &Message::ListSessions).await?;
         let resubscribe: Vec<_> = self.subs.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect();

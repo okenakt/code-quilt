@@ -2,8 +2,10 @@
 //!
 //! The remote daemon speaks the same protocol and tags its sessions with its own machine id, so
 //! its messages pass through unchanged and clients of the local daemon see every machine through
-//! one connection.
+//! one connection. The same connection carries the remote daemon's own clients the other way
+//! (`Upstream`), so they see this machine too (see docs/design.md, 上流).
 
+use crate::daemon::Conn;
 use crate::machine::{MachineEntry, Os};
 use anyhow::{Context, Result, bail};
 use cq_protocol::local::BoxStream;
@@ -11,7 +13,7 @@ use cq_protocol::{ClientKind, DAEMON_PROTOCOL_VERSION, Hello, MachineInfo, Messa
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
 /// Delay before reconnecting to an unreachable machine.
@@ -110,7 +112,7 @@ pub async fn check(e: &MachineEntry) -> Result<MachineInfo> {
     let (rd, mut wr) = tokio::io::split(b.stream.take().expect("fresh"));
     let mut msgs = spawn_reader(rd);
     let answered = async {
-        write_message(&mut wr, &Message::Hello(hello())).await?;
+        write_message(&mut wr, &Message::Hello(hello(false))).await?;
         match tokio::time::timeout(Duration::from_secs(20), msgs.recv()).await {
             Ok(Some(Ok(msg))) => introduction(msg),
             Ok(Some(Err(err))) => Err(err),
@@ -133,8 +135,8 @@ fn introduction(msg: Message) -> Result<MachineInfo> {
     }
 }
 
-fn hello() -> Hello {
-    Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: false }
+fn hello(relay: bool) -> Hello {
+    Hello { relay, ..Hello::new(DAEMON_PROTOCOL_VERSION, ClientKind::Hub) }
 }
 
 /// Keeps one client's view of a remote machine: connects, relays, and reconnects with backoff.
@@ -194,7 +196,7 @@ async fn relay(
 ) -> Result<()> {
     let (rd, mut wr) = tokio::io::split(stream);
     let mut msgs = spawn_reader(rd);
-    write_message(&mut wr, &Message::Hello(hello())).await?;
+    write_message(&mut wr, &Message::Hello(hello(true))).await?;
     // The machine at this address may have changed (reinstalled, or another host behind it).
     let me = match msgs.recv().await {
         Some(msg) => introduction(msg?)?,
@@ -208,21 +210,38 @@ async fn relay(
     for s in subs.values() {
         write_message(&mut wr, &Message::Subscribe(s.clone())).await?;
     }
+    // Clients of the remote daemon served through this connection, and what they get back.
+    let mut proxies: HashMap<u64, Conn> = HashMap::new();
+    let (down_tx, mut down_rx) = mpsc::unbounded_channel::<Message>();
     loop {
         tokio::select! {
             msg = msgs.recv() => {
                 let Some(msg) = msg else { return Ok(()) };
-                let msg = msg?;
-                if let Message::Error(e) = &msg {
-                    bail!("{REMOTE_ERROR}{e}");
+                match msg? {
+                    Message::Error(e) => bail!("{REMOTE_ERROR}{e}"),
+                    Message::Upstream { conn, inner } => match *inner {
+                        // A served client never acts as an upstream itself.
+                        Message::Hello(h) => {
+                            let hello = Message::Hello(Hello { relay: false, ..h });
+                            proxies.insert(conn, open_proxy(conn, hello, down_tx.clone()));
+                        }
+                        inner if serves_remote(&inner) => {
+                            if let Some(p) = proxies.get(&conn) {
+                                let _ = p.tx.send(inner);
+                            }
+                        }
+                        _ => {}
+                    },
+                    Message::UpstreamClose(conn) => {
+                        proxies.remove(&conn);
+                    }
+                    msg if desktop_only(&msg) || matches!(msg, Message::MachineList(_)) => {}
+                    msg => {
+                        let _ = out.send(msg);
+                    }
                 }
-                // Focus and commands belong to the desktop the client sits at, not to the
-                // remote machine; relaying them would overwrite the local daemon's.
-                if matches!(msg, Message::MachineList(_) | Message::Focus(_) | Message::CommandList(_) | Message::InvokeCommand(_) | Message::CommandResult(_)) {
-                    continue;
-                }
-                let _ = out.send(msg);
             }
+            Some(m) = down_rx.recv() => write_message(&mut wr, &m).await?,
             cmd = rx.recv() => {
                 let Some(cmd) = cmd else { return Ok(()) };
                 match &cmd {
@@ -234,4 +253,56 @@ async fn relay(
             }
         }
     }
+}
+
+/// Focus and commands belong to the desktop a client sits at; relaying them between machines
+/// would overwrite the receiving daemon's.
+fn desktop_only(msg: &Message) -> bool {
+    matches!(msg, Message::Focus(_) | Message::CommandList(_) | Message::InvokeCommand(_) | Message::CommandResult(_))
+}
+
+/// Requests a remote machine's client may make of this daemon: seeing and driving sessions, not
+/// stopping the daemon or acting for this desktop.
+fn serves_remote(msg: &Message) -> bool {
+    matches!(
+        msg,
+        Message::ListSessions
+            | Message::Subscribe(_)
+            | Message::Unsubscribe(_)
+            | Message::Routed { .. }
+            | Message::Launch(_)
+            | Message::Resume(_)
+            | Message::ListDir(_)
+            | Message::ReadFile(_)
+    )
+}
+
+/// Serves client `conn` of the remote daemon as a client of this daemon: its messages go to this
+/// daemon over a connection of their own, and the answers go back down tagged with `conn`.
+fn open_proxy(conn: u64, hello: Message, down: UnboundedSender<Message>) -> Conn {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    let task = tokio::spawn(async move {
+        let Ok(stream) = cq_client::connect_daemon().await else { return };
+        let (rd, mut wr) = tokio::io::split(stream);
+        let mut msgs = spawn_reader(rd);
+        if write_message(&mut wr, &hello).await.is_err() {
+            return;
+        }
+        loop {
+            tokio::select! {
+                m = rx.recv() => match m {
+                    Some(m) if write_message(&mut wr, &m).await.is_ok() => {}
+                    _ => return,
+                },
+                m = msgs.recv() => match m {
+                    Some(Ok(m)) if desktop_only(&m) => {}
+                    Some(Ok(m)) => {
+                        let _ = down.send(Message::Upstream { conn, inner: Box::new(m) });
+                    }
+                    _ => return,
+                },
+            }
+        }
+    });
+    Conn { tx, task }
 }
