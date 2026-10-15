@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use cq_protocol::{
-    LOCAL_MACHINE, Message, SessionStatus,
+    Message, SessionStatus,
 };
 use std::time::Duration;
 
@@ -52,12 +52,9 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
     // Hosts replay their latest status on connect; stop once every reachable machine has
     // reported and nothing new arrived for a moment.
     loop {
-        let all_listed = if local_only {
-            listed.iter().any(|m| m == LOCAL_MACHINE)
-        } else {
-            !machines.is_empty()
-                && machines.iter().all(|m| listed.contains(&m.id) || (!m.online && m.error.is_some()))
-        };
+        // The daemon lists itself (and, when federated, every remote machine) first.
+        let all_listed = !machines.is_empty()
+            && machines.iter().all(|m| listed.contains(&m.id) || (!m.online && m.error.is_some()));
         let wait = if all_listed { Duration::from_millis(700) } else { Duration::from_millis(1500) };
         let next = match tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + wait), conn.msgs.recv()).await {
             Ok(Some(m)) => m?,
@@ -188,16 +185,47 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Splits `machine:id` (or a bare local id) into the machine's name and the session.
-pub fn parse_target(target: &str) -> (String, String) {
+/// Splits `machine:session` into the machine's name, when given, and the session.
+pub fn parse_target(target: &str) -> (Option<String>, String) {
     match target.split_once(':') {
-        Some((m, id)) if !m.is_empty() && !m.contains(['\\', '/']) => (m.to_owned(), id.to_owned()),
-        _ => (LOCAL_MACHINE.to_owned(), target.to_owned()),
+        Some((m, id)) if !m.is_empty() && !m.contains(['\\', '/']) => (Some(m.to_owned()), id.to_owned()),
+        _ => (None, target.to_owned()),
     }
 }
 
 /// Waits for the session to exit instead of a confirmation event.
 pub const EXITED: &str = "<exit>";
+
+/// Finds the running session `target` names, on its machine or else on any machine. Returns the
+/// machine id and the session id.
+async fn find_session(conn: &mut cq_client::DaemonClient, target: &str) -> Result<(String, String)> {
+    let (name, key) = parse_target(target);
+    let machine = name.as_deref().map(crate::machine::id_of).transpose()?;
+    conn.send(&Message::ListSessions).await?;
+    let mut machines: Vec<cq_protocol::MachineInfo> = Vec::new();
+    let mut lists: Vec<(String, Vec<cq_protocol::SessionMeta>)> = Vec::new();
+    let wanted = |m: &cq_protocol::MachineInfo| machine.as_ref().is_none_or(|id| *id == m.id);
+    loop {
+        let settled = !machines.is_empty()
+            && machines.iter().filter(|m| wanted(m)).all(|m| lists.iter().any(|(id, _)| *id == m.id) || (!m.online && m.error.is_some()));
+        if settled {
+            break;
+        }
+        match conn.msgs.recv().await.context("daemon connection closed")?? {
+            Message::MachineList(l) => machines = l,
+            Message::SessionList(l) => lists.push((l.machine, l.sessions)),
+            Message::Error(e) => bail!("daemon: {e}"),
+            _ => {}
+        }
+    }
+    if let (Some(name), Some(m)) = (&name, machines.iter().find(|m| wanted(m) && !m.online)) {
+        bail!("machine {name} is offline: {}", m.error.as_deref().unwrap_or_default());
+    }
+    let candidates: Vec<_> = lists.iter().filter(|(id, _)| machines.iter().any(|m| m.id == *id && wanted(m))).flat_map(|(_, s)| s.clone()).collect();
+    let id = crate::session::pick(&candidates, &key)?.id.clone();
+    let machine = lists.iter().find(|(_, s)| s.iter().any(|m| m.id == id)).map(|(m, _)| m.clone()).expect("picked from these lists");
+    Ok((machine, id))
+}
 
 /// Sends a control message to a running session and waits until the host confirms it with a
 /// `cq` event of type `confirm`, or until the session exits when `confirm` is [`EXITED`].
@@ -207,37 +235,18 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
             Message::Terminate(t) => Duration::from_millis(t.grace_ms),
             _ => Duration::ZERO,
         };
-    let (name, key) = parse_target(target);
-    let machine = crate::machine::id_of(&name)?;
-    let mut conn = cq_client::DaemonClient::open(machine != LOCAL_MACHINE).await?;
-    conn.send(&Message::ListSessions).await?;
+    // Other machines are reached only through a federated connection.
+    let here = crate::machine::local()?.name;
+    let only_here = parse_target(target).0.is_some_and(|n| n == here);
+    let mut conn = cq_client::DaemonClient::open(!only_here).await?;
 
     let run = async {
-        let mut session: Option<String> = None;
-        let mut inner = Some(inner);
-        let mut sent_ms = 0u64;
+        let (machine, session) = find_session(&mut conn, target).await?;
+        let sent_ms = crate::session::now_ms();
+        conn.send(&Message::Routed { machine: machine.clone(), session: session.clone(), inner: Box::new(inner) }).await?;
         while let Some(msg) = conn.msgs.recv().await {
             match msg? {
-                Message::SessionList(l) if l.machine == machine && session.is_none() => {
-                    let id = crate::session::pick(&l.sessions, &key)?.id.clone();
-                    let msg = Message::Routed {
-                        machine: machine.clone(),
-                        session: id.clone(),
-                        inner: Box::new(inner.take().expect("sent once")),
-                    };
-                    sent_ms = crate::session::now_ms();
-                    conn.send(&msg).await?;
-                    session = Some(id);
-                }
-                Message::MachineList(list) => {
-                    if let Some(m) = list.iter().find(|m| m.id == machine && !m.online && m.error.is_some()) {
-                        bail!("machine {name} is offline: {}", m.error.as_deref().unwrap_or_default());
-                    }
-                    if list.iter().all(|m| m.id != machine) {
-                        bail!("unknown machine '{name}'");
-                    }
-                }
-                Message::Routed { machine: m, session: s, inner } if m == machine && Some(&s) == session.as_ref() => {
+                Message::Routed { machine: m, session: s, inner } if m == machine && s == session => {
                     if confirm == EXITED && matches!(*inner, Message::Exit(_)) {
                         return Ok(s);
                     }
@@ -261,7 +270,6 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
     };
     tokio::time::timeout(limit, run).await.context("timed out waiting for the session")?
 }
-
 /// `cq run NAME --arg k=v…`: invokes a command through the daemon and prints its outcome.
 pub async fn run_command(name: &str, args: &[String]) -> Result<i32> {
     let mut map = serde_json::Map::new();
@@ -313,7 +321,7 @@ async fn settled_machines(conn: &mut cq_client::DaemonClient, limit: Duration) -
 /// `cq daemon status`: the local daemon and every registered machine.
 pub async fn daemon_status() -> Result<()> {
     if !cq_client::daemon_running().await? {
-        println!("{LOCAL_MACHINE:<12} not running");
+        println!("{:<12} not running", crate::machine::local()?.name);
         return Ok(());
     }
     let mut conn = cq_client::DaemonClient::open(true).await?;

@@ -124,7 +124,7 @@ impl Model {
                 entry.prompt = None;
             }
         }
-        if machine == cq_protocol::LOCAL_MACHINE {
+        if local_machine_id().is_ok_and(|id| id == machine) {
             self.synced = true;
         }
     }
@@ -170,6 +170,41 @@ impl Model {
             s.activity = Activity::Exited;
         }
     }
+}
+
+/// A short random id, for sessions and machines.
+pub fn new_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()[..12].to_owned()
+}
+
+/// This machine's id, made once and kept in `~/.codequilt/machine_id`.
+pub fn local_machine_id() -> Result<&'static str> {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(id) = ID.get() {
+        return Ok(id);
+    }
+    let path = local::state_root()?.join("machine_id");
+    let read = || std::fs::read_to_string(&path).map(|s| s.trim().to_owned());
+    let id = match read() {
+        Ok(id) if !id.is_empty() => id,
+        _ => {
+            std::fs::create_dir_all(path.parent().expect("under the state root"))?;
+            // Whoever creates the file first wins; the others read what it wrote.
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut f) => {
+                    let id = new_id();
+                    std::io::Write::write_all(&mut f, id.as_bytes())?;
+                    id
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    std::thread::sleep(Duration::from_millis(50));
+                    read().with_context(|| format!("read {}", path.display()))?
+                }
+                Err(e) => return Err(e).with_context(|| format!("create {}", path.display())),
+            }
+        }
+    };
+    Ok(ID.get_or_init(|| id))
 }
 
 /// The name of machine `id` among `machines` (the id itself when unknown).

@@ -8,7 +8,7 @@ mod courier;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use config::{Delivery, OrchestratorConfig};
-use cq_protocol::{LOCAL_MACHINE, Launch, Message, SessionStatus};
+use cq_protocol::{Launch, Message, SessionStatus};
 use serde_json::json;
 
 #[derive(Parser)]
@@ -161,7 +161,7 @@ async fn launch_detached(name: &str, agent: &str, cwd: &std::path::Path, args: V
     let mut conn = cq_client::DaemonClient::open(false).await?;
     let launch = Launch {
         id: 1,
-        machine: LOCAL_MACHINE.into(),
+        machine: cq_client::local_machine_id()?.to_owned(),
         agent: agent.into(),
         cwd: cwd.to_string_lossy().into_owned(),
         args,

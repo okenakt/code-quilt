@@ -15,7 +15,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   builtin("ui.approvals", "Show Pending Approvals"),
   builtin("ui.toggleLeftSidebar", "Toggle Left Sidebar"),
   builtin("ui.toggleRightSidebar", "Toggle Right Sidebar"),
-  builtin("ui.newSession", "New Session", [{ name: "machine", title: "Machine name", default: "local" }]),
+  builtin("ui.newSession", "New Session", [{ name: "machine", title: "Machine name (empty: this machine)" }]),
   builtin("tab.new", "New Tab"),
   builtin("tab.close", "Close Tab (Sessions Keep Running)"),
   builtin("tab.rename", "Rename Tab", [{ name: "name", title: "Tab name" }]),

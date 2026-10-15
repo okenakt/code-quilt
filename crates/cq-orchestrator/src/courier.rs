@@ -5,7 +5,7 @@ use crate::config::{Delivery, OrchestratorConfig};
 use anyhow::{Result, bail};
 use cq_client::{Activity, Model, Session};
 use cq_protocol::{
-    CommandInfo, InvokeCommand, LOCAL_MACHINE, Message,
+    CommandInfo, InvokeCommand, Message,
 };
 use serde_json::{Value, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -98,10 +98,15 @@ fn compose(new: &[Item], open: &[Item]) -> String {
     out
 }
 
+/// This machine's id.
+fn here() -> &'static str {
+    cq_client::local_machine_id().unwrap_or_default()
+}
+
 /// The orchestrator's own session: the local running session named after this orchestrator (names are unique).
 fn find_orchestrator<'a>(model: &'a Model, name: &str) -> Option<&'a Session> {
     model.sessions.values().find(|s| {
-        s.machine == LOCAL_MACHINE && s.activity != Activity::Exited && s.meta.name.as_deref() == Some(name)
+        s.machine == here() && s.activity != Activity::Exited && s.meta.name.as_deref() == Some(name)
     })
 }
 
@@ -139,7 +144,7 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                     (model, registered, listed, started) = (Model::default(), false, false, now_ms());
                     continue;
                 };
-                if matches!(&msg, Message::SessionList(l) if l.machine == LOCAL_MACHINE) {
+                if matches!(&msg, Message::SessionList(l) if l.machine == here()) {
                     listed = true;
                 }
                 if let Message::CommandList(list) = &msg {
@@ -161,7 +166,7 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                 let Some(s) = model.sessions.get(&(machine.clone(), session.clone())) else { continue };
                 // Orchestrators (this one and any other with a running courier) are not reported, or two
                 // Orchestrators would keep answering each other's updates.
-                let is_orchestrator = machine == LOCAL_MACHINE
+                let is_orchestrator = machine == here()
                     && (Some(&session) == orchestrator_id.as_ref() || s.meta.name.as_ref().is_some_and(|n| commands.contains(&format!("orchestrator:{n}"))));
                 if is_orchestrator || !scope.admits(model.machine_name(&s.machine)) {
                     continue;
@@ -212,7 +217,7 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                     None => continue,
                 }
                 let Some(oid) = orchestrator_id.clone() else { continue };
-                let Some(orchestrator) = model.sessions.get(&(LOCAL_MACHINE.to_owned(), oid.clone())) else { continue };
+                let Some(orchestrator) = model.sessions.get(&(here().to_owned(), oid.clone())) else { continue };
                 let batch_ready = first_pending.is_some_and(|t| t.elapsed() >= Duration::from_secs_f64(cfg.batch_seconds));
                 if pending.is_empty() || !batch_ready || orchestrator.activity != Activity::Idle {
                     continue;
@@ -236,7 +241,7 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                     Delivery::Pty => {
                         inject_id += 1;
                         let inj = cq_protocol::Inject { id: inject_id, text: content, submit: true, quiet_ms: 3000 };
-                        Message::Routed { machine: LOCAL_MACHINE.to_owned(), session: oid, inner: Box::new(Message::Inject(inj)) }
+                        Message::Routed { machine: here().to_owned(), session: oid, inner: Box::new(Message::Inject(inj)) }
                     }
                 };
                 if conn.send(&msg).await.is_err() {

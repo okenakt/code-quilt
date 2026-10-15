@@ -10,11 +10,6 @@ pub fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-/// Generates a short random session id.
-pub fn new_id() -> String {
-    uuid::Uuid::new_v4().simple().to_string()[..12].to_owned()
-}
-
 /// Writes metadata atomically (write to temp file, then rename).
 pub fn save(meta: &SessionMeta) -> Result<()> {
     let path = paths::session_file(&meta.id)?;

@@ -97,8 +97,9 @@ flowchart TB
 - ローカルのdaemonが `ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 [-p PORT] <host> cq bridge` を実行し、その標準入出力をリモートのdaemonとの通信路にする。リモート側にポートを開けない。
 - 認証はsshに任せ、パスワードを聞かれない方法（鍵、ssh-agent）を前提にする。sshを張るのは端末を持たないdaemonで、クライアントの接続ごと・切れるたびに張り直すため、パスワードを聞く先も機会もない。
 - リモートの `cq bridge` は、リモートのdaemonが無ければ起動する。Unixのマシンでは `sh -lc` 経由で起動し、`~/.profile` のPATH（Volta、`~/.local/bin` など）をエージェントに届ける。WindowsのマシンではOpenSSHの既定のシェルから直接起動する。
-- 中央サーバーは持たないので、マシンは `cq machine add` で事前に登録する。登録時にdaemonと同じ方法で一度つなぎ、`hostname && uname -s || ver`（sh・cmd・PowerShellのどれでも同じ意味になる）でOSとホスト名を調べ、`cq bridge` との `Hello` でプロトコルのバージョンが合うことを確かめる。
-- マシンは、登録時に決めて変えない内部のidと、ユーザーが使う名前を持つ。プロトコル、boardのペインの配置・ピンはidで持ち、CLI・MCP・オーケストレーターの `scope`・boardのコマンドの引数では名前を使う。名前とidの対応はcq-clientの `Model`（daemonが送る `MachineInfo`）か `config.toml` で引く。手元のマシンはidも名前も `local`。
+- 中央サーバーは持たないので、マシンは `cq machine add` で事前に登録する。登録時にdaemonと同じ方法で一度つなぎ、`uname -s || ver`（sh・cmd・PowerShellのどれでも同じ意味になる）でOSを調べ、`cq bridge` との `Hello` でプロトコルのバージョンが合うことと、そのマシンのidと名前を確かめる。
+- 各マシンは初めて使うときに自分でid（セッションと同じ12桁の乱数）を作って `~/.codequilt/machine_id` に持ち続ける。daemonは自分のセッションに自分のidを付けて出すので、どのマシンから見ても同じidで同じマシンを指し、中継で書き換えることはない。daemonはどの接続にも、最初に自分だけを載せた `MachineList` を送って名乗り（federateなら登録したマシンを続けて載せる）、relayはそれで相手が登録したマシンと同じかを確かめる。
+- プロトコルとboardのペインの配置・ピンはidだけで扱い、名前は人に見せる場所と人が打つ場所（CLI、MCP、オーケストレーターの `scope`、boardの表示とコマンドの引数）でだけ使う。名前はそのマシンが相手をどう呼ぶかで、手元のマシンは `config.toml` の `name`（既定はホスト名）、登録したマシンは `[[machines]]` の `name` から引く。
 - 接続できないマシンは「オフライン」と表示し、5秒おきに再接続を試み続ける。理由にはリモートのdaemonが返したエラー（プロトコルの不一致など）を、無ければsshが標準エラーに出した最後の行を使う。
 
 ### プロトコルと安全性
@@ -232,7 +233,7 @@ sequenceDiagram
 | `~/.codequilt/keybindings.toml`        | キーバインド                                       | cq-board        |
 | `~/.codequilt/orchestrators/NAME.toml` | オーケストレーターごとの設定                       | cq-orchestrator |
 
-- プログラムが生成する状態（`sessions/*.json`、`plugins/*.json`）や、Claude Code・MCPがJSONを求めるファイル（`claude.json`、`*.mcp.json`）はJSONのまま。
+- プログラムが生成する状態（`machine_id`、`sessions/*.json`、`plugins/*.json`）や、Claude Code・MCPがJSONを求めるファイル（`claude.json`、`*.mcp.json`）はJSONのまま。
 - 効いている設定はファイルに見えるようにする。`ui.toml` は無ければ既定の内容を書き出す。キーバインドの既定は組み込みで、`keybindings.toml` は上書きだけを書く。
 - ダッシュボードは `ui.toml` と `keybindings.toml` を監視して、変更をすぐに反映する。
 

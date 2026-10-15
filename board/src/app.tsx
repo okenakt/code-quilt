@@ -234,7 +234,8 @@ export const App = () => {
           toggleSidebar(name === "ui.toggleLeftSidebar" ? "left" : "right");
           return;
         case "ui.newSession": {
-          const m = machinesRef.current.find((x) => x.name === (args.machine || "local"));
+          // The daemon lists this machine first.
+          const m = args.machine ? machinesRef.current.find((x) => x.name === args.machine) : machinesRef.current[0];
           if (!m) return showToast(false, `Unknown machine '${args.machine}'`);
           setNewSessionFor(m.id);
           return;
@@ -267,7 +268,7 @@ export const App = () => {
 
   // Run ui.toml's [[on_start]] commands once the settings are read and the daemon is reachable.
   const startHooksRan = useRef(false);
-  const localOnline = machines.some((m) => m.id === "local" && m.online);
+  const localOnline = machines[0]?.online ?? false;
   useEffect(() => {
     if (startHooksRan.current || !loaded || !localOnline) return;
     startHooksRan.current = true;
@@ -346,7 +347,7 @@ export const App = () => {
       {prefs.leftOpen && <SidebarResizer side="left" />}
       <Workspace
         sessions={sessions}
-        onNewSession={() => setNewSessionFor("local")}
+        onNewSession={() => machines[0] && setNewSessionFor(machines[0].id)}
         onGone={(key) => dropViews((k) => k === key)}
         onRefuse={(m) => showToast(false, m)}
         overlay={

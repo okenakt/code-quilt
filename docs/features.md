@@ -19,8 +19,8 @@
 
 - sshで届くマシンを登録すると、そのマシンのセッションも同じ一覧・同じ操作で扱える（Windows・Linux）。
 - 接続にはパスワードを聞かれないssh（鍵認証。パスフレーズ付きの鍵はssh-agentに載せる）が必要。鍵の用意はユーザーが行う。ユーザー名・ポート・鍵などは `~/.ssh/config` に書いてもよく、sshがそのまま使う。
-- `cq machine add [USER@]HOST` は、daemonと同じ方法でそのマシンにつないでOSとホスト名を調べ、`cq bridge` がこのcqと同じプロトコルで応えることを確かめてから登録する。つながらなければsshの出したエラーを表示して登録しない。
-- マシンは名前で指定する（`名前:セッション`、`scope` の `machine:名前`）。名前は既定でそのマシンのホスト名で、`--name` や `cq machine set` で変えられる。手元のマシンの名前は `local`。名前を変えても、ペインの配置やピンはそのまま残る。
+- `cq machine add [USER@]HOST` は、daemonと同じ方法でそのマシンにつないでOSを調べ、`cq bridge` がこのcqと同じプロトコルで応えてそのマシンのidと名前を名乗ることを確かめてから登録する。手元のマシンや登録済みのマシンは断る。つながらなければsshの出したエラーを表示して登録しない。
+- 各マシンは初めて使うときに自分のid（`~/.codequilt/machine_id`）を作り、どこから見ても同じidで指される。人が使うのは名前で（`名前:セッション`、`scope` の `machine:名前`）、手元のマシンの名前は `config.toml` の `name`（既定はホスト名）、登録したマシンの名前は既定でそのマシンが名乗る名前。どれも `cq machine set` で変えられ、名前を変えてもペインの配置やピンはそのまま残る。
 - つながらないマシンは、sshが出した最後のエラーをboardのMachines欄（オフラインの表示にカーソルを置く）と `cq daemon status` に出す。
 - 各マシンのdaemonは必要になったときに自動で起動する。止めたり入れ替えたりしても、セッションは動き続ける。
 
@@ -65,9 +65,9 @@
 | `cq usage [--local] [--json]` | アカウントごとのレート制限と、セッションごとのトークン |
 | `cq run NAME [--arg KEY=VALUE]…` | プラグインのコマンドを実行する |
 | `cq plugin list \| add NAME \| remove NAME \| refresh` | プラグインの一覧・導入・削除・manifestの再読込 |
-| `cq machine list` (`ls`) | 登録したマシンの一覧（名前、接続先、OS、cqのパス） |
+| `cq machine list` (`ls`) | 手元のマシンと登録したマシンの一覧（名前、接続先、OS、cqのパス） |
 | `cq machine add [USER@]HOST [-p PORT] [-n NAME] [--cq-path P]` | マシンを登録する。HOSTはIPアドレス、ホスト名、`~/.ssh/config` のHostのどれでもよい。つないで確かめてから登録する |
-| `cq machine set MACHINE [-n NAME] [-H [USER@]HOST] [-p PORT] [--cq-path P]` | 登録した内容を変える。接続先・ポート・cqのパスを変えたときはつなぎ直して確かめる。`-p 0` と `--cq-path ""` で既定に戻す |
+| `cq machine set MACHINE [-n NAME] [-H [USER@]HOST] [-p PORT] [--cq-path P]` | 登録した内容を変える。接続先・ポート・cqのパスを変えたときはつなぎ直して確かめ、別のマシンにつながったら断る。`-p 0` と `--cq-path ""` で既定に戻す。手元のマシンは名前だけ変えられる |
 | `cq machine remove MACHINE` (`rm`) | 登録を消す |
 | `cq daemon` | daemonを動かす（通常は自動で起動される） |
 | `cq daemon status \| stop \| restart` | daemonの状態（ローカルと各リモートマシン）、ローカルのdaemonの停止・再起動。止めてもセッションは動き続ける。リモートのdaemonはそのマシンで `cq daemon restart` する。プロトコルのバージョンが違うdaemonは停止の要求を受け付けないため、止められなかったときはそのPIDを表示して失敗する |
@@ -75,7 +75,7 @@
 | `cq bridge` | 標準入出力をこのマシンのdaemonにつなぐ（`ssh HOST cq bridge` 用） |
 | `cq NAME …` | 組み込みにない名前は `cq-NAME …` を実行する（例 `cq orchestrator`、`cq board`） |
 
-`TARGET` は `[machine:]名前|id|idの前方一致`。内部用に `cq host`、`cq hook`、`cq statusline`、`cq debug-screen` がある。
+`TARGET` は `[マシン名:]名前|id|idの前方一致`。マシン名を省くと全マシンから探し、複数見つかったら断る。内部用に `cq host`、`cq hook`、`cq statusline`、`cq debug-screen` がある。
 
 ### cq orchestrator（cq-orchestrator）
 
@@ -135,6 +135,7 @@
 ### `~/.codequilt/config.toml`
 
 ```toml
+name = "desktop"               # this machine's name; default: its host name
 allowed_roots = ["C:/Users/me/work"]   # folders under which the board may start sessions (besides trusted ones); default: home
 
 [aliases]
@@ -142,7 +143,7 @@ o = "orchestrator"              # built in; user aliases take precedence
 os = "orchestrator start main"  # several words are fine
 
 [[machines]]                  # written by `cq machine add` / `set`
-id = "m3f9a2c"                # internal, fixed at registration
+id = "3f9a2c1b0d4e"           # the id the machine made for itself (its ~/.codequilt/machine_id)
 name = "wsl"                  # what you type: wsl:SESSION
 ssh = "me@192.168.1.10"       # [user@]host as given to ssh
 port = 2222                   # optional
@@ -206,6 +207,7 @@ command = "-pane.close"     # "-" removes a default binding (all of its keys wit
 
 | パス | 内容 |
 | --- | --- |
+| `machine_id` | このマシンのid（初めて使うときに作る） |
 | `sessions/<id>.json` | セッションのメタデータ（アカウント、1時間ごとのトークン数、共有されたファイルの一覧を含む） |
 | `logs/` | daemon・セッション・プラグインのログ |
 | `plugins/<name>.json` | 導入済みプラグインのmanifest |

@@ -10,7 +10,7 @@ use crate::machine::{self, MachineEntry};
 use crate::{ipc, paths, plugin, remote, session};
 use anyhow::{Result, bail};
 use cq_protocol::{
-    ClientKind, CommandInfo, CommandResult, DirList, Hello, InvokeCommand, DAEMON_PROTOCOL_VERSION, LOCAL_MACHINE, Launched, MachineInfo, Message, PROTOCOL_VERSION,
+    ClientKind, CommandInfo, CommandResult, DirList, Hello, InvokeCommand, DAEMON_PROTOCOL_VERSION, Launched, MachineInfo, Message, PROTOCOL_VERSION,
     RequestFailed, SessionList, SessionMeta, SessionStatus, Size, Subscribe, read_message, spawn_reader,
     write_message,
 };
@@ -71,13 +71,14 @@ impl Drop for Conn {
     }
 }
 
-fn routed(session: &str, inner: Message) -> Message {
-    Message::Routed { machine: LOCAL_MACHINE.to_owned(), session: session.to_owned(), inner: Box::new(inner) }
+fn routed(machine: &str, session: &str, inner: Message) -> Message {
+    Message::Routed { machine: machine.to_owned(), session: session.to_owned(), inner: Box::new(inner) }
 }
 
 /// Opens a host connection of the given kind and relays it as `Routed` messages.
-fn open_host(meta: &SessionMeta, kind: ClientKind, cols: u16, rows: u16, out: UnboundedSender<Message>) -> Conn {
+fn open_host(machine: &str, meta: &SessionMeta, kind: ClientKind, cols: u16, rows: u16, out: UnboundedSender<Message>) -> Conn {
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    let machine = machine.to_owned();
     let session = meta.id.clone();
     let pipe = meta.pipe.clone();
     let task = tokio::spawn(async move {
@@ -100,7 +101,7 @@ fn open_host(meta: &SessionMeta, kind: ClientKind, cols: u16, rows: u16, out: Un
                             _ => true,
                         };
                         if forward {
-                            let _ = out.send(routed(&session, msg));
+                            let _ = out.send(routed(&machine, &session, msg));
                         }
                     }
                     msg = rx.recv() => match msg {
@@ -112,14 +113,15 @@ fn open_host(meta: &SessionMeta, kind: ClientKind, cols: u16, rows: u16, out: Un
             Ok::<_, anyhow::Error>(())
         };
         if let Err(e) = run.await {
-            let _ = out.send(routed(&session, Message::Error(format!("{e:#}"))));
+            let _ = out.send(routed(&machine, &session, Message::Error(format!("{e:#}"))));
         }
     });
     Conn { tx, task }
 }
 
-/// One client's relay to the sessions of this machine.
+/// One client's relay to the sessions of this machine, tagged with this machine's id.
 struct LocalRelay {
+    machine: String,
     out: UnboundedSender<Message>,
     monitors: HashMap<String, Conn>,
     /// Hosts whose monitor connection ended recently (e.g. incompatible version); retried later.
@@ -130,8 +132,9 @@ struct LocalRelay {
 }
 
 impl LocalRelay {
-    fn new(out: UnboundedSender<Message>) -> Self {
+    fn new(machine: String, out: UnboundedSender<Message>) -> Self {
         Self {
+            machine,
             out,
             monitors: HashMap::new(),
             backoff: HashMap::new(),
@@ -142,7 +145,7 @@ impl LocalRelay {
     }
 
     fn send_list(&self) {
-        let list = SessionList { machine: LOCAL_MACHINE.to_owned(), sessions: self.sessions.clone() };
+        let list = SessionList { machine: self.machine.clone(), sessions: self.sessions.clone() };
         let _ = self.out.send(Message::SessionList(list));
     }
 
@@ -166,7 +169,7 @@ impl LocalRelay {
         self.backoff.retain(|_, until| *until > now);
         for m in self.sessions.iter().filter(|m| m.status == SessionStatus::Running) {
             if !self.monitors.contains_key(&m.id) && !self.backoff.contains_key(&m.id) {
-                self.monitors.insert(m.id.clone(), open_host(m, ClientKind::Monitor, 0, 0, self.out.clone()));
+                self.monitors.insert(m.id.clone(), open_host(&self.machine, m, ClientKind::Monitor, 0, 0, self.out.clone()));
             }
         }
         self.subs.retain(|_, c| !c.task.is_finished());
@@ -186,10 +189,10 @@ impl LocalRelay {
 
     /// Starts a session in the background and answers the request `id` with its outcome.
     fn start_session(&self, id: u64, what: &'static str, start: impl FnOnce() -> Result<String> + Send + 'static) {
-        let out = self.out.clone();
+        let (machine, out) = (self.machine.clone(), self.out.clone());
         tokio::spawn(async move {
             let reply = match start_registered(start).await {
-                Ok(session) => Message::Launched(Launched { id, machine: LOCAL_MACHINE.to_owned(), session }),
+                Ok(session) => Message::Launched(Launched { id, machine, session }),
                 Err(e) => Message::RequestFailed(RequestFailed { id, error: format!("{what} failed: {e:#}") }),
             };
             let _ = out.send(reply);
@@ -208,14 +211,14 @@ impl LocalRelay {
                 }
                 match self.sessions.iter().find(|m| m.id == session) {
                     Some(meta) if meta.status != SessionStatus::Running => {
-                        let _ = self.out.send(routed(&session, Message::Error("session exited".into())));
+                        let _ = self.out.send(routed(&self.machine, &session, Message::Error("session exited".into())));
                     }
                     Some(meta) => {
                         let kind = if kind == ClientKind::Event { ClientKind::Hub } else { kind };
-                        self.subs.insert(session.clone(), open_host(meta, kind, cols, rows, self.out.clone()));
+                        self.subs.insert(session.clone(), open_host(&self.machine, meta, kind, cols, rows, self.out.clone()));
                     }
                     None => {
-                        let _ = self.out.send(routed(&session, Message::Error("unknown session".into())));
+                        let _ = self.out.send(routed(&self.machine, &session, Message::Error("unknown session".into())));
                     }
                 }
             }
@@ -475,10 +478,6 @@ fn handle_desktop(client: u64, msg: Message) -> Option<Message> {
     None
 }
 
-fn local_info() -> MachineInfo {
-    MachineInfo { id: LOCAL_MACHINE.to_owned(), name: LOCAL_MACHINE.to_owned(), online: true, error: None }
-}
-
 async fn serve(stream: ipc::BoxStream) -> Result<()> {
     let (mut rd, mut wr) = tokio::io::split(stream);
     let hello = match tokio::time::timeout(Duration::from_secs(5), read_message(&mut rd)).await?? {
@@ -507,7 +506,8 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
         Vec::new()
     };
     let (status_tx, mut status_rx) = mpsc::unbounded_channel::<MachineInfo>();
-    let mut machines: Vec<MachineInfo> = vec![local_info()];
+    let me = machine::local()?;
+    let mut machines: Vec<MachineInfo> = vec![me.clone()];
     let mut remotes: HashMap<String, Conn> = HashMap::new();
     for e in entries {
         machines.push(MachineInfo { id: e.id.clone(), name: e.name.clone(), online: false, error: None });
@@ -516,9 +516,8 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
         let task = tokio::spawn(remote::run(e, rx, out.clone(), status_tx.clone()));
         remotes.insert(id, Conn { tx, task });
     }
-    if hello.federate {
-        let _ = out.send(Message::MachineList(machines.clone()));
-    }
+    // Every connection learns first which machine it reached.
+    let _ = out.send(Message::MachineList(machines.clone()));
 
     let client_id = {
         let mut d = desktop().lock().unwrap();
@@ -530,7 +529,7 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
         id
     };
 
-    let mut local = LocalRelay::new(out.clone());
+    let mut local = LocalRelay::new(me.id.clone(), out.clone());
     let mut msgs = spawn_reader(rd);
     let mut tick = tokio::time::interval(Duration::from_secs(1));
 
@@ -553,8 +552,8 @@ async fn serve(stream: ipc::BoxStream) -> Result<()> {
                     Some(Err(e)) => break Err(e),
                 };
                 let Some(msg) = handle_desktop(client_id, msg) else { continue };
-                match target_machine(&msg) {
-                    None | Some(LOCAL_MACHINE) => {
+                match target_machine(&msg).filter(|id| *id != me.id) {
+                    None => {
                         if matches!(msg, Message::Shutdown) {
                             ipc::cleanup(&paths::daemon_endpoint()?);
                             std::process::exit(0);

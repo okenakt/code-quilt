@@ -4,7 +4,7 @@ import type { SessionState } from "./types";
 /** Session key to an explicit pin choice; sessions without one follow `pinned` in ui.toml. */
 export type Pins = Record<string, boolean>;
 
-const KEY = "cq.pins.v2";
+const KEY = "cq.pins.v3";
 const listeners = new Set<() => void>();
 
 const load = (): Pins => {

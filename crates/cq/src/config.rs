@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default, Deserialize)]
 pub struct Config {
+    /// This machine's name (default: its host name).
+    #[serde(default)]
+    pub name: Option<String>,
     /// Directories under which the dashboard may start sessions. Defaults to the home directory.
     #[serde(default)]
     allowed_roots: Vec<String>,

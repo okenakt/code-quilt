@@ -1,16 +1,13 @@
 //! Connections from the local daemon to registered remote machines (`ssh <host> cq bridge`).
 //!
-//! The remote daemon speaks the same protocol and reports its own sessions under
-//! [`LOCAL_MACHINE`]; this module rewrites them to the machine's id so clients of the local daemon
-//! see every machine through one connection.
+//! The remote daemon speaks the same protocol and tags its sessions with its own machine id, so
+//! its messages pass through unchanged and clients of the local daemon see every machine through
+//! one connection.
 
 use crate::machine::{MachineEntry, Os};
 use anyhow::{Context, Result, bail};
 use cq_protocol::local::BoxStream;
-use cq_protocol::{
-    ClientKind, DAEMON_PROTOCOL_VERSION, Hello, LOCAL_MACHINE, MachineInfo, Message, SessionList,
-    SessionRef, Subscribe, spawn_reader, write_message,
-};
+use cq_protocol::{ClientKind, DAEMON_PROTOCOL_VERSION, Hello, MachineInfo, Message, Subscribe, spawn_reader, write_message};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
@@ -46,18 +43,16 @@ fn ssh(e: &MachineEntry) -> tokio::process::Command {
     cmd
 }
 
-/// Learns the host name and OS of the machine. The command parses the same in sh, cmd and
-/// PowerShell: `uname` fails on Windows, where `ver` answers instead.
-pub async fn probe(e: &MachineEntry) -> Result<(String, Os)> {
-    let out = ssh(e).arg("hostname && uname -s || ver").stdin(std::process::Stdio::null()).output().await.context("spawn ssh")?;
+/// Learns the OS of the machine. The command parses the same in sh, cmd and PowerShell: `uname`
+/// fails on Windows, where `ver` answers instead.
+pub async fn probe(e: &MachineEntry) -> Result<Os> {
+    let out = ssh(e).arg("uname -s || ver").stdin(std::process::Stdio::null()).output().await.context("spawn ssh")?;
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
-    let (Some(hostname), Some(system)) = (lines.next(), lines.next()) else {
+    let Some(system) = stdout.lines().map(str::trim).find(|l| !l.is_empty()) else {
         let err = String::from_utf8_lossy(&out.stderr);
         bail!("ssh {}: {}", e.ssh, err.trim().lines().last().unwrap_or("connection failed"));
     };
-    let os = if system.contains("Windows") { Os::Windows } else { Os::Unix };
-    Ok((hostname.to_owned(), os))
+    Ok(if system.contains("Windows") { Os::Windows } else { Os::Unix })
 }
 
 /// `ssh <host> cq bridge` with its stdio as the stream to the remote daemon.
@@ -108,72 +103,38 @@ impl Bridge {
     }
 }
 
-/// Connects through `cq bridge` as the daemon does and waits for the remote daemon to accept
-/// the protocol version.
-pub async fn check(e: &MachineEntry) -> Result<()> {
+/// Connects through `cq bridge` as the daemon does and returns how the remote daemon introduces
+/// itself, which also proves it speaks this protocol version.
+pub async fn check(e: &MachineEntry) -> Result<MachineInfo> {
     let mut b = Bridge::open(e)?;
     let (rd, mut wr) = tokio::io::split(b.stream.take().expect("fresh"));
     let mut msgs = spawn_reader(rd);
     let answered = async {
         write_message(&mut wr, &Message::Hello(hello())).await?;
         match tokio::time::timeout(Duration::from_secs(20), msgs.recv()).await {
-            Ok(Some(Ok(Message::Error(err)))) => bail!("{REMOTE_ERROR}{err}"),
-            Ok(Some(Ok(_))) => Ok(()),
+            Ok(Some(Ok(msg))) => introduction(msg),
             Ok(Some(Err(err))) => Err(err),
             Ok(None) => bail!("`{} bridge` exited", e.cq()),
             Err(_) => bail!("no answer from `{} bridge`", e.cq()),
         }
     };
     match answered.await {
-        Ok(()) => Ok(()),
+        Ok(me) => Ok(me),
         Err(err) => bail!(b.close(err).await),
+    }
+}
+
+/// The machine a daemon's first message introduces.
+fn introduction(msg: Message) -> Result<MachineInfo> {
+    match msg {
+        Message::MachineList(mut l) if !l.is_empty() => Ok(l.swap_remove(0)),
+        Message::Error(err) => bail!("{REMOTE_ERROR}{err}"),
+        _ => bail!("{REMOTE_ERROR}it did not introduce itself"),
     }
 }
 
 fn hello() -> Hello {
     Hello { protocol_version: DAEMON_PROTOCOL_VERSION, kind: ClientKind::Hub, cols: 0, rows: 0, federate: false }
-}
-
-/// Rewrites a message from a remote daemon so it carries the machine's id.
-fn tag_incoming(id: &str, msg: Message) -> Message {
-    match msg {
-        Message::SessionList(l) => Message::SessionList(SessionList { machine: id.to_owned(), sessions: l.sessions }),
-        Message::Routed { session, inner, .. } => Message::Routed { machine: id.to_owned(), session, inner },
-        Message::Launched(mut l) => {
-            l.machine = id.to_owned();
-            Message::Launched(l)
-        }
-        other => other,
-    }
-}
-
-/// Rewrites a client request for the remote daemon, where the machine is its own [`LOCAL_MACHINE`].
-fn untag_outgoing(msg: Message) -> Message {
-    match msg {
-        Message::Subscribe(mut s) => {
-            s.machine = LOCAL_MACHINE.to_owned();
-            Message::Subscribe(s)
-        }
-        Message::Unsubscribe(r) => Message::Unsubscribe(SessionRef { machine: LOCAL_MACHINE.to_owned(), session: r.session }),
-        Message::Routed { session, inner, .. } => Message::Routed { machine: LOCAL_MACHINE.to_owned(), session, inner },
-        Message::Launch(mut l) => {
-            l.machine = LOCAL_MACHINE.to_owned();
-            Message::Launch(l)
-        }
-        Message::Resume(mut r) => {
-            r.machine = LOCAL_MACHINE.to_owned();
-            Message::Resume(r)
-        }
-        Message::ListDir(mut l) => {
-            l.machine = LOCAL_MACHINE.to_owned();
-            Message::ListDir(l)
-        }
-        Message::ReadFile(mut r) => {
-            r.machine = LOCAL_MACHINE.to_owned();
-            Message::ReadFile(r)
-        }
-        other => other,
-    }
 }
 
 /// Keeps one client's view of a remote machine: connects, relays, and reconnects with backoff.
@@ -234,11 +195,19 @@ async fn relay(
     let (rd, mut wr) = tokio::io::split(stream);
     let mut msgs = spawn_reader(rd);
     write_message(&mut wr, &Message::Hello(hello())).await?;
+    // The machine at this address may have changed (reinstalled, or another host behind it).
+    let me = match msgs.recv().await {
+        Some(msg) => introduction(msg?)?,
+        None => return Ok(()),
+    };
+    if me.id != id {
+        bail!("this address now reaches another machine ('{}'); register it with `cq machine add`", me.name);
+    }
+    report(true, None);
     write_message(&mut wr, &Message::ListSessions).await?;
     for s in subs.values() {
-        write_message(&mut wr, &untag_outgoing(Message::Subscribe(s.clone()))).await?;
+        write_message(&mut wr, &Message::Subscribe(s.clone())).await?;
     }
-    let mut online = false;
     loop {
         tokio::select! {
             msg = msgs.recv() => {
@@ -247,17 +216,12 @@ async fn relay(
                 if let Message::Error(e) = &msg {
                     bail!("{REMOTE_ERROR}{e}");
                 }
-                // The first reply proves the bridge works (ssh may fail only after spawning).
-                if !online {
-                    online = true;
-                    report(true, None);
-                }
                 // Focus and commands belong to the desktop the client sits at, not to the
                 // remote machine; relaying them would overwrite the local daemon's.
-                if matches!(msg, Message::Focus(_) | Message::CommandList(_) | Message::InvokeCommand(_) | Message::CommandResult(_)) {
+                if matches!(msg, Message::MachineList(_) | Message::Focus(_) | Message::CommandList(_) | Message::InvokeCommand(_) | Message::CommandResult(_)) {
                     continue;
                 }
-                let _ = out.send(tag_incoming(id, msg));
+                let _ = out.send(msg);
             }
             cmd = rx.recv() => {
                 let Some(cmd) = cmd else { return Ok(()) };
@@ -266,7 +230,7 @@ async fn relay(
                     Message::Unsubscribe(r) => { subs.remove(&r.session); }
                     _ => {}
                 }
-                write_message(&mut wr, &untag_outgoing(cmd)).await?;
+                write_message(&mut wr, &cmd).await?;
             }
         }
     }

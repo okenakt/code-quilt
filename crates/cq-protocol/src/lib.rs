@@ -17,14 +17,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Version of the daemon protocol (machine-tagged relay through `cq daemon`). Versioned
 /// separately so running hosts stay reachable when only the daemon protocol changes.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 4;
-
-/// Machine id under which a daemon reports its own sessions; also the local machine's name.
-pub const LOCAL_MACHINE: &str = "local";
-
-fn local_machine() -> String {
-    LOCAL_MACHINE.to_owned()
-}
+pub const DAEMON_PROTOCOL_VERSION: u32 = 5;
 
 /// Upper bound for a single frame, to reject corrupted or hostile length prefixes.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -273,7 +266,6 @@ pub struct CommandResult {
 /// Request to open a relayed connection to a session through the daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subscribe {
-    #[serde(default = "local_machine")]
     pub machine: String,
     pub session: String,
     pub kind: ClientKind,
@@ -288,8 +280,9 @@ pub struct SessionRef {
     pub session: String,
 }
 
-/// A machine known to the daemon and whether it is reachable. The id is internal and never
-/// changes; users see and address the machine by its name.
+/// A machine known to the daemon and whether it is reachable. Each machine makes its own id once
+/// and keeps it, so the id names the machine the same way everywhere; users see and address the
+/// machine by its name. A daemon's first message is a list holding only itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MachineInfo {
     pub id: String,
@@ -310,7 +303,6 @@ pub struct SessionList {
 pub struct Launch {
     /// Client-chosen id echoed in the reply.
     pub id: u64,
-    #[serde(default = "local_machine")]
     pub machine: String,
     pub agent: String,
     pub cwd: String,
@@ -331,7 +323,6 @@ pub struct Launch {
 pub struct Resume {
     /// Client-chosen id echoed in the reply.
     pub id: u64,
-    #[serde(default = "local_machine")]
     pub machine: String,
     pub session: String,
     pub cols: u16,
@@ -350,7 +341,6 @@ pub struct Launched {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListDir {
     pub id: u64,
-    #[serde(default = "local_machine")]
     pub machine: String,
     pub path: String,
 }
@@ -359,7 +349,6 @@ pub struct ListDir {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadFile {
     pub id: u64,
-    #[serde(default = "local_machine")]
     pub machine: String,
     pub session: String,
     pub path: String,

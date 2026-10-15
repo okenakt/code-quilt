@@ -122,7 +122,7 @@ fn agent_command(agent: &str, resume: Option<&str>, mcp: bool, args: &[String]) 
 pub fn launch_detached(req: &cq_protocol::Launch) -> Result<String> {
     let cwd = crate::config::check_allowed(&req.cwd)?;
     paths::ensure_dirs()?;
-    let id = session::new_id();
+    let id = cq_client::new_id();
     let command = agent_command(&req.agent, None, !req.no_mcp, &req.args)?;
     let size = Size { cols: req.cols.max(20), rows: req.rows.max(5) };
     spawn_host(&id, &req.agent, &cwd.to_string_lossy(), size, req.name.as_deref(), &command)?;
@@ -144,7 +144,7 @@ pub fn resume_detached(key: &str, size: Size) -> Result<String> {
 /// Runs `cq claude|codex [args...]` in this terminal and returns the process exit code.
 pub async fn run_agent(agent: &str, name: Option<String>, mcp: bool, args: Vec<String>) -> Result<i32> {
     paths::ensure_dirs()?;
-    let id = session::new_id();
+    let id = cq_client::new_id();
     let command = agent_command(agent, None, mcp, &args)?;
     let cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     spawn_host(&id, agent, &cwd, crate::term::size(), name.as_deref(), &command)?;

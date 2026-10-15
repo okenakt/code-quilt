@@ -3,7 +3,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use cq_client::{Activity, MAX_TURNS, Model, Session};
-use cq_protocol::{LOCAL_MACHINE, Message};
+use cq_protocol::Message;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -26,6 +26,11 @@ struct Server {
     own: Option<String>,
 }
 
+/// This machine's id.
+fn here() -> &'static str {
+    cq_client::local_machine_id().unwrap_or_default()
+}
+
 fn snippet(s: &str, n: usize) -> String {
     let mut out: String = s.chars().take(n).collect();
     if s.chars().count() > n {
@@ -45,7 +50,6 @@ impl Server {
         let m = self.model.lock().unwrap();
         let live: Vec<&Session> = m.sessions.values().filter(|s| self.visible(&m, s) && s.activity != Activity::Exited).collect();
         let (machine, rest) = match target.split_once(':') {
-            Some((name, r)) if name == LOCAL_MACHINE => (Some(LOCAL_MACHINE), r),
             Some((name, r)) => match cq_client::machine_id(&m.machines, name) {
                 Some(id) => (Some(id), r),
                 None => (None, target),
@@ -122,7 +126,7 @@ impl Server {
         let text = str_arg(args, "text")?;
         let from = {
             let m = self.model.lock().unwrap();
-            let own = self.own.as_deref().and_then(|id| m.sessions.get(&(LOCAL_MACHINE.to_owned(), id.to_owned())));
+            let own = self.own.as_deref().and_then(|id| m.sessions.get(&(here().to_owned(), id.to_owned())));
             own.map_or_else(|| "outside CodeQuilt".to_owned(), |o| format!("{} ({})", o.label(), m.key(o)))
         };
         let inject = cq_protocol::Inject { id: crate::session::now_ms(), text: format!("[from {from}] {text}"), submit: true, quiet_ms: 3000 };
@@ -148,7 +152,7 @@ impl Server {
         let caption = args.get("caption").and_then(Value::as_str).map(str::to_owned);
         let file = cq_protocol::SharedFile { path: path.clone(), caption, shared_at_ms: crate::session::now_ms() };
         self.tx
-            .send(Message::Routed { machine: LOCAL_MACHINE.to_owned(), session: own, inner: Box::new(Message::ShareFile(file)) })
+            .send(Message::Routed { machine: here().to_owned(), session: own, inner: Box::new(Message::ShareFile(file)) })
             .map_err(|_| anyhow!("daemon connection closed"))?;
         Ok(json!({ "shared": path }))
     }
@@ -175,13 +179,14 @@ impl Server {
         if !matches!(agent, "claude" | "codex") {
             bail!("unknown agent '{agent}' (claude or codex)");
         }
-        let machine_name = args.get("machine").and_then(Value::as_str).unwrap_or(LOCAL_MACHINE);
+        let here_name = crate::machine::local()?.name;
+        let machine_name = args.get("machine").and_then(Value::as_str).unwrap_or(&here_name);
         if !self.scope.admits(machine_name) {
             bail!("machine '{machine_name}' is outside this server's scope");
         }
         let machine = crate::machine::id_of(machine_name)?;
         let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
-        let mut conn = cq_client::DaemonClient::open(machine != LOCAL_MACHINE).await?;
+        let mut conn = cq_client::DaemonClient::open(machine != here()).await?;
         let launch = cq_protocol::Launch {
             id: 1,
             machine: machine.clone(),

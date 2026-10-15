@@ -15,7 +15,7 @@ export type Layout = { tabs: Tab[]; active: string };
 
 type Rect = { x: number; y: number; w: number; h: number };
 
-const KEY = "cq.tabs.v2";
+const KEY = "cq.tabs.v3";
 
 let counter = 0;
 const newId = (prefix: string): string => `${prefix}${Date.now().toString(36)}${(counter++).toString(36)}`;

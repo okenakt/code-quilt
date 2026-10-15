@@ -122,7 +122,8 @@ impl Hub {
         if online && !cached.is_empty() {
             return cached;
         }
-        vec![MachineInfo { id: cq_protocol::LOCAL_MACHINE.into(), name: cq_protocol::LOCAL_MACHINE.into(), online: false, error }]
+        let id = cq_client::local_machine_id().unwrap_or_default().to_owned();
+        vec![MachineInfo { name: id.clone(), id, online: false, error }]
     }
 
     fn send(&self, msg: Message) -> Result<()> {
