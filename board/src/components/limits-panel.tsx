@@ -15,7 +15,7 @@ type AccountUsage = {
 type AgentGroup = { agent: string; accounts: AccountUsage[] };
 
 /** An agent and its account(s), as both the Limits and Tokens sections show them. */
-export const AgentHeading = ({ agent, account }: { agent: string; account: string }) => (
+const AgentHeading = ({ agent, account }: { agent: string; account: string }) => (
   <header className="agent-heading">
     <AgentBadge agent={agent} />
     <span className="agent-account">{account}</span>

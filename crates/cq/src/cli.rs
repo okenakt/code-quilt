@@ -12,17 +12,6 @@ struct UsageSession {
     meta: Option<cq_protocol::SessionMeta>,
     status: Option<(u64, serde_json::Value)>,
     account: Option<serde_json::Value>,
-    tokens: Option<serde_json::Value>,
-}
-
-fn fmt_k(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1e6)
-    } else if n >= 1000 {
-        format!("{:.1}k", n as f64 / 1e3)
-    } else {
-        n.to_string()
-    }
 }
 
 fn fmt_until(resets_at: Option<u64>, now_s: u64) -> String {
@@ -37,7 +26,7 @@ fn fmt_until(resets_at: Option<u64>, now_s: u64) -> String {
     }
 }
 
-/// `cq usage`: rate limits per account and tokens per session, collected through the daemon.
+/// `cq usage`: rate limits per account and the running sessions, collected through the daemon.
 pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
     use serde_json::{Value, json};
     use std::collections::{BTreeMap, HashMap};
@@ -81,7 +70,6 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
                 match (ev.source.as_str(), ev.payload.get("type").and_then(Value::as_str)) {
                     ("statusline", _) => e.status = Some((ev.received_at_ms, ev.payload)),
                     ("cq", Some("account")) => e.account = ev.payload.get("account").cloned(),
-                    ("cq", Some("tokens")) => e.tokens = ev.payload.get("tokens").cloned(),
                     _ => {}
                 }
             }
@@ -132,7 +120,6 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
                     "model": st.and_then(|v| v.pointer("/model/display_name")),
                     "context_percent": st.and_then(|v| v.pointer("/context_window/used_percentage")),
                     "cost_usd": st.and_then(|v| v.pointer("/cost/total_cost_usd")),
-                    "tokens": s.tokens,
                 })
             })
             .collect();
@@ -162,21 +149,16 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
         );
     }
     println!();
-    println!("{:<24}  {:<16}  {:<12}  {:>4}  {:>8}  {:>8}  {:>8}  {:>8}", "SESSION", "NAME", "MODEL", "CTX", "IN", "OUT", "CACHE R", "CACHE W");
+    println!("{:<24}  {:<16}  {:<12}  {:>4}", "SESSION", "NAME", "MODEL", "CTX");
     for s in running {
         let m = s.meta.as_ref().expect("filtered");
         let st = s.status.as_ref().map(|(_, v)| v);
-        let tok = |k: &str| s.tokens.as_ref().and_then(|t| t.pointer(&format!("/total/{k}"))).and_then(Value::as_u64).map_or("-".into(), fmt_k);
         println!(
-            "{:<24}  {:<16}  {:<12}  {:>4}  {:>8}  {:>8}  {:>8}  {:>8}",
+            "{:<24}  {:<16}  {:<12}  {:>4}",
             format!("{}:{}", s.machine, m.id),
             m.name.as_deref().unwrap_or("-"),
             st.and_then(|v| v.pointer("/model/display_name")).and_then(Value::as_str).unwrap_or("-"),
             st.and_then(|v| v.pointer("/context_window/used_percentage")).and_then(Value::as_f64).map_or("-".into(), |v| format!("{v:.0}%")),
-            tok("input"),
-            tok("output"),
-            tok("cache_read"),
-            tok("cache_creation"),
         );
     }
     for m in machines.iter().filter(|m| !m.online) {

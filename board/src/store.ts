@@ -10,7 +10,6 @@ import type {
   SessionMeta,
   SessionState,
   StatusLine,
-  TokenUsage,
 } from "./types";
 
 type Snapshot = {
@@ -79,7 +78,6 @@ export const setSessions = (machine: string, list: SessionMeta[]): void => {
       prompt: exited ? null : (prev?.prompt ?? null),
       status: prev?.status ?? null,
       account: prev?.account ?? null,
-      tokens: prev?.tokens ?? null,
       lastActivityAt: prev?.lastActivityAt ?? meta.started_at_ms,
     });
   }
@@ -99,8 +97,6 @@ const parseStatus = (payload: unknown, receivedAt: number): StatusLine => ({
   model: str(payload, "model", "display_name") ?? str(payload, "model", "id"),
   sessionName: str(payload, "session_name"),
   contextPercent: num(payload, "context_window", "used_percentage"),
-  inputTokens: num(payload, "context_window", "total_input_tokens"),
-  outputTokens: num(payload, "context_window", "total_output_tokens"),
   fiveHour: rateWindow(asRecord(asRecord(payload)?.rate_limits)?.five_hour),
   sevenDay: rateWindow(asRecord(asRecord(payload)?.rate_limits)?.seven_day),
 });
@@ -119,21 +115,6 @@ const parsePrompt = (v: unknown): PermissionPrompt | null => {
   return { id, kind, text, options };
 };
 
-const counts = (v: unknown) => ({
-  input: num(v, "input") ?? 0,
-  output: num(v, "output") ?? 0,
-  cacheRead: num(v, "cache_read") ?? 0,
-  cacheCreation: num(v, "cache_creation") ?? 0,
-});
-
-const parseTokens = (v: unknown): TokenUsage | null => {
-  const r = asRecord(v);
-  if (!r) return null;
-  const byModel: TokenUsage["byModel"] = {};
-  for (const [model, c] of Object.entries(asRecord(r.by_model) ?? {})) byModel[model] = counts(c);
-  return { ...counts(r.total), byModel };
-};
-
 /** Applies an agent event to the session's derived state. */
 export const applyEvent = (machine: string, session: string, ev: AgentEvent): void => {
   const s = sessions.get(sessionKey(machine, session));
@@ -142,7 +123,6 @@ export const applyEvent = (machine: string, session: string, ev: AgentEvent): vo
   let prompt = s.prompt;
   let status = s.status;
   let account = s.account;
-  let tokens = s.tokens;
   let meta = s.meta;
   if (ev.source === "statusline") {
     status = parseStatus(ev.payload, ev.received_at_ms);
@@ -174,12 +154,10 @@ export const applyEvent = (machine: string, session: string, ev: AgentEvent): vo
     } else if (type === "account") {
       const id = str(ev.payload, "account", "id");
       account = id ? { id, label: str(ev.payload, "account", "label") ?? id } : null;
-    } else if (type === "tokens") {
-      tokens = parseTokens(asRecord(ev.payload)?.tokens) ?? tokens;
     }
   }
   if (meta.status === "exited") activity = "exited";
-  const next = { ...s, meta, activity, prompt, status, account, tokens, lastActivityAt: Math.max(s.lastActivityAt, ev.received_at_ms) };
+  const next = { ...s, meta, activity, prompt, status, account, lastActivityAt: Math.max(s.lastActivityAt, ev.received_at_ms) };
   sessions.set(s.key, next);
   emit();
 };

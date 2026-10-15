@@ -57,7 +57,7 @@ struct Cache {
 fn latest_slot(ev: &AgentEvent) -> Option<&str> {
     match ev.source.as_str() {
         "statusline" => Some("statusline"),
-        "cq" => ev.payload.get("type").and_then(|t| t.as_str()).filter(|t| matches!(*t, "account" | "tokens")),
+        "cq" => ev.payload.get("type").and_then(|t| t.as_str()).filter(|t| *t == "account"),
         _ => None,
     }
 }

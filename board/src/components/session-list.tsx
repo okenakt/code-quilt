@@ -22,9 +22,6 @@ const ACTIVITY_LABEL: Record<Exclude<Activity, "exited">, string> = {
 /** Ended sessions listed before "show all". */
 const ENDED_LIMIT = 20;
 
-const formatTokens = (n: number): string =>
-  n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n);
-
 const ago = (ms: number): string => {
   const mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
   if (mins < 60) return `${mins}m ago`;
@@ -35,8 +32,6 @@ const ago = (ms: number): string => {
 /** Details of a running session as `name: value` lines. */
 const SessionDetails = ({ s, machine }: { s: SessionState; machine: MachineInfo | undefined }) => {
   const st = s.status;
-  const t = s.tokens;
-  const tokens = t ? t.input + t.output + t.cacheRead + t.cacheCreation : (st?.inputTokens ?? 0) + (st?.outputTokens ?? 0);
   const ctx = st?.contextPercent ?? null;
   const rows: [string, ReactNode][] = [
     ["machine", machine?.name ?? s.machine],
@@ -55,7 +50,6 @@ const SessionDetails = ({ s, machine }: { s: SessionState; machine: MachineInfo 
           ] as [string, ReactNode],
         ]
       : []),
-    ...(tokens > 0 ? [["tokens", formatTokens(tokens)] as [string, ReactNode]] : []),
   ];
   return (
     <dl className="session-details">

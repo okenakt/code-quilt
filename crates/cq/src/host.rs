@@ -167,7 +167,6 @@ struct State {
     account: Option<usage::Account>,
     /// Set to force an account re-read (e.g. after SessionStart, which follows /login).
     account_recheck: bool,
-    transcript: usage::TranscriptTail,
     codex_rollout: usage::CodexTail,
     /// Set when output arrived since the last permission prompt scan.
     dirty: bool,
@@ -202,12 +201,12 @@ impl State {
     }
 
     /// Records an event and sends it to every client. Frequently repeated state events (status
-    /// line, account, tokens) keep only their latest value so they never evict history.
+    /// line, account) keep only their latest value so they never evict history.
     fn publish(&mut self, ev: AgentEvent) {
         let slot = match ev.source.as_str() {
             "statusline" => Some("statusline".to_owned()),
             "cq" => match ev.payload.get("type").and_then(|t| t.as_str()) {
-                Some(t @ ("account" | "tokens")) => Some(t.to_owned()),
+                Some(t @ "account") => Some(t.to_owned()),
                 _ => None,
             },
             _ => None,
@@ -465,7 +464,6 @@ pub async fn run(args: HostArgs) -> Result<()> {
         agent_session_id: earlier.as_ref().and_then(|m| m.agent_session_id.clone()),
         name: args.name.clone(),
         account: earlier.as_ref().and_then(|m| m.account.clone()),
-        tokens_by_hour: earlier.as_ref().map(|m| m.tokens_by_hour.clone()).unwrap_or_default(),
         files: earlier.map(|m| m.files).unwrap_or_default(),
     };
     session::save(&meta)?;
@@ -497,7 +495,6 @@ pub async fn run(args: HostArgs) -> Result<()> {
         latest: HashMap::new(),
         account: None,
         account_recheck: true,
-        transcript: usage::TranscriptTail::default(),
         codex_rollout: usage::CodexTail::default(),
         dirty: false,
         prompt: None,
@@ -803,13 +800,10 @@ async fn terminate(state: Shared, t: Terminate) {
     }
 }
 
-/// Publishes account changes and token totals (and, for Codex, its status) every two seconds,
-/// and keeps them in the session's metadata (saved at most once a minute, and at exit).
+/// Publishes account changes (and, for Codex, its status) every two seconds.
 async fn poll_usage(state: Shared) {
     let codex = state.lock().unwrap().meta.agent == "codex";
     let mut stamp = None;
-    let mut saved = std::time::Instant::now();
-    let mut unsaved = false;
     loop {
         let recheck = std::mem::take(&mut state.lock().unwrap().account_recheck);
         let now_stamp = if codex { usage::codex_account_stamp() } else { usage::account_stamp() };
@@ -825,26 +819,11 @@ async fn poll_usage(state: Shared) {
                 st.publish(cq_event(serde_json::json!({ "type": "account", "account": account })));
             }
         }
-        {
+        if codex {
             let mut st = state.lock().unwrap();
-            let tokens = if codex {
-                let u = st.codex_rollout.poll();
-                if let Some(status) = u.as_ref().and_then(|u| u.status.clone()) {
-                    // Codex has no status line; publish the same shape from its rollout.
-                    st.publish(AgentEvent { source: "statusline".into(), received_at_ms: session::now_ms(), payload: status });
-                }
-                u.and_then(|u| u.tokens)
-            } else {
-                st.transcript.poll()
-            };
-            if let Some(totals) = tokens {
-                st.publish(cq_event(serde_json::json!({ "type": "tokens", "tokens": totals })));
-                unsaved |= st.meta.tokens_by_hour != totals.by_hour;
-                st.meta.tokens_by_hour = totals.by_hour;
-            }
-            if unsaved && saved.elapsed() >= Duration::from_secs(60) {
-                (saved, unsaved) = (std::time::Instant::now(), false);
-                let _ = session::save(&st.meta);
+            if let Some(status) = st.codex_rollout.poll() {
+                // Codex has no status line; publish the same shape from its rollout.
+                st.publish(AgentEvent { source: "statusline".into(), received_at_ms: session::now_ms(), payload: status });
             }
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -855,12 +834,10 @@ fn handle_event(state: &Shared, ev: AgentEvent) {
     let mut st = state.lock().unwrap();
     // Agent events are a good moment to re-check the screen (e.g. Notification on a prompt).
     st.dirty = true;
-    if let Some(path) = ev.payload.get("transcript_path").and_then(|v| v.as_str()) {
-        if st.meta.agent == "codex" {
-            st.codex_rollout.set_path(path.into());
-        } else {
-            st.transcript.set_path(path.into());
-        }
+    if let Some(path) = ev.payload.get("transcript_path").and_then(|v| v.as_str())
+        && st.meta.agent == "codex"
+    {
+        st.codex_rollout.set_path(path.into());
     }
     let hook = if ev.source == "hook" { ev.payload.get("hook_event_name").and_then(|v| v.as_str()) } else { None };
     match hook {

@@ -189,105 +189,6 @@ kbd {
   background: var(--danger);
 }
 
-.token-usage {
-  padding: 4px 4px 8px;
-}
-
-.token-controls {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.token-controls select {
-  background: var(--panel-2);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  font-size: 11px;
-}
-
-.segmented {
-  display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.segmented button {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  padding: 2px 8px;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.segmented button.on {
-  background: var(--panel-2);
-  color: var(--text);
-}
-
-.token-machine + .token-machine {
-  margin-top: 8px;
-}
-
-.token-machine-head {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  padding: 0;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.token-dir {
-  margin: 6px 0 0 calc(2 * var(--indent));
-}
-
-.token-agents {
-  margin-left: var(--indent);
-}
-
-.token-name,
-.token-entry-place {
-  flex: 1;
-  /* The same size as the left sidebar's level headings. */
-  font-size: 11px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-}
-
-.token-entry + .token-entry {
-  margin-top: 10px;
-}
-
-.token-agent {
-  margin-top: 4px;
-}
-
-
-.token-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.token-total {
-  flex: none;
-  min-width: 44px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
 .approval-chip {
   border: 1px solid var(--approval);
   color: var(--approval);
@@ -1545,11 +1446,6 @@ kbd {
 
 .session-name-input.invalid {
   border-color: var(--danger);
-}
-
-/* Machines read as the outer level, as in the left sidebar's Machines section. */
-.token-machine-name {
-  color: var(--muted);
 }
 
 .toast.action {

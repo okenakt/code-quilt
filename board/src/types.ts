@@ -13,16 +13,12 @@ export type SessionMeta = {
   agent_session_id: string | null;
   name: string | null;
   account?: string | null;
-  /** Tokens per UTC hour, keyed `YYYY-MM-DDTHH`. */
-  tokens_by_hour?: Record<string, TokenCounts>;
   /** Files the agent shared for the user to view, oldest first. */
   files?: SharedFile[];
 };
 
 /** A file an agent shared with the user (mirrors `cq_protocol::SharedFile`). */
 export type SharedFile = { path: string; caption: string | null; shared_at_ms: number };
-
-export type TokenCounts = { input: number; output: number; cache_read: number; cache_creation: number };
 
 /** Agent event relayed from hooks, the status line, or the host itself. */
 export type AgentEvent = {
@@ -54,23 +50,12 @@ export type StatusLine = {
   model: string | null;
   sessionName: string | null;
   contextPercent: number | null;
-  inputTokens: number | null;
-  outputTokens: number | null;
   fiveHour: RateWindow | null;
   sevenDay: RateWindow | null;
 };
 
 /** Account the agent is logged in with, reported by the host. */
 export type Account = { id: string; label: string };
-
-/** Token totals aggregated from the transcript, per model. */
-export type TokenUsage = {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheCreation: number;
-  byModel: Record<string, { input: number; output: number; cacheRead: number; cacheCreation: number }>;
-};
 
 export type SessionState = {
   key: string;
@@ -80,7 +65,6 @@ export type SessionState = {
   prompt: PermissionPrompt | null;
   status: StatusLine | null;
   account: Account | null;
-  tokens: TokenUsage | null;
   lastActivityAt: number;
 };
 

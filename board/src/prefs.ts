@@ -9,16 +9,12 @@ export type Prefs = {
   folded: string[];
   /** Widths of the session list's columns, shared by every section. */
   columns: Record<Column, number>;
-  tokenView: "tree" | "rank";
-  tokenPeriod: TokenPeriod;
 };
 
 export type Column = "name" | "id";
 
-export type TokenPeriod = "24h" | "7d" | "all";
-
 const KEY = "cq.prefs.v1";
-const DEFAULTS: Prefs = { leftWidth: 280, rightWidth: 260, leftOpen: true, rightOpen: true, folded: [], columns: { name: 110, id: 62 }, tokenView: "tree", tokenPeriod: "7d" };
+const DEFAULTS: Prefs = { leftWidth: 280, rightWidth: 260, leftOpen: true, rightOpen: true, folded: [], columns: { name: 110, id: 62 } };
 
 const load = (): Prefs => {
   try {
@@ -53,8 +49,6 @@ export const usePrefs = (): Prefs =>
 
 export const setWidth = (side: "left" | "right", width: number) =>
   set(side === "left" ? { leftWidth: Math.round(width) } : { rightWidth: Math.round(width) });
-
-export const setTokenPrefs = (patch: Partial<Pick<Prefs, "tokenView" | "tokenPeriod">>) => set(patch);
 
 export const setColumn = (col: Column, width: number) => set({ columns: { ...prefs.columns, [col]: Math.round(Math.min(320, Math.max(32, width))) } });
 

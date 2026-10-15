@@ -59,7 +59,7 @@ enum Cmd {
         #[arg(short, long)]
         all: bool,
     },
-    /// Show rate limits per account and tokens per running session (all machines).
+    /// Show rate limits per account and the running sessions (all machines).
     Usage {
         /// Only this machine (no ssh to remote machines).
         #[arg(long)]
