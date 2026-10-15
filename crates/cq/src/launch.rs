@@ -78,7 +78,13 @@ fn worker_mcp_args(agent: &str) -> Result<Vec<String>> {
     let tools = crate::mcp::WORKER_TOOLS;
     if agent == "codex" {
         let exe = codex_exe()?;
-        let mut set = vec![format!(r#"mcp_servers.cq.command="{exe}""#), r#"mcp_servers.cq.args=["mcp","--worker"]"#.to_owned()];
+        // Codex starts MCP servers with only a few variables of its environment; the server
+        // needs CQ_SESSION_ID to know which session it serves.
+        let mut set = vec![
+            format!(r#"mcp_servers.cq.command="{exe}""#),
+            r#"mcp_servers.cq.args=["mcp","--worker"]"#.to_owned(),
+            r#"mcp_servers.cq.env_vars=["CQ_SESSION_ID"]"#.to_owned(),
+        ];
         set.extend(tools.iter().map(|t| format!(r#"mcp_servers.cq.tools.{t}.approval_mode="approve""#)));
         return Ok(set.into_iter().flat_map(|s| ["-c".to_owned(), s]).collect());
     }

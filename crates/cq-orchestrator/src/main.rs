@@ -130,6 +130,8 @@ fn codex_args(cfg: &OrchestratorConfig, cq: &std::path::Path, mcp_args: &[String
     let mut set = vec![
         format!("mcp_servers.cq.command={}", toml_string(&cq.to_string_lossy().replace('\\', "/"))),
         format!("mcp_servers.cq.args=[{}]", args_toml.join(",")),
+        // Codex passes MCP servers only a few variables; the server needs to know its session.
+        r#"mcp_servers.cq.env_vars=["CQ_SESSION_ID"]"#.to_owned(),
         r#"mcp_servers.cq.default_tools_approval_mode="prompt""#.to_owned(),
         format!("developer_instructions={}", toml_string(&config::persona(cfg)?)),
     ];
