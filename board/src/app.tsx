@@ -24,12 +24,11 @@ import {
   type Side,
 } from "./layout";
 import { BUILTIN_COMMANDS, BUILTIN_KEYS } from "./builtins";
-import { invokePluginCommand, isRecording, targetKey, onStartCommands, pinnedNames, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
+import { invokePluginCommand, isRecording, targetKey, onStartCommands, resolveKeymap, setActiveChords, startCommandSync, useCommandState } from "./commands";
 import { CommandPalette } from "./components/command-palette";
 import { ConfirmDialog, askConfirm } from "./components/confirm-dialog";
 import { KeybindingsView } from "./components/keybindings-view";
 import { chordOfEvent } from "./keys";
-import { togglePin, usePins } from "./pins";
 import { toggleSidebar, usePrefs } from "./prefs";
 import { applyEvent, displayName, markExited, markResumed, setMachines, setSessions, useStore } from "./store";
 import { sharedFiles } from "./files";
@@ -98,10 +97,6 @@ export const App = () => {
     const id = await launchSession(machine, agent, cwd, args);
     openInActiveTab(sessionKey(machine, id));
   }, []);
-
-  const pins = usePins();
-  const uiConfig = useCommandState().config;
-  const pinNames = useMemo(() => pinnedNames(uiConfig), [uiConfig]);
 
   // Panes of ended sessions close themselves.
   useEffect(() => {
@@ -246,11 +241,9 @@ export const App = () => {
             .catch((e: unknown) => showToast(false, `daemon.restart: ${String(e)}`));
           return;
         case "session.end":
-        case "session.pin":
         case "session.copyId": {
           const s = focusedSession();
           if (!s) return showToast(false, "No session pane is focused");
-          if (name === "session.pin") return togglePin(s, pinNames);
           if (name === "session.copyId") {
             void navigator.clipboard.writeText(s.meta.id).then(() => showToast(true, `Copied ${s.meta.id}`));
             return;
@@ -263,7 +256,7 @@ export const App = () => {
         .then((msg) => showToast(true, msg && msg !== "delivered" ? msg : `${name}: done`))
         .catch((e: unknown) => showToast(false, `${name}: ${String(e)}`));
     },
-    [showToast, showApproval, pinNames, layout],
+    [showToast, showApproval, layout],
   );
 
   // Run ui.toml's [[on_start]] commands once the settings are read and the daemon is reachable.
@@ -339,8 +332,6 @@ export const App = () => {
             onNew={setNewSessionFor}
             onResume={resume}
             onEnd={endSession}
-            pins={pins}
-            pinNames={pinNames}
           />
         </aside>
       )}

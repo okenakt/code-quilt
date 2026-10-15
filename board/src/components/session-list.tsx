@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Pin, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { trackPointer } from "../drag";
 import { focusPane, panesOf, selectTab, useLayout } from "../layout";
@@ -6,7 +6,6 @@ import { setColumn, toggleFold, usePrefs, type Column, type Prefs } from "../pre
 import { Fold, SidebarSection, isExpanded } from "./sidebar-section";
 import { baseName } from "../path";
 import { parseFileView } from "../files";
-import { isPinned, togglePin, type Pins } from "../pins";
 import { AgentBadge } from "./agent-badge";
 import { DirName } from "./dir-name";
 import { SessionName } from "./session-name";
@@ -119,14 +118,12 @@ type ItemProps = {
   /** Fold key of the details, unique per place the session is listed so each expands on its own. */
   detailsKey: string;
   active: boolean;
-  pinned: boolean;
-  onPin: (s: SessionState) => void;
   onEnd: (s: SessionState) => void;
   onOpen: () => void;
 };
 
-/** A running session: name, id and state, with pin and end buttons and foldable details. */
-const SessionItem = ({ s, machine, detailsKey, active, pinned, onPin, onEnd, onOpen }: ItemProps) => {
+/** A running session: name, id and state, with an end button and foldable details. */
+const SessionItem = ({ s, machine, detailsKey, active, onEnd, onOpen }: ItemProps) => {
   const open = isExpanded(usePrefs(), detailsKey, false);
   return (
     <div
@@ -162,16 +159,6 @@ const SessionItem = ({ s, machine, detailsKey, active, pinned, onPin, onEnd, onO
             </span>
           )}
         </span>
-        <button
-          className={`pin ${pinned ? "on" : ""}`}
-          title={pinned ? "unpin" : "pin to the front"}
-          onClick={(e) => {
-            e.stopPropagation();
-            onPin(s);
-          }}
-        >
-          <Pin size={12} />
-        </button>
         <button
           className="end-session"
           title="end session (the agent exits; killed after 10s)"
@@ -264,13 +251,11 @@ type ListProps = {
   prefs: Prefs;
   sessions: Map<string, SessionState>;
   machineOf: (s: SessionState) => MachineInfo | undefined;
-  pinOf: (s: SessionState) => boolean;
-  onPin: (s: SessionState) => void;
   onEnd: (s: SessionState) => void;
 };
 
 /** Each tab with the sessions shown in it; selecting one switches to its tab and pane. */
-const TabsSection = ({ prefs, sessions, machineOf, pinOf, onPin, onEnd }: ListProps) => {
+const TabsSection = ({ prefs, sessions, machineOf, onEnd }: ListProps) => {
   const { tabs, active } = useLayout();
   return (
     <>
@@ -309,8 +294,6 @@ const TabsSection = ({ prefs, sessions, machineOf, pinOf, onPin, onEnd }: ListPr
                       machine={machineOf(s)}
                       detailsKey={`details:tab:${t.id}:${p.id}`}
                       active={t.id === active && t.focus === p.id}
-                      pinned={pinOf(s)}
-                      onPin={onPin}
                       onEnd={onEnd}
                       onOpen={() => {
                         selectTab(t.id);
@@ -337,17 +320,12 @@ type Props = {
   onNew: (machine: string) => void;
   onResume: (s: SessionState) => void;
   onEnd: (s: SessionState) => void;
-  pins: Pins;
-  /** Names pinned by default (`pinned` in ui.toml). */
-  pinNames: string[];
 };
 
-/** Left sidebar: Pinned, Tabs and Machines, each of which can be folded. */
-export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume, onEnd, pins, pinNames }: Props) => {
+/** Left sidebar: Tabs and Machines, each of which can be folded. */
+export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onResume, onEnd }: Props) => {
   const prefs = usePrefs();
   const running = sessions.filter((s) => s.activity !== "exited");
-  const pinOf = (s: SessionState) => isPinned(s, pins, pinNames);
-  const onPin = (s: SessionState) => togglePin(s, pinNames);
   const machineOf = (s: SessionState) => machines.find((m) => m.id === s.machine);
   const item = (s: SessionState, place: string) => (
     <SessionItem
@@ -356,23 +334,14 @@ export const SessionList = ({ machines, sessions, activeKey, onOpen, onNew, onRe
       machine={machineOf(s)}
       detailsKey={`details:${place}:${s.key}`}
       active={s.key === activeKey}
-      pinned={pinOf(s)}
-      onPin={onPin}
       onEnd={onEnd}
       onOpen={() => onOpen(s)}
     />
   );
-  const pinned = running.filter(pinOf);
   return (
     <nav className="session-list" style={{ "--col-name": `${prefs.columns.name}px`, "--col-id": `${prefs.columns.id}px` } as CSSProperties}>
-      <SidebarSection title="Pinned" foldKey="pinned" prefs={prefs}>
-        <div className="tree deep">
-          {pinned.length === 0 && <div className="empty">No pinned sessions</div>}
-          {pinned.map((s) => item(s, "pinned"))}
-        </div>
-      </SidebarSection>
       <SidebarSection title="Tabs" foldKey="tabs" prefs={prefs}>
-        <TabsSection prefs={prefs} sessions={new Map(sessions.map((s) => [s.key, s]))} machineOf={machineOf} pinOf={pinOf} onPin={onPin} onEnd={onEnd} />
+        <TabsSection prefs={prefs} sessions={new Map(sessions.map((s) => [s.key, s]))} machineOf={machineOf} onEnd={onEnd} />
       </SidebarSection>
       <SidebarSection title="Machines" foldKey="machines" prefs={prefs}>
         {machines.map((m) => {

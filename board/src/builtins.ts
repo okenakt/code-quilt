@@ -33,7 +33,6 @@ export const BUILTIN_COMMANDS: Command[] = [
   builtin("pane.close", "Close Pane (Detach)"),
   builtin("pane.zoom", "Zoom Pane"),
   builtin("session.end", "End Focused Session"),
-  builtin("session.pin", "Pin or Unpin Focused Session"),
   builtin("session.copyId", "Copy Focused Session Id"),
   builtin("daemon.restart", "Restart Daemon"),
 ];

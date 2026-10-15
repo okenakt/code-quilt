@@ -813,34 +813,6 @@ kbd {
   cursor: default;
 }
 
-.pin {
-  flex: none;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 0 2px;
-  opacity: 0;
-}
-
-.session:hover .pin {
-  opacity: 0.7;
-}
-
-.pin:hover,
-.pin.on {
-  opacity: 1;
-  color: var(--working);
-}
-
-.pin.on svg {
-  transform: rotate(90deg);
-}
-
-.machine.pinned .machine-header {
-  color: var(--accent);
-}
-
 .end-session {
   flex: none;
   border: 0;
