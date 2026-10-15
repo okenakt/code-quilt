@@ -139,7 +139,7 @@ pub async fn run(name: &str, cfg: OrchestratorConfig) -> Result<()> {
                 let Some(Ok(msg)) = msg else {
                     // The daemon went away (e.g. restarted): connect again and rebuild the view;
                     // undelivered items are kept.
-                    conn.reconnect().await;
+                    conn.reconnect().await?;
                     let _ = conn.send(&Message::ListSessions).await;
                     (model, registered, listed, started) = (Model::default(), false, false, now_ms());
                     continue;

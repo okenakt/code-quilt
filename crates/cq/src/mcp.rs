@@ -359,6 +359,10 @@ async fn daemon_loop(
         };
         if let Err(e) = run.await {
             eprintln!("cq mcp: {e:#}");
+            // Another protocol version stays another; the tools report the closed connection.
+            if e.is::<cq_client::Incompatible>() {
+                return;
+            }
         }
         // Reconnect; the hosts replay their history to the new connection.
         model.lock().unwrap().sessions.clear();

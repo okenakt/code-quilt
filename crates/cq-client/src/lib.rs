@@ -337,18 +337,19 @@ pub async fn stop_daemon() -> Result<bool> {
     if !daemon_running().await? {
         return Ok(false);
     }
-    let mut conn = DaemonClient::open(false).await?;
-    conn.send(&Message::Shutdown).await?;
-    for _ in 0..50 {
-        if !daemon_running().await? {
-            return Ok(true);
+    // A daemon of another protocol version refuses the connection, and with it the request.
+    let reason = match DaemonClient::open(false).await {
+        Ok(mut conn) => {
+            conn.send(&Message::Shutdown).await?;
+            for _ in 0..50 {
+                if !daemon_running().await? {
+                    return Ok(true);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            "it did not exit".to_owned()
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    // A daemon of another protocol version refuses the connection before the request.
-    let reason = match conn.msgs.try_recv() {
-        Ok(Ok(Message::Error(e))) => e,
-        _ => "it did not exit".to_owned(),
+        Err(e) => format!("{e:#}"),
     };
     let pid = daemon_pid().await.map_or_else(|| "unknown pid".to_owned(), |p| format!("pid {p}"));
     anyhow::bail!("could not stop the local daemon ({pid}): {reason}; stop that process yourself")
@@ -363,13 +364,30 @@ pub struct DaemonClient {
 
 impl DaemonClient {
     /// Connects (starting the daemon if needed) and says hello. With `federate` the daemon also
-    /// relays every registered remote machine.
+    /// relays every registered remote machine. Fails with [`Incompatible`] when the daemon speaks another protocol version.
     pub async fn open(federate: bool) -> Result<Self> {
-        let (rd, wr) = tokio::io::split(connect_daemon().await?);
-        let mut client = Self { msgs: cq_protocol::spawn_reader(rd), wr, federate };
+        let (rd, mut wr) = tokio::io::split(connect_daemon().await?);
+        let mut msgs = cq_protocol::spawn_reader(rd);
         let hello = cq_protocol::Hello { federate, ..cq_protocol::Hello::new(cq_protocol::DAEMON_PROTOCOL_VERSION, cq_protocol::ClientKind::Hub) };
-        client.send(&Message::Hello(hello)).await?;
-        Ok(client)
+        cq_protocol::write_message(&mut wr, &Message::Hello(hello)).await?;
+        // The daemon answers a hello with the machine list, or refuses another protocol version.
+        let first = match tokio::time::timeout(Duration::from_secs(10), msgs.recv()).await {
+            Ok(Some(Ok(Message::Error(e)))) => return Err(Incompatible(e).into()),
+            Ok(Some(first)) => first,
+            Ok(None) => anyhow::bail!("the daemon closed the connection"),
+            Err(_) => anyhow::bail!("no answer from the daemon"),
+        };
+        // Hand the first message on ahead of the rest.
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let _ = tx.send(first);
+        tokio::spawn(async move {
+            while let Some(m) = msgs.recv().await {
+                if tx.send(m).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Self { msgs: rx, wr, federate })
     }
 
     pub async fn send(&mut self, msg: &Message) -> Result<()> {
@@ -391,17 +409,34 @@ impl DaemonClient {
     }
 
     /// Connects again after the daemon went away (e.g. `cq daemon restart`), starting it if
-    /// needed and retrying every second until it succeeds.
-    pub async fn reconnect(&mut self) {
+    /// needed and retrying every second until it succeeds. Gives up when the daemon speaks another protocol version: retrying cannot help, and every
+    /// refused attempt would add a line to the daemon's log.
+    pub async fn reconnect(&mut self) -> Result<()> {
         loop {
             match Self::open(self.federate).await {
-                Ok(c) => return *self = c,
+                Ok(c) => {
+                    *self = c;
+                    return Ok(());
+                }
+                Err(e) if e.is::<Incompatible>() => return Err(e),
                 Err(e) => eprintln!("daemon unreachable: {e:#}"),
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 }
+
+/// The daemon refused this client's protocol version (one of them needs updating).
+#[derive(Debug)]
+pub struct Incompatible(pub String);
+
+impl std::fmt::Display for Incompatible {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "daemon: {}", self.0)
+    }
+}
+
+impl std::error::Error for Incompatible {}
 
 /// Which machines' sessions an orchestrator may see and drive (`machine:NAME` entries; none
 /// means every machine).
