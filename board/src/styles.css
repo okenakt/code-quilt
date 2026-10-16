@@ -1496,6 +1496,25 @@ kbd {
   object-fit: cover;
 }
 
+.shared-file-strip button:has(iframe) {
+  height: 96px;
+  padding: 0;
+  overflow: hidden;
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
+/* A Markdown thumbnail: the document drawn at three times the size and scaled down. */
+.shared-file-strip iframe {
+  flex: none;
+  width: 300%;
+  height: 300%;
+  border: 0;
+  transform: scale(0.3333);
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
 .shared-file-strip span {
   max-width: 100%;
   overflow: hidden;
