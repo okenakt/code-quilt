@@ -1404,7 +1404,6 @@ kbd {
   border: 1px solid var(--agent);
   border-radius: 3px;
   color: var(--agent);
-  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--agent) 28%, transparent) 0 2px, transparent 2px 5px);
 }
 
 .agent-badge.claude {
