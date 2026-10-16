@@ -47,7 +47,8 @@ impl Server {
     /// with its `machine:id` key.
     fn resolve(&self, target: &str) -> Result<(Session, String)> {
         let m = self.model.lock().unwrap();
-        let live: Vec<&Session> = m.sessions.values().filter(|s| self.visible(s) && s.activity != Activity::Exited).collect();
+        let live: Vec<&Session> =
+            m.sessions.values().filter(|s| self.visible(s) && s.activity != Activity::Exited).collect();
         let (machine, rest) = match target.split_once(':') {
             Some((name, r)) => match cq_client::machine_id(&m.machines, name) {
                 Some(id) => (Some(id), r),
@@ -101,7 +102,9 @@ impl Server {
             .collect();
         out.sort_by_key(|s| (s.machine.clone(), s.meta.started_at_ms));
         let machines: Vec<_> = m.machines.iter().map(|x| json!({ "name": x.name, "online": x.online })).collect();
-        Ok(json!({ "machines": machines, "sessions": out.into_iter().map(|s| Self::describe(&m, s)).collect::<Vec<_>>() }))
+        Ok(
+            json!({ "machines": machines, "sessions": out.into_iter().map(|s| Self::describe(&m, s)).collect::<Vec<_>>() }),
+        )
     }
 
     fn get_turns(&self, args: &Value) -> Result<Value> {
@@ -115,7 +118,9 @@ impl Server {
             .rev()
             .map(|t| json!({ "prompt": t.prompt, "reply": t.reply, "at_ms": t.at_ms }))
             .collect();
-        Ok(json!({ "session": key, "name": s.meta.name, "state": s.activity.as_str(), "permission_prompt": s.prompt, "turns": turns }))
+        Ok(
+            json!({ "session": key, "name": s.meta.name, "state": s.activity.as_str(), "permission_prompt": s.prompt, "turns": turns }),
+        )
     }
 
     /// Queues a message from this session for another one: it is typed in once that session is
@@ -128,7 +133,11 @@ impl Server {
         let text = if from.is_some() { text.to_owned() } else { format!("[from outside CodeQuilt]\n{text}") };
         let inject = cq_protocol::Inject { id: crate::session::now_ms(), text, submit: true, quiet_ms: 3000, from };
         self.tx
-            .send(Message::Routed { machine: s.machine.clone(), session: s.meta.id.clone(), inner: Box::new(Message::Inject(inject)) })
+            .send(Message::Routed {
+                machine: s.machine.clone(),
+                session: s.meta.id.clone(),
+                inner: Box::new(Message::Inject(inject)),
+            })
             .map_err(|_| anyhow!("daemon connection closed"))?;
         Ok(json!({ "queued_for": key, "name": s.meta.name }))
     }
@@ -142,7 +151,11 @@ impl Server {
             bytes.push(b'\r');
         }
         self.tx
-            .send(Message::Routed { machine: s.machine.clone(), session: s.meta.id.clone(), inner: Box::new(Message::Input(bytes)) })
+            .send(Message::Routed {
+                machine: s.machine.clone(),
+                session: s.meta.id.clone(),
+                inner: Box::new(Message::Input(bytes)),
+            })
             .map_err(|_| anyhow!("daemon connection closed"))?;
         Ok(json!({ "sent_to": key, "name": s.meta.name, "submitted": submit }))
     }
@@ -176,8 +189,19 @@ impl Server {
             .map_err(|_| anyhow!("the session did not start within 30s"))??;
         let mut out = json!({ "session": format!("{machine_name}:{session}"), "name": name });
         if let Some(prompt) = args.get("prompt").and_then(Value::as_str) {
-            let inject = cq_protocol::Inject { id: crate::session::now_ms(), text: prompt.to_owned(), submit: true, quiet_ms: 3000, from: None };
-            conn.send(&Message::Routed { machine: machine.clone(), session: session.clone(), inner: Box::new(Message::Inject(inject)) }).await?;
+            let inject = cq_protocol::Inject {
+                id: crate::session::now_ms(),
+                text: prompt.to_owned(),
+                submit: true,
+                quiet_ms: 3000,
+                from: None,
+            };
+            conn.send(&Message::Routed {
+                machine: machine.clone(),
+                session: session.clone(),
+                inner: Box::new(Message::Inject(inject)),
+            })
+            .await?;
             let queued = async {
                 while let Some(msg) = conn.msgs.recv().await {
                     if let Message::Routed { session: s, inner, .. } = msg?
@@ -189,7 +213,9 @@ impl Server {
                 }
                 bail!("daemon connection closed")
             };
-            tokio::time::timeout(Duration::from_secs(20), queued).await.map_err(|_| anyhow!("the session started but did not accept the prompt"))??;
+            tokio::time::timeout(Duration::from_secs(20), queued)
+                .await
+                .map_err(|_| anyhow!("the session started but did not accept the prompt"))??;
             out["prompt"] = json!("queued; it is typed once the session is idle");
         }
         Ok(out)
@@ -203,9 +229,15 @@ impl Server {
         self.approvals.lock().unwrap().insert((s.machine.clone(), s.meta.id.clone()), tx);
         let approve = cq_protocol::Approve { option, prompt_id: Some(prompt_id) };
         self.tx
-            .send(Message::Routed { machine: s.machine.clone(), session: s.meta.id.clone(), inner: Box::new(Message::Approve(approve)) })
+            .send(Message::Routed {
+                machine: s.machine.clone(),
+                session: s.meta.id.clone(),
+                inner: Box::new(Message::Approve(approve)),
+            })
             .map_err(|_| anyhow!("daemon connection closed"))?;
-        let result = tokio::time::timeout(Duration::from_secs(15), rx).await.map_err(|_| anyhow!("no answer from the session"))??;
+        let result = tokio::time::timeout(Duration::from_secs(15), rx)
+            .await
+            .map_err(|_| anyhow!("no answer from the session"))??;
         if result.get("ok").and_then(Value::as_bool) != Some(true) {
             bail!("approval refused: {}", result.get("reason").and_then(Value::as_str).unwrap_or("unknown"));
         }
@@ -284,7 +316,11 @@ async fn daemon_loop(
             let mut conn = cq_client::DaemonClient::open(true).await?;
             conn.send(&Message::ListSessions).await?;
             if let Some((name, _)) = &channel {
-                let cmd = cq_protocol::CommandInfo { name: name.clone(), title: "Deliver a channel message".into(), ..Default::default() };
+                let cmd = cq_protocol::CommandInfo {
+                    name: name.clone(),
+                    title: "Deliver a channel message".into(),
+                    ..Default::default()
+                };
                 conn.send(&Message::RegisterCommand(cmd)).await?;
             }
             loop {
@@ -371,7 +407,9 @@ pub async fn run(channel: bool, worker: bool) -> Result<()> {
             let Some(id) = req.get("id").cloned() else { return }; // notification
             let reply = match handle(&server, &req).await {
                 Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-                Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32603, "message": format!("{e:#}") } }),
+                Err(e) => {
+                    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32603, "message": format!("{e:#}") } })
+                }
             };
             let _ = out.send(reply);
         });
@@ -408,7 +446,9 @@ async fn handle(server: &Server, req: &Value) -> Result<Value> {
             let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
             let result = match name {
-                other if server.worker && !WORKER_TOOLS.contains(&other) => Err(anyhow!("tool '{other}' is not available to worker sessions")),
+                other if server.worker && !WORKER_TOOLS.contains(&other) => {
+                    Err(anyhow!("tool '{other}' is not available to worker sessions"))
+                }
                 "list_sessions" => server.list_sessions(&args),
                 "get_turns" => server.get_turns(&args),
                 "send" => server.send(&args),

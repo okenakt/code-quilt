@@ -157,7 +157,11 @@ impl Scope {
     pub fn parse(entries: &[String]) -> Result<Self> {
         let machines = entries
             .iter()
-            .map(|e| e.strip_prefix("machine:").map(str::to_owned).with_context(|| format!("invalid scope '{e}' (use machine:NAME)")))
+            .map(|e| {
+                e.strip_prefix("machine:")
+                    .map(str::to_owned)
+                    .with_context(|| format!("invalid scope '{e}' (use machine:NAME)"))
+            })
             .collect::<Result<_>>()?;
         Ok(Self { machines })
     }

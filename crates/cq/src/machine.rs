@@ -171,7 +171,13 @@ pub async fn add(host: String, port: Option<u16>, name: Option<String>, cq_path:
 
 /// Changes a machine. Changing how it is reached connects to it again first. `port` 0 and an
 /// empty `cq_path` go back to the defaults. This machine only has a name to change.
-pub async fn set(machine: &str, name: Option<String>, host: Option<String>, port: Option<u16>, cq_path: Option<String>) -> Result<()> {
+pub async fn set(
+    machine: &str,
+    name: Option<String>,
+    host: Option<String>,
+    port: Option<u16>,
+    cq_path: Option<String>,
+) -> Result<()> {
     if name.is_none() && host.is_none() && port.is_none() && cq_path.is_none() {
         bail!("nothing to change; pass --name, --host, --port or --cq-path");
     }

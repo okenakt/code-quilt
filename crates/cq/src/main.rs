@@ -348,7 +348,9 @@ async fn run(cmd: Cmd) -> Result<i32> {
             match action {
                 MachineCmd::List => machine::list()?,
                 MachineCmd::Add { host, port, name, cq_path } => machine::add(host, port, name, cq_path).await?,
-                MachineCmd::Set { machine, name, host, port, cq_path } => machine::set(&machine, name, host, port, cq_path).await?,
+                MachineCmd::Set { machine, name, host, port, cq_path } => {
+                    machine::set(&machine, name, host, port, cq_path).await?
+                }
                 MachineCmd::Remove { machine } => machine::remove(&machine)?,
             }
             Ok(0)

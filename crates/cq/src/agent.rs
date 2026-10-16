@@ -92,7 +92,11 @@ fn input_empty_from(screen: &vt100::Screen, row: u16, marker: char, end: impl Fn
     while r < rows && !(r > row && end(r)) {
         for c in if r == row { start } else { 0 }..cols {
             let Some(cell) = screen.cell(r, c) else { continue };
-            if cell.has_contents() && !cell.contents().trim().is_empty() && !cell.dim() && !is_hint_color(cell.fgcolor()) {
+            if cell.has_contents()
+                && !cell.contents().trim().is_empty()
+                && !cell.dim()
+                && !is_hint_color(cell.fgcolor())
+            {
                 return Some(false);
             }
         }
@@ -114,7 +118,13 @@ pub fn debug_input_row(screen: &vt100::Screen) {
         for c in 0..cols.min(30) {
             if let Some(cell) = screen.cell(r, c) {
                 if cell.has_contents() && !cell.contents().trim().is_empty() {
-                    println!("  col {c} {:?} fg={:?} dim={} inv={}", cell.contents(), cell.fgcolor(), cell.dim(), cell.inverse());
+                    println!(
+                        "  col {c} {:?} fg={:?} dim={} inv={}",
+                        cell.contents(),
+                        cell.fgcolor(),
+                        cell.dim(),
+                        cell.inverse()
+                    );
                 }
             }
         }
@@ -189,7 +199,10 @@ fn marked_options(lines: &[&str]) -> Option<(usize, Vec<PromptOption>, u8)> {
     let options = block
         .iter()
         .enumerate()
-        .map(|(i, l)| PromptOption { number: i as u8 + 1, label: l.trim().trim_start_matches(['❯', '›']).trim().to_owned() })
+        .map(|(i, l)| PromptOption {
+            number: i as u8 + 1,
+            label: l.trim().trim_start_matches(['❯', '›']).trim().to_owned(),
+        })
         .collect();
     Some((start, options, selected as u8 + 1))
 }
@@ -198,7 +211,8 @@ fn marked_options(lines: &[&str]) -> Option<(usize, Vec<PromptOption>, u8)> {
 /// Codex's "enter confirm · esc skip" / "enter continue".
 fn is_dialog_footer(line: &str) -> bool {
     let l = line.to_lowercase();
-    l.contains("enter to confirm") || (l.contains("enter") && (l.contains("confirm") || l.contains("continue")) && l.contains("esc"))
+    l.contains("enter to confirm")
+        || (l.contains("enter") && (l.contains("confirm") || l.contains("continue")) && l.contains("esc"))
 }
 
 /// Finds a prompt that waits for a choice (Claude Code and Codex): a permission request ("Do you
@@ -226,7 +240,8 @@ pub fn find_choice_prompt(screen: &str) -> Option<PermissionPrompt> {
     }
     let text_end = (0..first).rev().find(|&i| !lines[i].trim().is_empty())?;
     // Codex asks for tool approval without "Do you want to"; its options give it away.
-    let is_permission = options.iter().any(|o| o.label.starts_with("Yes, proceed") || o.label.starts_with("Yes, and don't ask again"));
+    let is_permission =
+        options.iter().any(|o| o.label.starts_with("Yes, proceed") || o.label.starts_with("Yes, and don't ask again"));
     let kind = if is_permission { "permission" } else { "dialog" };
     Some(prompt(kind, prompt_text(&lines, text_end, 12), options, selected))
 }
@@ -297,7 +312,9 @@ mod tests {
     #[test]
     fn input_box_with_placeholder_is_empty() {
         let rule = "─".repeat(50);
-        let p = screen_of(&format!("hello\r\n{rule}\r\n❯ \x1b[38;2;153;153;153mTry \"fix lint\"\x1b[0m\r\n{rule}\r\n  ? for shortcuts"));
+        let p = screen_of(&format!(
+            "hello\r\n{rule}\r\n❯ \x1b[38;2;153;153;153mTry \"fix lint\"\x1b[0m\r\n{rule}\r\n  ? for shortcuts"
+        ));
         assert_eq!(claude_input_empty(p.screen()), Some(true));
         let p = screen_of(&format!("{rule}\r\n❯ \x1b[2mTry this\x1b[0m\r\n{rule}"));
         assert_eq!(claude_input_empty(p.screen()), Some(true));

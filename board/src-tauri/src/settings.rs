@@ -117,14 +117,20 @@ fn unbind(bindings: &mut toml_edit::ArrayOfTables, key: &str, command: &str) {
 
 /// Binds `key` to `command` with `args` after taking away the keys in `unbind` (the command's
 /// old keys, and the key's previous command), in one edit of the file.
-pub fn bind_key(key: &str, command: &str, args: &BTreeMap<String, String>, unbind_first: &[KeyOf]) -> Result<(), String> {
+pub fn bind_key(
+    key: &str,
+    command: &str,
+    args: &BTreeMap<String, String>,
+    unbind_first: &[KeyOf],
+) -> Result<(), String> {
     edit_bindings(|bindings| {
         for k in unbind_first {
             unbind(bindings, &k.key, &k.command);
         }
         // Drop the user's other bindings of this key, but keep `-command` entries removing defaults.
         bindings.retain(|t| {
-            t.get("key").and_then(|v| v.as_str()) != Some(key) || t.get("command").and_then(|v| v.as_str()).is_some_and(|c| c.starts_with('-'))
+            t.get("key").and_then(|v| v.as_str()) != Some(key)
+                || t.get("command").and_then(|v| v.as_str()).is_some_and(|c| c.starts_with('-'))
         });
         let mut t = toml_edit::Table::new();
         t["key"] = toml_edit::value(key);

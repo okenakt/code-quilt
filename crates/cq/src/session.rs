@@ -22,7 +22,8 @@ pub fn save(meta: &SessionMeta) -> Result<()> {
 /// Reads a file the session `id` shared; any other path is refused.
 pub fn read_shared(id: &str, path: &str) -> Result<Vec<u8>> {
     anyhow::ensure!(!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()), "invalid session id");
-    let meta: SessionMeta = serde_json::from_slice(&std::fs::read(paths::session_file(id)?).context("unknown session")?)?;
+    let meta: SessionMeta =
+        serde_json::from_slice(&std::fs::read(paths::session_file(id)?).context("unknown session")?)?;
     anyhow::ensure!(meta.files.iter().any(|f| f.path == path), "the session did not share {path}");
     let len = std::fs::metadata(path).with_context(|| format!("read {path}"))?.len();
     anyhow::ensure!(len <= cq_protocol::MAX_SHARED_FILE_LEN, "{path} is larger than 10 MB");
@@ -56,11 +57,8 @@ pub fn list() -> Result<Vec<SessionMeta>> {
 /// unique id prefix. Same order as the MCP server uses.
 pub fn pick<'a>(sessions: &'a [SessionMeta], key: &str) -> Result<&'a SessionMeta> {
     let running = || sessions.iter().filter(|m| m.status == SessionStatus::Running);
-    let rules: [&dyn Fn(&SessionMeta) -> bool; 3] = [
-        &|m| m.name.as_deref() == Some(key),
-        &|m| m.id == key,
-        &|m| m.id.starts_with(key),
-    ];
+    let rules: [&dyn Fn(&SessionMeta) -> bool; 3] =
+        [&|m| m.name.as_deref() == Some(key), &|m| m.id == key, &|m| m.id.starts_with(key)];
     for rule in rules {
         let hits: Vec<_> = running().filter(|m| rule(m)).collect();
         match hits.as_slice() {
@@ -85,7 +83,9 @@ pub fn pick_ended<'a>(sessions: &'a [SessionMeta], key: &str) -> Result<&'a Sess
         [] => anyhow::bail!("no session matches '{key}'"),
         [one] if one.status == SessionStatus::Running => anyhow::bail!("session {} is still running", one.id),
         [one] => Ok(one),
-        many => anyhow::bail!("'{key}' is ambiguous: {}", many.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", ")),
+        many => {
+            anyhow::bail!("'{key}' is ambiguous: {}", many.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", "))
+        }
     }
 }
 
@@ -109,9 +109,7 @@ pub fn resolve(key: &str) -> Result<SessionMeta> {
 #[cfg(windows)]
 pub fn pid_alive(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
-    use windows_sys::Win32::System::Threading::{
-        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
+    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if h.is_null() {

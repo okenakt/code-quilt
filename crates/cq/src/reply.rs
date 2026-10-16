@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// Extensions the board renders.
-const VIEWABLE: [&str; 13] = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "pdf", "html", "htm", "md", "markdown"];
+const VIEWABLE: [&str; 13] =
+    ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "pdf", "html", "htm", "md", "markdown"];
 
 /// Code block languages that are written out to files.
 const BLOCKS: [&str; 2] = ["mermaid", "math"];
@@ -35,7 +36,8 @@ pub fn files(reply: &str, cwd: &Path, blocks_dir: &Path) -> Vec<String> {
 fn shown(path: &Path) -> Option<String> {
     let path = std::fs::canonicalize(path).ok()?;
     let meta = std::fs::metadata(&path).ok()?;
-    (meta.is_file() && meta.len() <= cq_protocol::MAX_SHARED_FILE_LEN).then(|| crate::config::display_path(&path).to_string_lossy().into_owned())
+    (meta.is_file() && meta.len() <= cq_protocol::MAX_SHARED_FILE_LEN)
+        .then(|| crate::config::display_path(&path).to_string_lossy().into_owned())
 }
 
 fn viewable(path: &Path) -> bool {
@@ -70,7 +72,8 @@ fn end_of_name(t: &str) -> Option<usize> {
 /// Finds the file a mention means, trying it whole and then the part after any Japanese text
 /// before it (`設定はdocs/design.md`).
 fn resolve(mention: &str, cwd: &Path, index: &mut Option<Vec<PathBuf>>) -> Option<PathBuf> {
-    let tail = mention.rfind(|c: char| !c.is_ascii()).map(|i| &mention[i + mention[i..].chars().next().unwrap().len_utf8()..]);
+    let tail =
+        mention.rfind(|c: char| !c.is_ascii()).map(|i| &mention[i + mention[i..].chars().next().unwrap().len_utf8()..]);
     std::iter::once(mention).chain(tail.filter(|t| !t.is_empty())).find_map(|m| resolve_one(m, cwd, index))
 }
 
@@ -121,7 +124,8 @@ fn blocks(text: &str) -> Vec<(&'static str, String)> {
         if let Some(mark) = ['`', '~'].into_iter().find(|&c| t.starts_with([c; 3])) {
             let fence = &t[..t.len() - t.trim_start_matches(mark).len()];
             let lang = t[fence.len()..].split_whitespace().next().unwrap_or("").to_ascii_lowercase();
-            let body: Vec<&str> = lines.by_ref().take_while(|l| !l.trim_start().starts_with(fence)).map(|l| dedent(l, indent)).collect();
+            let body: Vec<&str> =
+                lines.by_ref().take_while(|l| !l.trim_start().starts_with(fence)).map(|l| dedent(l, indent)).collect();
             if let Some(kind) = BLOCKS.into_iter().find(|k| *k == lang) {
                 out.push((kind, body.join("\n")));
             }
@@ -175,14 +179,27 @@ mod tests {
     fn finds_mentions_in_prose() {
         let text = "`docs/design.md:162` と 設定（features.md）、decisions.mdとdocs/a.mdを更新し、out.png を作りました。\n\
                     See [the plot](assets/fig.svg), @notes.md, https://example.com/a.png, v1.2.png and src/main.rs.";
-        assert_eq!(mentions(text), ["docs/design.md", "features.md", "decisions.md", "とdocs/a.md", "out.png", "assets/fig.svg", "notes.md", "v1.2.png"]);
+        assert_eq!(
+            mentions(text),
+            [
+                "docs/design.md",
+                "features.md",
+                "decisions.md",
+                "とdocs/a.md",
+                "out.png",
+                "assets/fig.svg",
+                "notes.md",
+                "v1.2.png"
+            ]
+        );
     }
 
     #[test]
     fn extracts_diagram_and_math_blocks() {
         let text = "Intro\n  ```mermaid\n  flowchart LR\n    A --> B\n  ```\n```sh\n$$ not math $$\n```\n\
                     $$\na^2 + b^2\n$$\n$$ x = 1 $$\n```math\n\\int f\n```\n```rust\nfn main() {}\n```\n$$ unclosed";
-        let expected = [("mermaid", "flowchart LR\n  A --> B"), ("math", "a^2 + b^2"), ("math", "x = 1"), ("math", "\\int f")];
+        let expected =
+            [("mermaid", "flowchart LR\n  A --> B"), ("math", "a^2 + b^2"), ("math", "x = 1"), ("math", "\\int f")];
         assert_eq!(blocks(text), expected.map(|(k, b)| (k, b.to_owned())));
     }
 
@@ -205,7 +222,15 @@ mod tests {
         let found = files(reply, &cwd, &blocks_dir);
         let shown_as = |p: PathBuf| shown(&p).unwrap();
         let block = shown_as(std::fs::read_dir(&blocks_dir).unwrap().next().unwrap().unwrap().path());
-        assert_eq!(found, [shown_as(cwd.join("b/index.html")), shown_as(cwd.join("a/index.html")), shown_as(cwd.join("a/plot.png")), block.clone()]);
+        assert_eq!(
+            found,
+            [
+                shown_as(cwd.join("b/index.html")),
+                shown_as(cwd.join("a/index.html")),
+                shown_as(cwd.join("a/plot.png")),
+                block.clone()
+            ]
+        );
         assert_eq!(std::fs::read_to_string(&block).unwrap(), "```mermaid\nA\n```\n");
         let _ = std::fs::remove_dir_all(&root);
     }

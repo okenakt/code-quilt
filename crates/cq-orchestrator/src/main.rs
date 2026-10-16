@@ -145,7 +145,13 @@ fn toml_string(s: &str) -> String {
 }
 
 /// Codex takes the same profile as `-c` config overrides.
-fn codex_args(cfg: &OrchestratorConfig, cq: &std::path::Path, mcp_args: &[String], tools: &[&str], persona: &str) -> Result<Vec<String>> {
+fn codex_args(
+    cfg: &OrchestratorConfig,
+    cq: &std::path::Path,
+    mcp_args: &[String],
+    tools: &[&str],
+    persona: &str,
+) -> Result<Vec<String>> {
     let args_toml: Vec<String> = mcp_args.iter().map(|a| toml_string(a)).collect();
     let mut set = vec![
         format!("mcp_servers.cq.command={}", toml_string(&cq.to_string_lossy().replace('\\', "/"))),
@@ -201,7 +207,10 @@ async fn running_orchestrator(name: &str) -> Result<Option<cq_protocol::SessionM
     conn.send(&Message::ListSessions).await?;
     while let Some(msg) = conn.msgs.recv().await {
         if let Message::SessionList(l) = msg? {
-            return Ok(l.sessions.into_iter().find(|s| s.status == SessionStatus::Running && s.name.as_deref() == Some(name)));
+            return Ok(l
+                .sessions
+                .into_iter()
+                .find(|s| s.status == SessionStatus::Running && s.name.as_deref() == Some(name)));
         }
     }
     bail!("daemon connection closed")
@@ -227,7 +236,9 @@ async fn start(args: Vec<String>, detach: bool, extra: Vec<String>) -> Result<i3
     spawn_courier(name, &overrides)?;
     eprintln!("[cq-orchestrator] {name} ({}): settings {}", cfg.agent, path.display());
     if cfg.delivery() == Delivery::Channels {
-        eprintln!("[cq-orchestrator] confirm the development channel prompt (here or in the dashboard) to let updates in");
+        eprintln!(
+            "[cq-orchestrator] confirm the development channel prompt (here or in the dashboard) to let updates in"
+        );
     }
     if detach {
         let id = launch_detached(name, &cfg.agent, &cwd, args).await?;
@@ -300,10 +311,12 @@ async fn main() {
             Ok((cfg, _)) => courier::run(&name, cfg).await.map(|()| 0),
             Err(e) => Err(e),
         },
-        Cmd::Show { name } => config::orchestrators_dir().and_then(|dir| config::read_or_create(&dir, &name)).map(|(text, path)| {
-            println!("# {}\n{}", path.display(), text.trim_end());
-            0
-        }),
+        Cmd::Show { name } => {
+            config::orchestrators_dir().and_then(|dir| config::read_or_create(&dir, &name)).map(|(text, path)| {
+                println!("# {}\n{}", path.display(), text.trim_end());
+                0
+            })
+        }
         Cmd::Set { args } => set(args).await,
         Cmd::Manifest => {
             println!("{}", manifest());
@@ -327,7 +340,10 @@ mod tests {
     fn toml_string_round_trips_with_only_plain_characters() {
         let text = config::DEFAULT_PERSONA.to_owned() + " 日本語 😀 %PATH% a|b&c^";
         let s = toml_string(&text);
-        assert!(s[1..s.len() - 1].chars().all(|c| c.is_ascii_alphanumeric() || " .,:;'-_/()?*+=@#[]{}~\\".contains(c)), "{s}");
+        assert!(
+            s[1..s.len() - 1].chars().all(|c| c.is_ascii_alphanumeric() || " .,:;'-_/()?*+=@#[]{}~\\".contains(c)),
+            "{s}"
+        );
         let parsed: toml::Table = toml::from_str(&format!("v = {s}")).unwrap();
         assert_eq!(parsed["v"].as_str(), Some(text.as_str()));
     }

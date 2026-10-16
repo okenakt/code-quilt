@@ -3,9 +3,7 @@
 use crate::term::{self, RawTerminal, TermEvent};
 use crate::{ipc, paths};
 use anyhow::{Result, bail};
-use cq_protocol::{
-    ClientKind, Hello, Message, PROTOCOL_VERSION, Size, read_message, spawn_reader, write_message,
-};
+use cq_protocol::{ClientKind, Hello, Message, PROTOCOL_VERSION, Size, read_message, spawn_reader, write_message};
 use std::io::Write;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -17,9 +15,7 @@ fn trace_input(bytes: &[u8]) {
     }
     let Ok(dir) = paths::root().map(|r| r.join("logs")) else { return };
     let _ = std::fs::create_dir_all(&dir);
-    if let Ok(mut f) =
-        std::fs::OpenOptions::new().create(true).append(true).open(dir.join("input-trace.log"))
-    {
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("input-trace.log")) {
         let _ = writeln!(f, "{}", bytes.escape_ascii());
     }
 }
@@ -38,7 +34,11 @@ pub async fn attach(endpoint: &str, connect_timeout: Duration) -> Result<Outcome
     let size = term::size();
     write_message(
         &mut wr,
-        &Message::Hello(Hello { cols: size.cols, rows: size.rows, ..Hello::new(PROTOCOL_VERSION, ClientKind::Terminal) }),
+        &Message::Hello(Hello {
+            cols: size.cols,
+            rows: size.rows,
+            ..Hello::new(PROTOCOL_VERSION, ClientKind::Terminal)
+        }),
     )
     .await?;
     match read_message(&mut rd).await? {

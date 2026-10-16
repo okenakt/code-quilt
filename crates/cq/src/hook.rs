@@ -20,16 +20,14 @@ async fn send_event(ev: AgentEvent) -> Result<()> {
     let Ok(id) = std::env::var("CQ_SESSION_ID") else { return Ok(()) };
     let endpoint = paths::session_endpoint(&id)?;
     let mut s = ipc::connect_now(&endpoint).await?;
-    let hello =
-        Hello::new(PROTOCOL_VERSION, ClientKind::Event);
+    let hello = Hello::new(PROTOCOL_VERSION, ClientKind::Event);
     write_message(&mut s, &Message::Hello(hello)).await?;
     write_message(&mut s, &Message::Event(ev)).await?;
     Ok(())
 }
 
 fn parse(raw: &[u8]) -> serde_json::Value {
-    serde_json::from_slice(raw)
-        .unwrap_or_else(|_| serde_json::Value::String(String::from_utf8_lossy(raw).into_owned()))
+    serde_json::from_slice(raw).unwrap_or_else(|_| serde_json::Value::String(String::from_utf8_lossy(raw).into_owned()))
 }
 
 /// Handles a hook invocation: forwards the payload to the host if reachable. Always succeeds
@@ -51,11 +49,7 @@ pub async fn hook() {
 pub async fn statusline() {
     let raw = read_stdin();
     if std::env::var_os("CQ_SESSION_ID").is_some() {
-        let ev = AgentEvent {
-            source: "statusline".into(),
-            received_at_ms: session::now_ms(),
-            payload: parse(&raw),
-        };
+        let ev = AgentEvent { source: "statusline".into(), received_at_ms: session::now_ms(), payload: parse(&raw) };
         let _ = tokio::time::timeout(Duration::from_millis(300), send_event(ev)).await;
     }
     if let Some(cmd) = user_statusline_command() {
@@ -100,8 +94,7 @@ fn run_shell(cmd: &str, input: &[u8]) -> Option<Vec<u8>> {
         c.args(["-c", cmd]);
         c
     };
-    let mut child =
-        c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let mut child = c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(input);
     }

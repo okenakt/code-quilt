@@ -5,8 +5,8 @@ use anyhow::{Context, Result, bail};
 use base64::Engine;
 use cq_protocol::local::BoxStream;
 use cq_protocol::{
-    AgentEvent, ClientKind, CommandInfo, DAEMON_PROTOCOL_VERSION, InvokeCommand, Hello, MachineInfo, Message, SessionMeta, SessionRef,
-    Subscribe, spawn_reader, write_message,
+    AgentEvent, ClientKind, CommandInfo, DAEMON_PROTOCOL_VERSION, Hello, InvokeCommand, MachineInfo, Message,
+    SessionMeta, SessionRef, Subscribe, spawn_reader, write_message,
 };
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -386,4 +386,3 @@ impl Hub {
         }
     }
 }
-

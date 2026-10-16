@@ -368,7 +368,10 @@ impl DaemonClient {
     pub async fn open(federate: bool) -> Result<Self> {
         let (rd, mut wr) = tokio::io::split(connect_daemon().await?);
         let mut msgs = cq_protocol::spawn_reader(rd);
-        let hello = cq_protocol::Hello { federate, ..cq_protocol::Hello::new(cq_protocol::DAEMON_PROTOCOL_VERSION, cq_protocol::ClientKind::Hub) };
+        let hello = cq_protocol::Hello {
+            federate,
+            ..cq_protocol::Hello::new(cq_protocol::DAEMON_PROTOCOL_VERSION, cq_protocol::ClientKind::Hub)
+        };
         cq_protocol::write_message(&mut wr, &Message::Hello(hello)).await?;
         // The daemon answers a hello with the machine list, or refuses another protocol version.
         let first = match tokio::time::timeout(Duration::from_secs(10), msgs.recv()).await {

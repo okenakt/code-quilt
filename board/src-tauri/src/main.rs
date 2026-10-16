@@ -33,13 +33,7 @@ fn list_sessions(hub: State<'_, HubState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn subscribe(
-    hub: State<'_, HubState>,
-    machine: String,
-    session: String,
-    cols: u16,
-    rows: u16,
-) -> Result<(), String> {
+fn subscribe(hub: State<'_, HubState>, machine: String, session: String, cols: u16, rows: u16) -> Result<(), String> {
     hub.subscribe(&machine, &session, cols, rows).map_err(err)
 }
 
@@ -49,23 +43,12 @@ fn unsubscribe(hub: State<'_, HubState>, machine: String, session: String) -> Re
 }
 
 #[tauri::command]
-fn send_input(
-    hub: State<'_, HubState>,
-    machine: String,
-    session: String,
-    data: String,
-) -> Result<(), String> {
+fn send_input(hub: State<'_, HubState>, machine: String, session: String, data: String) -> Result<(), String> {
     hub.input(&machine, &session, data.into_bytes()).map_err(err)
 }
 
 #[tauri::command]
-fn resize(
-    hub: State<'_, HubState>,
-    machine: String,
-    session: String,
-    cols: u16,
-    rows: u16,
-) -> Result<(), String> {
+fn resize(hub: State<'_, HubState>, machine: String, session: String, cols: u16, rows: u16) -> Result<(), String> {
     hub.resize(&machine, &session, cols, rows).map_err(err)
 }
 
@@ -108,7 +91,12 @@ async fn restart_daemon() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn bind_key(key: String, command: String, args: std::collections::BTreeMap<String, String>, unbind: Vec<settings::KeyOf>) -> Result<(), String> {
+fn bind_key(
+    key: String,
+    command: String,
+    args: std::collections::BTreeMap<String, String>,
+    unbind: Vec<settings::KeyOf>,
+) -> Result<(), String> {
     settings::bind_key(&key, &command, &args, &unbind)
 }
 
@@ -129,9 +117,16 @@ fn set_focus(hub: State<'_, HubState>, machine: Option<String>, session: Option<
 }
 
 #[tauri::command]
-async fn launch(hub: State<'_, HubState>, machine: String, agent: String, cwd: String, args: Vec<String>) -> Result<String, String> {
+async fn launch(
+    hub: State<'_, HubState>,
+    machine: String,
+    agent: String,
+    cwd: String,
+    args: Vec<String>,
+) -> Result<String, String> {
     let id = hub.next_id();
-    let req = cq_protocol::Launch { id, machine, agent, cwd, args, name: None, orchestrator: false, cols: 120, rows: 36 };
+    let req =
+        cq_protocol::Launch { id, machine, agent, cwd, args, name: None, orchestrator: false, cols: 120, rows: 36 };
     launched(&hub, id, cq_protocol::Message::Launch(req)).await
 }
 
@@ -151,11 +146,7 @@ async fn launched(hub: &HubState, id: u64, msg: cq_protocol::Message) -> Result<
 }
 
 #[tauri::command]
-async fn list_dir(
-    hub: State<'_, HubState>,
-    machine: String,
-    path: String,
-) -> Result<cq_protocol::DirList, String> {
+async fn list_dir(hub: State<'_, HubState>, machine: String, path: String) -> Result<cq_protocol::DirList, String> {
     let id = hub.next_id();
     match hub.call(id, cq_protocol::Message::ListDir(cq_protocol::ListDir { id, machine, path })).await.map_err(err)? {
         cq_protocol::Message::DirList(l) => Ok(l),

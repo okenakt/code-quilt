@@ -84,14 +84,7 @@ mod imp {
                     bail!("stdin is not a console");
                 }
                 GetConsoleMode(stdout, &mut out_mode);
-                let me = Self {
-                    stdin,
-                    stdout,
-                    in_mode,
-                    out_mode,
-                    in_cp: GetConsoleCP(),
-                    out_cp: GetConsoleOutputCP(),
-                };
+                let me = Self { stdin, stdout, in_mode, out_mode, in_cp: GetConsoleCP(), out_cp: GetConsoleOutputCP() };
                 SetConsoleCP(65001);
                 SetConsoleOutputCP(65001);
                 if SetConsoleMode(stdin, ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_EXTENDED_FLAGS) == 0 {
@@ -114,9 +107,7 @@ mod imp {
             while !buf.is_empty() {
                 let mut n = 0u32;
                 let chunk = buf.len().min(u32::MAX as usize) as u32;
-                let ok = unsafe {
-                    WriteFile(self.stdout, buf.as_ptr(), chunk, &mut n, std::ptr::null_mut())
-                };
+                let ok = unsafe { WriteFile(self.stdout, buf.as_ptr(), chunk, &mut n, std::ptr::null_mut()) };
                 if ok == 0 || n == 0 {
                     return;
                 }

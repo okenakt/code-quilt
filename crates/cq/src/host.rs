@@ -5,8 +5,8 @@ use crate::agent::{self, PermissionPrompt};
 use crate::{ipc, paths, session, usage};
 use anyhow::{Context, Result, bail};
 use cq_protocol::{
-    AgentEvent, ClientKind, Exit, Hello, Inject, InputOwner, Message, PROTOCOL_VERSION, SessionMeta, Rename, SharedFile,
-    SessionStatus, Size, Terminate, Welcome, read_message, write_message,
+    AgentEvent, ClientKind, Exit, Hello, Inject, InputOwner, Message, PROTOCOL_VERSION, Rename, SessionMeta,
+    SessionStatus, SharedFile, Size, Terminate, Welcome, read_message, write_message,
 };
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::collections::{HashMap, VecDeque};
@@ -67,12 +67,8 @@ impl vt100::Callbacks for ExtraModes {
                 let (row, col) = screen.cursor_position();
                 self.replies.extend_from_slice(format!("\x1b[{};{}R", row + 1, col + 1).as_bytes());
             }
-            (Some(b'?'), 'h') if params.iter().any(|p| p.first() == Some(&1004)) => {
-                self.focus_events = true
-            }
-            (Some(b'?'), 'l') if params.iter().any(|p| p.first() == Some(&1004)) => {
-                self.focus_events = false
-            }
+            (Some(b'?'), 'h') if params.iter().any(|p| p.first() == Some(&1004)) => self.focus_events = true,
+            (Some(b'?'), 'l') if params.iter().any(|p| p.first() == Some(&1004)) => self.focus_events = false,
             (Some(b'>'), 'u') => self.kitty_stack.push(first.unwrap_or(0)),
             (Some(b'<'), 'u') => {
                 let n = first.unwrap_or(1).max(1) as usize;
@@ -369,9 +365,14 @@ impl State {
     fn confirm_submit(&mut self) {
         let Some((first, latest)) = self.pending_submit else { return };
         // Give up after a while, or once someone types (the text may be theirs now).
-        if first.elapsed() > Duration::from_secs(10) || self.last_input.duration_since(first) > Duration::from_millis(100) {
+        if first.elapsed() > Duration::from_secs(10)
+            || self.last_input.duration_since(first) > Duration::from_millis(100)
+        {
             self.pending_submit = None;
-        } else if latest.elapsed() > Duration::from_millis(1500) && self.prompt.is_none() && self.input_empty() == Some(false) {
+        } else if latest.elapsed() > Duration::from_millis(1500)
+            && self.prompt.is_none()
+            && self.input_empty() == Some(false)
+        {
             let _ = self.pty_tx.send(b"\r".to_vec());
             self.pending_submit = Some((first, std::time::Instant::now()));
         }
@@ -381,12 +382,7 @@ impl State {
         if size == self.size || size.cols == 0 || size.rows == 0 {
             return;
         }
-        let res = self.master.resize(PtySize {
-            rows: size.rows,
-            cols: size.cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        });
+        let res = self.master.resize(PtySize { rows: size.rows, cols: size.cols, pixel_width: 0, pixel_height: 0 });
         if let Err(e) = res {
             eprintln!("resize failed: {e}");
             return;
@@ -450,7 +446,8 @@ pub async fn run(args: HostArgs) -> Result<()> {
     let mut writer = pair.master.take_writer()?;
 
     // A resumed session keeps what its earlier run learned about the agent.
-    let earlier: Option<SessionMeta> = std::fs::read(paths::session_file(&args.id)?).ok().and_then(|d| serde_json::from_slice(&d).ok());
+    let earlier: Option<SessionMeta> =
+        std::fs::read(paths::session_file(&args.id)?).ok().and_then(|d| serde_json::from_slice(&d).ok());
     let meta = SessionMeta {
         id: args.id.clone(),
         agent: args.agent.clone(),
@@ -480,12 +477,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
     });
 
     let state: Shared = Arc::new(Mutex::new(State {
-        parser: vt100::Parser::new_with_callbacks(
-            args.size.rows,
-            args.size.cols,
-            0,
-            ExtraModes::default(),
-        ),
+        parser: vt100::Parser::new_with_callbacks(args.size.rows, args.size.cols, 0, ExtraModes::default()),
         master: pair.master,
         clients: HashMap::new(),
         owner: None,
@@ -539,9 +531,11 @@ pub async fn run(args: HostArgs) -> Result<()> {
                         // vt100 can panic on some output (a wide character in the last column).
                         // Panicking here would poison the lock and wedge the session, so start a
                         // fresh screen instead; the agent's next redraw fills it again.
-                        let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| st.parser.process(&buf[..n])));
+                        let parsed =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| st.parser.process(&buf[..n])));
                         if parsed.is_err() {
-                            st.parser = vt100::Parser::new_with_callbacks(st.size.rows, st.size.cols, 0, ExtraModes::default());
+                            st.parser =
+                                vt100::Parser::new_with_callbacks(st.size.rows, st.size.cols, 0, ExtraModes::default());
                         }
                         let replies = std::mem::take(&mut st.parser.callbacks_mut().replies);
                         if !replies.is_empty() {
@@ -599,16 +593,12 @@ pub async fn run(args: HostArgs) -> Result<()> {
 
 async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
     let (mut rd, mut wr) = tokio::io::split(stream);
-    let hello: Hello =
-        match tokio::time::timeout(Duration::from_secs(5), read_message(&mut rd)).await?? {
-            Some(Message::Hello(h)) => h,
-            _ => bail!("expected hello"),
-        };
+    let hello: Hello = match tokio::time::timeout(Duration::from_secs(5), read_message(&mut rd)).await?? {
+        Some(Message::Hello(h)) => h,
+        _ => bail!("expected hello"),
+    };
     if hello.protocol_version != PROTOCOL_VERSION {
-        let msg = format!(
-            "protocol mismatch: host {PROTOCOL_VERSION}, client {}",
-            hello.protocol_version
-        );
+        let msg = format!("protocol mismatch: host {PROTOCOL_VERSION}, client {}", hello.protocol_version);
         write_message(&mut wr, &Message::Error(msg.clone())).await?;
         bail!(msg);
     }
@@ -695,8 +685,7 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
                             "type": "approval_result", "ok": false, "option": a.option, "reason": e,
                         }),
                     };
-                    let ev =
-                        AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload };
+                    let ev = AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload };
                     if let Some(c) = st.clients.get(&id) {
                         let _ = c.tx.send(Message::Event(ev));
                     }
@@ -771,7 +760,8 @@ async fn terminate(state: Shared, t: Terminate) {
             let send = |bytes: &[u8]| {
                 let _ = state.lock().unwrap().pty_tx.send(bytes.to_vec());
             };
-            let pause = |ms| tokio::time::sleep_until((tokio::time::Instant::now() + Duration::from_millis(ms)).min(deadline));
+            let pause =
+                |ms| tokio::time::sleep_until((tokio::time::Instant::now() + Duration::from_millis(ms)).min(deadline));
             send(b"\x1b");
             pause(800).await;
             for _ in 0..3 {
@@ -819,7 +809,11 @@ async fn poll_usage(state: Shared) {
             let mut st = state.lock().unwrap();
             if let Some(status) = st.codex_rollout.poll() {
                 // Codex has no status line; publish the same shape from its rollout.
-                st.publish(AgentEvent { source: "statusline".into(), received_at_ms: session::now_ms(), payload: status });
+                st.publish(AgentEvent {
+                    source: "statusline".into(),
+                    received_at_ms: session::now_ms(),
+                    payload: status,
+                });
             }
         }
         tokio::time::sleep(Duration::from_secs(2)).await;

@@ -413,7 +413,11 @@ pub enum Message {
     /// Client to daemon: close a relayed connection.
     Unsubscribe(SessionRef),
     /// A session message relayed by the daemon, tagged with machine and session.
-    Routed { machine: String, session: String, inner: Box<Message> },
+    Routed {
+        machine: String,
+        session: String,
+        inner: Box<Message>,
+    },
     /// Client to daemon: start a session.
     Launch(Launch),
     /// Client to daemon: start an ended session again.
@@ -427,7 +431,10 @@ pub enum Message {
     /// Client to daemon: read a shared file.
     ReadFile(ReadFile),
     /// Daemon to client: contents of the file of the [`ReadFile`] request `id`.
-    FileContent { id: u64, data: Vec<u8> },
+    FileContent {
+        id: u64,
+        data: Vec<u8>,
+    },
     /// Daemon to client: an id-carrying request failed.
     RequestFailed(RequestFailed),
     /// Client to daemon: stop the local daemon. Sessions keep running; the next connection starts
@@ -453,7 +460,10 @@ pub enum Message {
     CommandResult(CommandResult),
     /// Between a daemon and the daemon that connected to it over ssh (its upstream): a message of
     /// the remote daemon's client `conn`, which the upstream serves like one of its own clients.
-    Upstream { conn: u64, inner: Box<Message> },
+    Upstream {
+        conn: u64,
+        inner: Box<Message>,
+    },
     /// Remote daemon to its upstream: client `conn` went away.
     UpstreamClose(u64),
     /// Between daemons, back along the way a message came: who sent it?
@@ -641,8 +651,13 @@ impl Message {
                 Message::FileContent { id: u64::from_le_bytes(*id), data: payload[8..].to_vec() }
             }
             kind::UPSTREAM => {
-                let (Some(conn), Some(&ik)) = (payload.first_chunk::<8>(), payload.get(8)) else { bail!("short upstream frame") };
-                Message::Upstream { conn: u64::from_le_bytes(*conn), inner: Box::new(Message::decode(ik, payload[9..].to_vec())?) }
+                let (Some(conn), Some(&ik)) = (payload.first_chunk::<8>(), payload.get(8)) else {
+                    bail!("short upstream frame")
+                };
+                Message::Upstream {
+                    conn: u64::from_le_bytes(*conn),
+                    inner: Box::new(Message::decode(ik, payload[9..].to_vec())?),
+                }
             }
             kind::UPSTREAM_CLOSE => {
                 let Some(conn) = payload.first_chunk::<8>() else { bail!("short upstream frame") };
@@ -752,7 +767,9 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
-        assert!(matches!(read_message(&mut cur).await.unwrap(), Some(Message::FileContent { id: 7, data }) if data == [0, 255, 1]));
+        assert!(
+            matches!(read_message(&mut cur).await.unwrap(), Some(Message::FileContent { id: 7, data }) if data == [0, 255, 1])
+        );
         match read_message(&mut cur).await.unwrap() {
             Some(Message::Upstream { conn: 9, inner }) => assert!(matches!(*inner, Message::Input(b) if b == b"y")),
             other => panic!("unexpected {other:?}"),

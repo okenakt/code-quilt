@@ -9,7 +9,9 @@ use crate::daemon::Conn;
 use crate::machine::{MachineEntry, Os};
 use anyhow::{Context, Result, bail};
 use cq_protocol::local::BoxStream;
-use cq_protocol::{ClientKind, DAEMON_PROTOCOL_VERSION, Hello, MachineInfo, Message, Subscribe, spawn_reader, write_message};
+use cq_protocol::{
+    ClientKind, DAEMON_PROTOCOL_VERSION, Hello, MachineInfo, Message, Subscribe, spawn_reader, write_message,
+};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
@@ -141,8 +143,12 @@ fn remote_error(err: &str) -> anyhow::Error {
     let theirs = err.strip_prefix("protocol mismatch: daemon ").and_then(|r| r.split(',').next()?.parse::<u32>().ok());
     let ours = DAEMON_PROTOCOL_VERSION;
     match theirs {
-        Some(v) if v < ours => anyhow::anyhow!("{REMOTE_ERROR}its cq is older (protocol {v}, this machine {ours}); update it and restart its daemon"),
-        Some(v) => anyhow::anyhow!("{REMOTE_ERROR}its cq is newer (protocol {v}, this machine {ours}); update cq on this machine and restart the daemon"),
+        Some(v) if v < ours => anyhow::anyhow!(
+            "{REMOTE_ERROR}its cq is older (protocol {v}, this machine {ours}); update it and restart its daemon"
+        ),
+        Some(v) => anyhow::anyhow!(
+            "{REMOTE_ERROR}its cq is newer (protocol {v}, this machine {ours}); update cq on this machine and restart the daemon"
+        ),
         None => anyhow::anyhow!("{REMOTE_ERROR}{err}"),
     }
 }
@@ -328,9 +334,11 @@ mod tests {
 
     #[test]
     fn says_which_cq_to_update_on_a_version_mismatch() {
-        let older = format!("protocol mismatch: daemon {}, client {DAEMON_PROTOCOL_VERSION}", DAEMON_PROTOCOL_VERSION - 1);
+        let older =
+            format!("protocol mismatch: daemon {}, client {DAEMON_PROTOCOL_VERSION}", DAEMON_PROTOCOL_VERSION - 1);
         assert!(remote_error(&older).to_string().contains("its cq is older"));
-        let newer = format!("protocol mismatch: daemon {}, client {DAEMON_PROTOCOL_VERSION}", DAEMON_PROTOCOL_VERSION + 1);
+        let newer =
+            format!("protocol mismatch: daemon {}, client {DAEMON_PROTOCOL_VERSION}", DAEMON_PROTOCOL_VERSION + 1);
         assert!(remote_error(&newer).to_string().contains("update cq on this machine"));
         assert_eq!(remote_error("busy").to_string(), "remote daemon: busy");
     }

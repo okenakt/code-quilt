@@ -4,9 +4,7 @@
 use crate::config::{Delivery, OrchestratorConfig, Scope};
 use anyhow::{Result, bail};
 use cq_client::{Activity, Model, Session};
-use cq_protocol::{
-    CommandInfo, InvokeCommand, Message,
-};
+use cq_protocol::{CommandInfo, InvokeCommand, Message};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -39,7 +37,9 @@ impl Item {
 
     fn headline(&self) -> String {
         let what = match &self.kind {
-            ItemKind::Prompt { prompt } if prompt.get("kind").and_then(Value::as_str) == Some("dialog") => "needs confirmation",
+            ItemKind::Prompt { prompt } if prompt.get("kind").and_then(Value::as_str) == Some("dialog") => {
+                "needs confirmation"
+            }
             ItemKind::Prompt { .. } => "needs permission",
             ItemKind::Done { .. } => "finished its turn",
         };
@@ -75,7 +75,13 @@ fn compose(new: &[Item], open: &[Item]) -> String {
                     .and_then(Value::as_array)
                     .map(|o| {
                         o.iter()
-                            .map(|o| format!("{}. {}", o.get("number").and_then(Value::as_u64).unwrap_or(0), o.get("label").and_then(Value::as_str).unwrap_or("")))
+                            .map(|o| {
+                                format!(
+                                    "{}. {}",
+                                    o.get("number").and_then(Value::as_u64).unwrap_or(0),
+                                    o.get("label").and_then(Value::as_str).unwrap_or("")
+                                )
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -105,9 +111,10 @@ fn here() -> &'static str {
 
 /// The orchestrator's own session: the local running session named after this orchestrator (names are unique).
 fn find_orchestrator<'a>(model: &'a Model, name: &str) -> Option<&'a Session> {
-    model.sessions.values().find(|s| {
-        s.machine == here() && s.activity != Activity::Exited && s.meta.name.as_deref() == Some(name)
-    })
+    model
+        .sessions
+        .values()
+        .find(|s| s.machine == here() && s.activity != Activity::Exited && s.meta.name.as_deref() == Some(name))
 }
 
 /// Runs the courier until the orchestrator session exits.
@@ -276,7 +283,12 @@ mod tests {
             },
             at_ms: now_ms(),
         };
-        let d = Item { key: "local:cd34".into(), label: "web".into(), kind: ItemKind::Done { reply: "All tests pass.".into() }, at_ms: now_ms() };
+        let d = Item {
+            key: "local:cd34".into(),
+            label: "web".into(),
+            kind: ItemKind::Done { reply: "All tests pass.".into() },
+            at_ms: now_ms(),
+        };
         let text = compose(&[p.clone(), d], &[]);
         assert!(text.starts_with("[CodeQuilt] 2 updates:"));
         assert!(text.contains("api (devbox:ab12) needs permission"));

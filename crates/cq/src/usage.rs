@@ -34,11 +34,7 @@ fn account_from_claude_json(path: &Path) -> Option<Account> {
     let v: serde_json::Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
     let acct = v.get("oauthAccount")?;
     let id = acct.get("accountUuid")?.as_str()?.to_owned();
-    let label = acct
-        .get("emailAddress")
-        .and_then(|e| e.as_str())
-        .unwrap_or(&id)
-        .to_owned();
+    let label = acct.get("emailAddress").and_then(|e| e.as_str()).unwrap_or(&id).to_owned();
     Some(Account { id, label })
 }
 
@@ -164,7 +160,9 @@ impl CodexTail {
             let model = self.model.clone().unwrap_or_else(|| "codex".into());
             let window = |w: &str| {
                 let used = payload.pointer(&format!("/rate_limits/{w}/used_percent"))?.as_f64()?;
-                Some(serde_json::json!({ "used_percentage": used, "resets_at": payload.pointer(&format!("/rate_limits/{w}/resets_at")) }))
+                Some(
+                    serde_json::json!({ "used_percentage": used, "resets_at": payload.pointer(&format!("/rate_limits/{w}/resets_at")) }),
+                )
             };
             let ctx = n("/info/model_context_window");
             let used_pct = (ctx > 0).then(|| n("/info/last_token_usage/total_tokens") as f64 * 100.0 / ctx as f64);
@@ -185,14 +183,17 @@ pub fn trusted_dirs() -> Vec<PathBuf> {
     let claude = claude_json_path().and_then(|p| std::fs::read(p).ok());
     if let Some(v) = claude.and_then(|d| serde_json::from_slice::<serde_json::Value>(&d).ok()) {
         if let Some(projects) = v.get("projects").and_then(|p| p.as_object()) {
-            let trusted = projects.iter().filter(|(_, p)| p.get("hasTrustDialogAccepted").and_then(|t| t.as_bool()) == Some(true));
+            let trusted = projects
+                .iter()
+                .filter(|(_, p)| p.get("hasTrustDialogAccepted").and_then(|t| t.as_bool()) == Some(true));
             out.extend(trusted.map(|(dir, _)| PathBuf::from(dir)));
         }
     }
     let codex = codex_home().and_then(|h| std::fs::read_to_string(h.join("config.toml")).ok());
     if let Some(t) = codex.and_then(|s| s.parse::<toml::Table>().ok()) {
         if let Some(projects) = t.get("projects").and_then(|p| p.as_table()) {
-            let trusted = projects.iter().filter(|(_, p)| p.get("trust_level").and_then(|l| l.as_str()) == Some("trusted"));
+            let trusted =
+                projects.iter().filter(|(_, p)| p.get("trust_level").and_then(|l| l.as_str()) == Some("trusted"));
             out.extend(trusted.map(|(dir, _)| PathBuf::from(dir)));
         }
     }
@@ -228,5 +229,4 @@ mod tests {
     fn decodes_base64url() {
         assert_eq!(base64url_decode("eyJhIjoxfQ").unwrap(), br#"{"a":1}"#);
     }
-
 }

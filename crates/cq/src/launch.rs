@@ -32,10 +32,22 @@ fn cq_settings() -> Result<serde_json::Value> {
 }
 
 /// Spawns `cq host` for a new session.
-pub fn spawn_host(id: &str, agent: &str, cwd: &str, size: Size, name: Option<&str>, orchestrator: bool, command: &[String]) -> Result<()> {
+pub fn spawn_host(
+    id: &str,
+    agent: &str,
+    cwd: &str,
+    size: Size,
+    name: Option<&str>,
+    orchestrator: bool,
+    command: &[String],
+) -> Result<()> {
     let mut cmd = Command::new(std::env::current_exe()?);
-    cmd.args(["host", "--id", id, "--agent", agent, "--cwd", cwd])
-        .args(["--cols", &size.cols.to_string(), "--rows", &size.rows.to_string()]);
+    cmd.args(["host", "--id", id, "--agent", agent, "--cwd", cwd]).args([
+        "--cols",
+        &size.cols.to_string(),
+        "--rows",
+        &size.rows.to_string(),
+    ]);
     if let Some(n) = name {
         if let Some(other) = session::name_taken(n, "") {
             anyhow::bail!("session {other} is already named '{n}'");
@@ -95,7 +107,12 @@ fn worker_mcp_args(agent: &str) -> Result<Vec<String>> {
     let config = json!({ "mcpServers": { "cq": { "command": cq_exe()?, "args": ["mcp", "--worker"] } } });
     std::fs::write(&path, serde_json::to_vec_pretty(&config)?)?;
     let allowed: Vec<String> = tools.iter().map(|t| format!("mcp__cq__{t}")).collect();
-    Ok(vec!["--mcp-config".to_owned(), path.to_string_lossy().into_owned(), "--allowedTools".to_owned(), allowed.join(",")])
+    Ok(vec![
+        "--mcp-config".to_owned(),
+        path.to_string_lossy().into_owned(),
+        "--allowedTools".to_owned(),
+        allowed.join(","),
+    ])
 }
 
 /// The agent command line for a new session, with CodeQuilt's hooks wired in, and its worker MCP

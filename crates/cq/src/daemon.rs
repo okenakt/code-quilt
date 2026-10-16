@@ -10,9 +10,9 @@ use crate::machine::{self, MachineEntry};
 use crate::{ipc, paths, plugin, remote, session};
 use anyhow::{Result, bail};
 use cq_protocol::{
-    ClientKind, CommandInfo, CommandResult, DAEMON_PROTOCOL_VERSION, DirList, Hello, Inject, InvokeCommand, Launched, MachineInfo, Message, Names,
-    NamesReply, PROTOCOL_VERSION, RequestFailed, SessionList, SessionMeta, SessionRef, SessionStatus, Size, Subscribe, read_message,
-    spawn_reader, write_message,
+    ClientKind, CommandInfo, CommandResult, DAEMON_PROTOCOL_VERSION, DirList, Hello, Inject, InvokeCommand, Launched,
+    MachineInfo, Message, Names, NamesReply, PROTOCOL_VERSION, RequestFailed, SessionList, SessionMeta, SessionRef,
+    SessionStatus, Size, Subscribe, read_message, spawn_reader, write_message,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -79,7 +79,14 @@ fn routed(machine: &str, session: &str, inner: Message) -> Message {
 }
 
 /// Opens a host connection of the given kind and relays it as `Routed` messages.
-fn open_host(machine: &str, meta: &SessionMeta, kind: ClientKind, cols: u16, rows: u16, out: UnboundedSender<Message>) -> Conn {
+fn open_host(
+    machine: &str,
+    meta: &SessionMeta,
+    kind: ClientKind,
+    cols: u16,
+    rows: u16,
+    out: UnboundedSender<Message>,
+) -> Conn {
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
     let machine = machine.to_owned();
     let session = meta.id.clone();
@@ -177,7 +184,8 @@ impl LocalRelay {
         self.backoff.retain(|_, until| *until > now);
         for m in self.sessions.iter().filter(|m| m.status == SessionStatus::Running) {
             if !self.monitors.contains_key(&m.id) && !self.backoff.contains_key(&m.id) {
-                self.monitors.insert(m.id.clone(), open_host(&self.machine, m, ClientKind::Monitor, 0, 0, self.out.clone()));
+                self.monitors
+                    .insert(m.id.clone(), open_host(&self.machine, m, ClientKind::Monitor, 0, 0, self.out.clone()));
             }
         }
         self.subs.retain(|_, c| !c.task.is_finished());
@@ -263,10 +271,14 @@ impl LocalRelay {
                     }
                     Some(meta) => {
                         let kind = if kind == ClientKind::Event { ClientKind::Hub } else { kind };
-                        self.subs.insert(session.clone(), open_host(&self.machine, meta, kind, cols, rows, self.out.clone()));
+                        self.subs.insert(
+                            session.clone(),
+                            open_host(&self.machine, meta, kind, cols, rows, self.out.clone()),
+                        );
                     }
                     None => {
-                        let _ = self.out.send(routed(&self.machine, &session, Message::Error("unknown session".into())));
+                        let _ =
+                            self.out.send(routed(&self.machine, &session, Message::Error("unknown session".into())));
                     }
                 }
             }
@@ -464,7 +476,6 @@ impl Desktop {
             self.reply(p.client, p.inv.id, false, format!("{} did not start in time", p.inv.name));
         }
     }
-
 }
 
 /// Runs an `exec` command and reports its outcome to the caller.
@@ -511,7 +522,11 @@ async fn maintain_desktop() {
     let mut n = 0u32;
     loop {
         tick.tick().await;
-        let plugins = if n.is_multiple_of(3) { Some(tokio::task::spawn_blocking(plugin::installed).await.unwrap_or_default()) } else { None };
+        let plugins = if n.is_multiple_of(3) {
+            Some(tokio::task::spawn_blocking(plugin::installed).await.unwrap_or_default())
+        } else {
+            None
+        };
         n = n.wrapping_add(1);
         let mut d = desktop().lock().unwrap();
         if let Some(plugins) = plugins {

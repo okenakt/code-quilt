@@ -1,9 +1,7 @@
 //! CLI operations on sessions of any machine, performed through the local daemon.
 
 use anyhow::{Context, Result, bail};
-use cq_protocol::{
-    Message, SessionStatus,
-};
+use cq_protocol::{Message, SessionStatus};
 use std::time::Duration;
 
 #[derive(Default)]
@@ -42,15 +40,16 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
     // reported and nothing new arrived for a moment.
     loop {
         // The daemon lists itself (and, when federated, every remote machine) first.
-        let all_listed = !machines.is_empty()
-            && machines.iter().all(|m| listed.contains(&m.id) || (!m.online && m.error.is_some()));
+        let all_listed =
+            !machines.is_empty() && machines.iter().all(|m| listed.contains(&m.id) || (!m.online && m.error.is_some()));
         let wait = if all_listed { Duration::from_millis(700) } else { Duration::from_millis(1500) };
-        let next = match tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + wait), conn.msgs.recv()).await {
-            Ok(Some(m)) => m?,
-            Ok(None) => break,
-            Err(_) if all_listed || tokio::time::Instant::now() >= deadline => break,
-            Err(_) => continue,
-        };
+        let next =
+            match tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + wait), conn.msgs.recv()).await {
+                Ok(Some(m)) => m?,
+                Ok(None) => break,
+                Err(_) if all_listed || tokio::time::Instant::now() >= deadline => break,
+                Err(_) => continue,
+            };
         match next {
             Message::MachineList(l) => machines = l,
             Message::SessionList(l) => {
@@ -88,8 +87,19 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
         let Some((at, status)) = &s.status else { continue };
         let Some(limits) = status.get("rate_limits") else { continue };
         let id = s.account.as_ref().and_then(|a| a.get("id")).and_then(Value::as_str).unwrap_or("unknown").to_owned();
-        let label = s.account.as_ref().and_then(|a| a.get("label")).and_then(Value::as_str).unwrap_or("unknown account").to_owned();
-        let entry = accounts.entry(format!("{}:{id}", s.meta.as_ref().map_or("claude", |m| &m.agent))).or_insert((label, 0, Value::Null, vec![]));
+        let label = s
+            .account
+            .as_ref()
+            .and_then(|a| a.get("label"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown account")
+            .to_owned();
+        let entry = accounts.entry(format!("{}:{id}", s.meta.as_ref().map_or("claude", |m| &m.agent))).or_insert((
+            label,
+            0,
+            Value::Null,
+            vec![],
+        ));
         if !entry.3.contains(&s.machine) {
             entry.3.push(s.machine.clone());
         }
@@ -98,10 +108,8 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
             entry.2 = limits.clone();
         }
     }
-    let mut running: Vec<&UsageSession> = sessions
-        .values()
-        .filter(|s| s.meta.as_ref().is_some_and(|m| m.status == SessionStatus::Running))
-        .collect();
+    let mut running: Vec<&UsageSession> =
+        sessions.values().filter(|s| s.meta.as_ref().is_some_and(|m| m.status == SessionStatus::Running)).collect();
     running.sort_by_key(|s| (s.machine.clone(), s.meta.as_ref().map_or(0, |m| m.started_at_ms)));
 
     if as_json {
@@ -129,7 +137,10 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
 
     let now_ms = crate::session::now_ms();
     let now_s = now_ms / 1000;
-    println!("{:<32}  {:>5}  {:>7}  {:>5}  {:>7}  {:>9}  MACHINES", "ACCOUNT", "5H", "RESETS", "WEEK", "RESETS", "UPDATED");
+    println!(
+        "{:<32}  {:>5}  {:>7}  {:>5}  {:>7}  {:>9}  MACHINES",
+        "ACCOUNT", "5H", "RESETS", "WEEK", "RESETS", "UPDATED"
+    );
     if accounts.is_empty() {
         println!("(no rate limit data yet; it arrives with the next status line update)");
     }
@@ -158,7 +169,9 @@ pub async fn usage(local_only: bool, as_json: bool) -> Result<()> {
             format!("{}:{}", s.machine, m.id),
             m.name.as_deref().unwrap_or("-"),
             st.and_then(|v| v.pointer("/model/display_name")).and_then(Value::as_str).unwrap_or("-"),
-            st.and_then(|v| v.pointer("/context_window/used_percentage")).and_then(Value::as_f64).map_or("-".into(), |v| format!("{v:.0}%")),
+            st.and_then(|v| v.pointer("/context_window/used_percentage"))
+                .and_then(Value::as_f64)
+                .map_or("-".into(), |v| format!("{v:.0}%")),
         );
     }
     for m in machines.iter().filter(|m| !m.online) {
@@ -189,7 +202,10 @@ async fn find_session(conn: &mut cq_client::DaemonClient, target: &str) -> Resul
     let wanted = |m: &cq_protocol::MachineInfo| machine.as_ref().is_none_or(|id| *id == m.id);
     loop {
         let settled = !machines.is_empty()
-            && machines.iter().filter(|m| wanted(m)).all(|m| lists.iter().any(|(id, _)| *id == m.id) || (!m.online && m.error.is_some()));
+            && machines
+                .iter()
+                .filter(|m| wanted(m))
+                .all(|m| lists.iter().any(|(id, _)| *id == m.id) || (!m.online && m.error.is_some()));
         if settled {
             break;
         }
@@ -207,9 +223,17 @@ async fn find_session(conn: &mut cq_client::DaemonClient, target: &str) -> Resul
     if let (Some(name), Some(m)) = (&name, machines.iter().find(|m| wanted(m) && !m.online)) {
         bail!("machine {name} is offline: {}", m.error.as_deref().unwrap_or_default());
     }
-    let candidates: Vec<_> = lists.iter().filter(|(id, _)| machines.iter().any(|m| m.id == *id && wanted(m))).flat_map(|(_, s)| s.clone()).collect();
+    let candidates: Vec<_> = lists
+        .iter()
+        .filter(|(id, _)| machines.iter().any(|m| m.id == *id && wanted(m)))
+        .flat_map(|(_, s)| s.clone())
+        .collect();
     let id = crate::session::pick(&candidates, &key)?.id.clone();
-    let machine = lists.iter().find(|(_, s)| s.iter().any(|m| m.id == id)).map(|(m, _)| m.clone()).expect("picked from these lists");
+    let machine = lists
+        .iter()
+        .find(|(_, s)| s.iter().any(|m| m.id == id))
+        .map(|(m, _)| m.clone())
+        .expect("picked from these lists");
     Ok((machine, id))
 }
 
@@ -229,7 +253,8 @@ pub async fn session_op(target: &str, inner: Message, confirm: &str) -> Result<S
     let run = async {
         let (machine, session) = find_session(&mut conn, target).await?;
         let sent_ms = crate::session::now_ms();
-        conn.send(&Message::Routed { machine: machine.clone(), session: session.clone(), inner: Box::new(inner) }).await?;
+        conn.send(&Message::Routed { machine: machine.clone(), session: session.clone(), inner: Box::new(inner) })
+            .await?;
         while let Some(msg) = conn.msgs.recv().await {
             match msg? {
                 Message::Routed { machine: m, session: s, inner } if m == machine && s == session => {
