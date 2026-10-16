@@ -130,8 +130,20 @@ pub async fn check(e: &MachineEntry) -> Result<MachineInfo> {
 fn introduction(msg: Message) -> Result<MachineInfo> {
     match msg {
         Message::MachineList(mut l) if !l.is_empty() => Ok(l.swap_remove(0)),
-        Message::Error(err) => bail!("{REMOTE_ERROR}{err}"),
+        Message::Error(err) => Err(remote_error(&err)),
         _ => bail!("{REMOTE_ERROR}it did not introduce itself"),
+    }
+}
+
+/// An error the remote daemon reported. It words a version mismatch from its own side, so that
+/// is turned around to say which machine's cq to update.
+fn remote_error(err: &str) -> anyhow::Error {
+    let theirs = err.strip_prefix("protocol mismatch: daemon ").and_then(|r| r.split(',').next()?.parse::<u32>().ok());
+    let ours = DAEMON_PROTOCOL_VERSION;
+    match theirs {
+        Some(v) if v < ours => anyhow::anyhow!("{REMOTE_ERROR}its cq is older (protocol {v}, this machine {ours}); update it and restart its daemon"),
+        Some(v) => anyhow::anyhow!("{REMOTE_ERROR}its cq is newer (protocol {v}, this machine {ours}); update cq on this machine and restart the daemon"),
+        None => anyhow::anyhow!("{REMOTE_ERROR}{err}"),
     }
 }
 
@@ -218,7 +230,7 @@ async fn relay(
             msg = msgs.recv() => {
                 let Some(msg) = msg else { return Ok(()) };
                 match msg? {
-                    Message::Error(e) => bail!("{REMOTE_ERROR}{e}"),
+                    Message::Error(e) => return Err(remote_error(&e)),
                     Message::Upstream { conn, inner } => match *inner {
                         // A served client never acts as an upstream itself.
                         Message::Hello(h) => {
@@ -308,4 +320,18 @@ fn open_proxy(conn: u64, hello: Message, down: UnboundedSender<Message>) -> Conn
         }
     });
     Conn { tx, task }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn says_which_cq_to_update_on_a_version_mismatch() {
+        let older = format!("protocol mismatch: daemon {}, client {DAEMON_PROTOCOL_VERSION}", DAEMON_PROTOCOL_VERSION - 1);
+        assert!(remote_error(&older).to_string().contains("its cq is older"));
+        let newer = format!("protocol mismatch: daemon {}, client {DAEMON_PROTOCOL_VERSION}", DAEMON_PROTOCOL_VERSION + 1);
+        assert!(remote_error(&newer).to_string().contains("update cq on this machine"));
+        assert_eq!(remote_error("busy").to_string(), "remote daemon: busy");
+    }
 }
