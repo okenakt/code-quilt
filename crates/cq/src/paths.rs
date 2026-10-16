@@ -15,6 +15,11 @@ pub fn sessions_dir() -> Result<PathBuf> {
     Ok(root()?.join("sessions"))
 }
 
+/// Directory holding the diagram and math blocks taken from replies.
+pub fn blocks_dir() -> Result<PathBuf> {
+    Ok(root()?.join("blocks"))
+}
+
 /// Settings file injected into claude via `--settings`.
 pub fn claude_settings() -> Result<PathBuf> {
     Ok(root()?.join("claude.json"))

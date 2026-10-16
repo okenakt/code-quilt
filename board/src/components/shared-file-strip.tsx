@@ -26,14 +26,14 @@ const Thumbnail = ({ s, file }: { s: SessionState; file: SharedFile }) => {
   return url ? <img src={url} alt={baseName(file.path)} /> : <FileText size={16} />;
 };
 
-/** The files a session shared, right of its terminal, newest at the bottom: images as thumbnails, others by name. Selecting one opens it beside the session. */
+/** The files a session showed, right of its terminal, newest at the bottom: images as thumbnails, others by name. Selecting one opens it beside the session. */
 export const SharedFileStrip = ({ s }: { s: SessionState }) => {
   const files = s.meta.files ?? [];
   if (files.length === 0) return null;
   return (
     <div className="shared-file-strip">
       {files.map((file) => (
-        <button key={file.path} title={file.caption ? `${file.caption}\n${file.path}` : file.path} onClick={() => openInActiveTab(fileView(s.key, file.path), s.key)}>
+        <button key={file.path} title={file.path} onClick={() => openInActiveTab(fileView(s.key, file.path), s.key)}>
           {fileKind(file.path) === "image" ? (
             <Thumbnail s={s} file={file} />
           ) : (

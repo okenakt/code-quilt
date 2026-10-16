@@ -31,8 +31,6 @@ import { KeybindingsView } from "./components/keybindings-view";
 import { chordOfEvent } from "./keys";
 import { toggleSidebar, usePrefs } from "./prefs";
 import { applyEvent, displayName, markExited, markResumed, setMachines, setSessions, useStore } from "./store";
-import { sharedFiles } from "./files";
-import { baseName } from "./path";
 import type { MachineInfo, SessionState } from "./types";
 
 const sideOf = (command: string): Side => {
@@ -133,18 +131,6 @@ export const App = () => {
     setToasts((ts) => [...ts, { id, ok, text, open }]);
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), ok ? 4000 : 10000);
   }, []);
-
-  // Files shared while the board is open are announced; all are listed under their session's terminal.
-  const openedAt = useRef(Date.now());
-  const announced = useRef(new Set<string>());
-  useEffect(() => {
-    for (const { s, file, view } of sharedFiles(sessions)) {
-      const id = `${view}@${file.shared_at_ms}`;
-      if (file.shared_at_ms < openedAt.current || announced.current.has(id)) continue;
-      announced.current.add(id);
-      showToast(true, `${displayName(s)} shared ${baseName(file.path)}`, () => openInActiveTab(view, s.key));
-    }
-  }, [sessions, showToast]);
 
   const resume = useCallback(
     (s: SessionState) =>

@@ -16,7 +16,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Version of the daemon protocol (machine-tagged relay through `cq daemon`). Versioned
 /// separately so running hosts stay reachable when only the daemon protocol changes.
-pub const DAEMON_PROTOCOL_VERSION: u32 = 8;
+pub const DAEMON_PROTOCOL_VERSION: u32 = 9;
 
 /// Upper bound for a single frame, to reject corrupted or hostile length prefixes.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
@@ -85,7 +85,7 @@ pub struct SessionMeta {
     /// Account the agent was last seen logged in with (its label, e.g. an email address).
     #[serde(default)]
     pub account: Option<String>,
-    /// Files the agent shared for the user to view, oldest first. Only these can be read back
+    /// Files the agent showed the user in its replies, oldest first. Only these can be read back
     /// through [`ReadFile`].
     #[serde(default)]
     pub files: Vec<SharedFile>,
@@ -94,13 +94,11 @@ pub struct SessionMeta {
     pub orchestrator: bool,
 }
 
-/// A file an agent shared with the user.
+/// A file an agent showed the user (see `docs/design.md`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SharedFile {
     /// Absolute path on the session's machine.
     pub path: String,
-    #[serde(default)]
-    pub caption: Option<String>,
     pub shared_at_ms: u64,
 }
 
@@ -426,8 +424,6 @@ pub enum Message {
     ListDir(ListDir),
     /// Daemon to client: directory listing.
     DirList(DirList),
-    /// Client to host: add a file to the session's shared files.
-    ShareFile(SharedFile),
     /// Client to daemon: read a shared file.
     ReadFile(ReadFile),
     /// Daemon to client: contents of the file of the [`ReadFile`] request `id`.
@@ -495,7 +491,6 @@ mod kind {
     pub const UPSTREAM_CLOSE: u8 = 0x51;
     pub const NAMES: u8 = 0x52;
     pub const NAMES_REPLY: u8 = 0x53;
-    pub const SHARE_FILE: u8 = 0x26;
     pub const INJECT: u8 = 0x23;
     pub const RENAME: u8 = 0x24;
     pub const TERMINATE: u8 = 0x25;
@@ -570,7 +565,6 @@ impl Message {
             Message::ListDir(v) => (kind::LIST_DIR, serde_json::to_vec(v)?),
             Message::DirList(v) => (kind::DIR_LIST, serde_json::to_vec(v)?),
             Message::RequestFailed(v) => (kind::REQUEST_FAILED, serde_json::to_vec(v)?),
-            Message::ShareFile(v) => (kind::SHARE_FILE, serde_json::to_vec(v)?),
             Message::ReadFile(v) => (kind::READ_FILE, serde_json::to_vec(v)?),
             // [u64 LE id][raw bytes]
             Message::FileContent { id, data } => (kind::FILE_CONTENT, [&id.to_le_bytes()[..], data].concat()),
@@ -641,7 +635,6 @@ impl Message {
             kind::LIST_DIR => Message::ListDir(serde_json::from_slice(&payload)?),
             kind::DIR_LIST => Message::DirList(serde_json::from_slice(&payload)?),
             kind::REQUEST_FAILED => Message::RequestFailed(serde_json::from_slice(&payload)?),
-            kind::SHARE_FILE => Message::ShareFile(serde_json::from_slice(&payload)?),
             kind::READ_FILE => Message::ReadFile(serde_json::from_slice(&payload)?),
             kind::FILE_CONTENT => {
                 let Some(id) = payload.first_chunk::<8>() else { bail!("short file content frame") };

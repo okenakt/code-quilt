@@ -15,6 +15,7 @@ mod mcp;
 mod paths;
 mod plugin;
 mod remote;
+mod reply;
 mod session;
 mod term;
 mod usage;
@@ -121,7 +122,7 @@ enum Cmd {
         /// Also act as a Claude Code channel that orchestrators can push messages into.
         #[arg(long)]
         channel: bool,
-        /// Serve a worker session: only list_sessions, get_turns, message and share_file.
+        /// Serve a worker session: only list_sessions, get_turns and message.
         #[arg(long)]
         worker: bool,
     },

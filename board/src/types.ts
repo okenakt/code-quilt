@@ -13,12 +13,12 @@ export type SessionMeta = {
   agent_session_id: string | null;
   name: string | null;
   account?: string | null;
-  /** Files the agent shared for the user to view, oldest first. */
+  /** Files the agent showed the user in its replies, oldest first. */
   files?: SharedFile[];
 };
 
-/** A file an agent shared with the user (mirrors `cq_protocol::SharedFile`). */
-export type SharedFile = { path: string; caption: string | null; shared_at_ms: number };
+/** A file an agent showed the user (mirrors `cq_protocol::SharedFile`). */
+export type SharedFile = { path: string; shared_at_ms: number };
 
 /** Agent event relayed from hooks, the status line, or the host itself. */
 export type AgentEvent = {

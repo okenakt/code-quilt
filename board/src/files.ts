@@ -1,12 +1,11 @@
 import { baseName } from "./path";
-import type { SessionState, SharedFile } from "./types";
 
 const PREFIX = "file:";
 
-/** A file shared by a session, as a pane view. */
+/** A file a session showed, as a pane view. */
 export type FileRef = { session: string; path: string };
 
-/** Pane view key of a file shared by the session `session` (a session key). */
+/** Pane view key of a file shown by the session `session` (a session key). */
 export const fileView = (session: string, path: string): string => PREFIX + JSON.stringify([session, path]);
 
 /** The file a pane view shows, or null for a session view. */
@@ -44,10 +43,3 @@ export const fileKind = (path: string): FileKind => {
 
 /** MIME type for files shown through a blob URL. */
 export const mimeType = (path: string): string => IMAGE_TYPES[extension(path)] ?? (extension(path) === "pdf" ? "application/pdf" : "application/octet-stream");
-
-/** A shared file with the session that shared it. */
-export type SharedEntry = { s: SessionState; file: SharedFile; view: string };
-
-/** Files shared by all sessions. */
-export const sharedFiles = (sessions: SessionState[]): SharedEntry[] =>
-  sessions.flatMap((s) => (s.meta.files ?? []).map((file) => ({ s, file, view: fileView(s.key, file.path) })));

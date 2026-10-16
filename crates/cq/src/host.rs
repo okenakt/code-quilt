@@ -5,7 +5,7 @@ use crate::agent::{self, PermissionPrompt};
 use crate::{ipc, paths, session, usage};
 use anyhow::{Context, Result, bail};
 use cq_protocol::{
-    AgentEvent, ClientKind, Exit, Hello, Inject, InputOwner, Message, PROTOCOL_VERSION, SessionMeta, Rename,
+    AgentEvent, ClientKind, Exit, Hello, Inject, InputOwner, Message, PROTOCOL_VERSION, SessionMeta, Rename, SharedFile,
     SessionStatus, Size, Terminate, Welcome, read_message, write_message,
 };
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -678,12 +678,6 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
                     st.publish(AgentEvent { source: "cq".into(), received_at_ms: session::now_ms(), payload });
                 }
                 Message::Rename(r) => st.rename(r),
-                Message::ShareFile(f) => {
-                    // Sharing a file again moves it to the end with its new caption.
-                    st.meta.files.retain(|old| old.path != f.path);
-                    st.meta.files.push(f);
-                    let _ = session::save(&st.meta);
-                }
                 Message::Terminate(t) => {
                     if !std::mem::replace(&mut st.terminating, true) {
                         let payload = serde_json::json!({ "type": "terminating", "force": t.force });
@@ -850,6 +844,12 @@ fn handle_event(state: &Shared, ev: AgentEvent) {
         }
         _ => {}
     }
+    if hook == Some("Stop")
+        && let Some(reply) = ev.payload.get("last_assistant_message").and_then(|v| v.as_str())
+    {
+        let cwd = ev.payload.get("cwd").and_then(|v| v.as_str()).unwrap_or(&st.meta.cwd);
+        show_files(state.clone(), reply.to_owned(), cwd.into());
+    }
     if hook == Some("SessionStart") {
         st.account_recheck = true;
         if let Some(sid) = ev.payload.get("session_id").and_then(|v| v.as_str()) {
@@ -858,6 +858,23 @@ fn handle_event(state: &Shared, ev: AgentEvent) {
         }
     }
     st.publish(ev);
+}
+
+/// Adds the files a reply shows to the session's files, off the lock since finding them walks
+/// the working directory. A file shown again moves to the end.
+fn show_files(state: Shared, reply: String, cwd: std::path::PathBuf) {
+    std::thread::spawn(move || {
+        let Ok(blocks) = paths::blocks_dir() else { return };
+        let found = crate::reply::files(&reply, &cwd, &blocks);
+        if found.is_empty() {
+            return;
+        }
+        let mut st = state.lock().unwrap();
+        let now = session::now_ms();
+        st.meta.files.retain(|f| !found.contains(&f.path));
+        st.meta.files.extend(found.into_iter().map(|path| SharedFile { path, shared_at_ms: now }));
+        let _ = session::save(&st.meta);
+    });
 }
 
 /// The visible screen as text, one line per row. Unlike `Screen::contents`, rows filled up to the

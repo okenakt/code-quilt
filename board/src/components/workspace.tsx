@@ -204,7 +204,7 @@ const EmptyPane = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
 
 const PaneView = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
   const file = pane.view ? parseFileView(pane.view) : null;
-  // A file pane belongs to the session that shared the file.
+  // A file pane belongs to the session that showed the file.
   const key = file ? file.session : pane.view;
   const s = key ? ctx.sessions.get(key) : undefined;
   const slash = key?.indexOf("/") ?? -1;
@@ -218,7 +218,7 @@ const PaneView = ({ pane, ctx }: { pane: PaneNode; ctx: Ctx }) => {
       className={`pane ${focused ? "focused" : ""} ${!file && s?.activity === "approval" ? "approval" : ""} ${ctx.drag?.id === pane.id ? "dragging" : ""}`}
       onPointerDown={() => !focused && focusPane(pane.id)}
     >
-      <div className="pane-header" title={file ? (shared?.caption ?? file.path) : "Drag to move this pane"} onPointerDown={(e) => ctx.startDrag(e, "pane", pane.id, title)}>
+      <div className="pane-header" title={file ? file.path : "Drag to move this pane"} onPointerDown={(e) => ctx.startDrag(e, "pane", pane.id, title)}>
         {file ? (
           <>
             <FileText size={13} className="muted" />
