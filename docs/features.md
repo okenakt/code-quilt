@@ -2,6 +2,36 @@
 
 今の実装でできることと、コマンド・設定の一覧。仕組みは [design.md](design.md)、判断の経緯は [decisions.md](decisions.md) にある。
 
+## インストール
+
+WindowsとLinux（x86_64）に、cq・cq-orchestrator・cq-boardを `~/.codequilt/bin` に入れる。管理者権限は使わない。リモートのマシンにも同じ手順で入れる（boardも入るが、使わなければ要らない）。リリースはまだ無いので、今は自分でビルドしたアーカイブ（[design.md](design.md#配布) の形）を `--archive` で入れる。
+
+| OS | コマンド |
+| --- | --- |
+| Linux | `curl -fsSL https://github.com/okenakt/code-quilt/releases/latest/download/install.sh \| sh` |
+| Windows（PowerShell） | `irm https://github.com/okenakt/code-quilt/releases/latest/download/install.ps1 \| iex` |
+
+オプションは、Linuxでは `… | sh -s -- オプション`、Windowsでは `& ([scriptblock]::Create((irm …/install.ps1))) オプション` で渡す。
+
+| Linux | Windows | 内容 |
+| --- | --- | --- |
+| `--version vX.Y.Z` | `-Version vX.Y.Z` | 最新ではなく、そのリリースを入れる |
+| `--archive FILE` | `-Archive FILE` | ダウンロードせず、手元のアーカイブから入れる |
+| `--no-modify-path` | `-NoModifyPath` | `PATH` に足さない |
+| `--desktop` | `-Desktop` | boardをアプリのランチャーに登録する（Linuxは `~/.local/share/applications`、Windowsはスタートメニュー） |
+| `--uninstall` | `-Uninstall` | スクリプトが足したもの（`bin/`、`PATH`、ランチャー）を取り除く。セッションや設定は残す |
+
+- ダウンロードしたアーカイブは、リリースの `SHA256SUMS` と照らし合わせてから入れる。
+- `PATH` には、Linuxでは `~/.profile` と `~/.bashrc`（zshを使っていれば `~/.zshenv` も）に `~/.codequilt/env` を読む1行を足し、Windowsではユーザー環境変数 `Path` の先頭に `%USERPROFILE%\.codequilt\bin` を足す。
+- 更新は同じコマンドをもう一度実行する。daemonは入れ替えの前に止め、後で起動し直す。動いているセッションは古いcqのまま動き続ける（Windowsでは使用中の古い実行ファイルを `*.old` に改名して残し、次のインストールで消す）。boardが動いていれば、起動し直すよう表示する。
+- Linuxのboardには WebKitGTK が要る。足りなければスクリプトが案内する（`sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0`）。cqはこれが無くても動く。
+- ソースから入れるときは、Rust・Node.js（LinuxではさらにWebKitGTKの開発用パッケージ `libwebkit2gtk-4.1-dev` など）を用意して次を実行し、`target/release` の `cq`・`cq-orchestrator`・`cq-board` を同じディレクトリに置く。
+
+  ```sh
+  cargo build --release -p cq -p cq-orchestrator
+  cd board && npm ci && npx tauri build
+  ```
+
 ## 機能
 
 ### セッション
@@ -211,6 +241,8 @@ command = "-pane.close"     # "-" removes a default binding (all of its keys wit
 
 | パス | 内容 |
 | --- | --- |
+| `bin/` | インストールスクリプトで入れたcq・cq-orchestrator・cq-board |
+| `env` | `bin/` を `PATH` に足すshのスクリプト（Linux） |
 | `machine_id` | このマシンのid（初めて使うときに作る） |
 | `sessions/<id>.json` | セッションのメタデータ（アカウント、返答で見せたファイルの一覧を含む） |
 | `blocks/<種類>-<ハッシュ>.md` | 返答から取り出したmermaidの図と数式（中身が同じなら同じファイル。消さない） |
