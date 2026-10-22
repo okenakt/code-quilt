@@ -23,7 +23,7 @@ WindowsとLinux（x86_64）に、cq・cq-orchestrator・cq-boardを `~/.codequil
 
 - ダウンロードしたアーカイブは、リリースの `SHA256SUMS` と照らし合わせてから入れる。
 - `PATH` には、Linuxでは `~/.profile` と `~/.bashrc`（zshを使っていれば `~/.zshenv` も）に `~/.codequilt/env` を読む1行を足し、Windowsではユーザー環境変数 `Path` の先頭に `%USERPROFILE%\.codequilt\bin` を足す。
-- 更新は同じコマンドをもう一度実行する。daemonは入れ替えの前に止め、後で起動し直す。動いているセッションは古いcqのまま動き続ける（Windowsでは使用中の古い実行ファイルを `*.old` に改名して残し、次のインストールで消す）。boardが動いていれば、起動し直すよう表示する。
+- 更新は同じコマンドをもう一度実行する。daemonは入れ替えの前に止め、後で起動し直す。動いているセッションとorchestratorは古い実行ファイルのまま動き続ける（Windowsでは使用中の古い実行ファイルを `*.old` に改名して残し、次のインストールで消す）。boardが動いていれば、起動し直すよう表示する。
 - Linuxのboardには WebKitGTK が要る。足りなければスクリプトが案内する（`sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0`）。cqはこれが無くても動く。
 - ソースから入れるときは、Rust・Node.js（LinuxではさらにWebKitGTKの開発用パッケージ `libwebkit2gtk-4.1-dev` など）を用意して次を実行し、`target/release` の `cq`・`cq-orchestrator`・`cq-board` を同じディレクトリに置く。
 
