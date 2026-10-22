@@ -595,6 +595,8 @@ async fn serve_client(state: Shared, stream: ipc::BoxStream) -> Result<()> {
     let (mut rd, mut wr) = tokio::io::split(stream);
     let hello: Hello = match tokio::time::timeout(Duration::from_secs(5), read_message(&mut rd)).await?? {
         Some(Message::Hello(h)) => h,
+        // A liveness probe connects and closes without a word.
+        None => return Ok(()),
         _ => bail!("expected hello"),
     };
     if hello.protocol_version != PROTOCOL_VERSION {
