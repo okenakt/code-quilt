@@ -4,6 +4,7 @@
 param(
     [string]$Version = 'latest',
     [string]$Archive,
+    [switch]$Yes,
     [switch]$NoModifyPath,
     [switch]$Desktop,
     [switch]$Uninstall
@@ -55,6 +56,30 @@ function Get-Download([string]$Dir) {
 }
 
 # The user Path is read and written unexpanded so entries like %USERPROFILE% stay as they are.
+function Get-UserPath {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+    try { $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames') } finally { $key.Close() }
+}
+
+function Test-UserPath {
+    @((Get-UserPath) -split ';' | Where-Object { $_ -eq $PathEntry -or $_ -eq $Bin }).Count -gt 0
+}
+
+# Asks the user unless an option answered it. Without a console to ask on it takes the default.
+function Confirm-ModifyPath {
+    if ($NoModifyPath) { return $false }
+    if ($Yes -or [Console]::IsInputRedirected) { return $true }
+    Write-Host "Add $PathEntry to PATH:"
+    Write-Host '  1) user Path  (default)'
+    Write-Host '  2) do not modify'
+    while ($true) {
+        switch (Read-Host '>') {
+            { $_ -in '', '1' } { return $true }
+            '2' { return $false }
+        }
+    }
+}
+
 function Set-UserPath([scriptblock]$Change) {
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
     try {
@@ -77,6 +102,8 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wP
 }
 
 function Install-CodeQuilt {
+    # Asked once, before anything changes; a later run keeps the entry already there.
+    $modifyPath = -not (Test-UserPath) -and (Confirm-ModifyPath)
     $tmp = Join-Path ([IO.Path]::GetTempPath()) "codequilt-$([guid]::NewGuid())"
     New-Item -ItemType Directory $tmp | Out-Null
     try {
@@ -102,9 +129,10 @@ function Install-CodeQuilt {
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     }
 
-    if (-not $NoModifyPath) {
+    if ($modifyPath) {
         Set-UserPath { param($entries) @($PathEntry) + $entries }
         if (($env:Path -split ';') -notcontains $Bin) { $env:Path = "$Bin;$env:Path" }
+        Write-Host "added to the user Path: $PathEntry"
     }
     if ($Desktop) {
         $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($Shortcut)
@@ -119,7 +147,8 @@ function Install-CodeQuilt {
     if (Get-Process cq-board -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$Bin\*" }) {
         Write-Host 'restart the board to use the new version'
     }
-    if (-not $NoModifyPath) { Write-Host 'open a new terminal to use cq from other shells' }
+    if ($modifyPath) { Write-Host 'open a new terminal to use cq from other shells' }
+    elseif (-not (Test-UserPath)) { Write-Host "$Bin is not on PATH; add it yourself to run cq by name" }
 }
 
 function Uninstall-CodeQuilt {

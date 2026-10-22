@@ -17,12 +17,15 @@ WindowsとLinux（x86_64）に、cq・cq-orchestrator・cq-boardを `~/.codequil
 | --- | --- | --- |
 | `--version vX.Y.Z` | `-Version vX.Y.Z` | 最新ではなく、そのリリースを入れる |
 | `--archive FILE` | `-Archive FILE` | ダウンロードせず、手元のアーカイブから入れる |
-| `--no-modify-path` | `-NoModifyPath` | `PATH` に足さない |
+| `--yes` | `-Yes` | 聞かずに既定の場所で `PATH` に足す |
+| `--no-modify-path` | `-NoModifyPath` | 聞かずに `PATH` に足さない |
 | `--desktop` | `-Desktop` | boardをアプリのランチャーに登録する（Linuxは `~/.local/share/applications`、Windowsはスタートメニュー） |
 | `--uninstall` | `-Uninstall` | スクリプトが足したもの（`bin/`、`PATH`、ランチャー）を取り除く。セッションや設定は残す |
 
 - ダウンロードしたアーカイブは、リリースの `SHA256SUMS` と照らし合わせてから入れる。
-- `PATH` には、Linuxでは `~/.profile` と `~/.bashrc`（zshを使っていれば `~/.zshenv` も）に `~/.codequilt/env` を読む1行を足し、Windowsではユーザー環境変数 `Path` の先頭に `%USERPROFILE%\.codequilt\bin` を足す。
+- `PATH` に足すかどうかと足す場所は、入れる前にメニューで聞く（Enterで既定）。端末が無いときは既定にする。一度足せば、次からのインストールでは聞かない。
+  - Linux：`~/.codequilt/env` を読む1行を、選んだファイルに足す。選べるのは、`~/.profile` と `~/.bashrc`（既定。zshを使っていれば `~/.zshenv` も）、`~/.bashrc` だけ、`~/.profile` だけ、ほかのファイル、足さない。リモートのマシンとして使う（`cq machine add`）なら `~/.profile` が要る（`sh -lc` で起動するため）。足したファイルは `~/.codequilt/rc-files` に記録し、`--uninstall` で行を消す。
+  - Windows：ユーザー環境変数 `Path` の先頭に `%USERPROFILE%\.codequilt\bin` を足す（既定）か、足さないかを選ぶ。
 - 更新は同じコマンドをもう一度実行する。daemonは入れ替えの前に止め、後で起動し直す。動いているセッションとorchestratorは古い実行ファイルのまま動き続ける（Windowsでは使用中の古い実行ファイルを `*.old` に改名して残し、次のインストールで消す）。boardが動いていれば、起動し直すよう表示する。
 - Linuxのboardには WebKitGTK が要る。足りなければスクリプトが案内する（`sudo apt install libwebkit2gtk-4.1-0 libgtk-3-0`）。cqはこれが無くても動く。
 - ソースから入れるときは、Rust・Node.js（LinuxではさらにWebKitGTKの開発用パッケージ `libwebkit2gtk-4.1-dev` など）を用意して次を実行し、`target/release` の `cq`・`cq-orchestrator`・`cq-board` を同じディレクトリに置く。
@@ -243,6 +246,7 @@ command = "-pane.close"     # "-" removes a default binding (all of its keys wit
 | --- | --- |
 | `bin/` | インストールスクリプトで入れたcq・cq-orchestrator・cq-board |
 | `env` | `bin/` を `PATH` に足すshのスクリプト（Linux） |
+| `rc-files` | インストールスクリプトが `env` を読む行を足したファイルの一覧（Linux） |
 | `machine_id` | このマシンのid（初めて使うときに作る） |
 | `sessions/<id>.json` | セッションのメタデータ（アカウント、返答で見せたファイルの一覧を含む） |
 | `blocks/<種類>-<ハッシュ>.md` | 返答から取り出したmermaidの図と数式（中身が同じなら同じファイル。消さない） |

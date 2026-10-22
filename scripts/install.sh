@@ -9,17 +9,18 @@ ROOT="$HOME/.codequilt"
 BIN="$ROOT/bin"
 BINS="cq cq-orchestrator cq-board"
 ENV_LINE='. "$HOME/.codequilt/env"'
-RC_FILES="$HOME/.profile $HOME/.bashrc $HOME/.zshenv"
+RC_RECORD="$ROOT/rc-files"
 DESKTOP_FILE="$HOME/.local/share/applications/codequilt.desktop"
 ICON_FILE="$HOME/.local/share/icons/hicolor/128x128/apps/codequilt.png"
 
 usage() {
     cat <<EOF
-usage: install.sh [--version vX.Y.Z] [--archive FILE] [--no-modify-path] [--desktop]
+usage: install.sh [--version vX.Y.Z] [--archive FILE] [--yes | --no-modify-path] [--desktop]
        install.sh --uninstall
 
   --version VER     install that release instead of the latest
   --archive FILE    install from a local archive instead of downloading
+  --yes             add ~/.codequilt/bin to PATH in the default files without asking
   --no-modify-path  do not add ~/.codequilt/bin to PATH
   --desktop         add CodeQuilt to the application launcher
   --uninstall       remove what this script added (sessions and settings in ~/.codequilt are kept)
@@ -32,12 +33,13 @@ die() {
     exit 1
 }
 
-version=latest archive="" modify_path=1 desktop=0 uninstall=0
+version=latest archive="" path_choice="" desktop=0 uninstall=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) version="${2:?--version needs a value}"; shift ;;
         --archive) archive="${2:?--archive needs a file}"; shift ;;
-        --no-modify-path) modify_path=0 ;;
+        --yes) path_choice=default ;;
+        --no-modify-path) path_choice=none ;;
         --desktop) desktop=1 ;;
         --uninstall) uninstall=1 ;;
         -h | --help) usage; exit 0 ;;
@@ -62,29 +64,78 @@ download() {
     (cd "$tmp" && grep " $ASSET\$" SHA256SUMS | sha256sum -c --quiet -) || die "checksum mismatch for $ASSET"
 }
 
-# Sources ~/.codequilt/env from the login and interactive shell files (zsh only when it is used).
+# Prints the shell files to source ~/.codequilt/env from, one per line, asking the user which
+# unless an option answered it. Without a terminal it takes the default.
+choose_rc_files() {
+    default="$HOME/.profile
+$HOME/.bashrc" names="~/.profile and ~/.bashrc"
+    if [ -e "$HOME/.zshenv" ] || command -v zsh >/dev/null 2>&1; then
+        default="$default
+$HOME/.zshenv" names="~/.profile, ~/.bashrc and ~/.zshenv"
+    fi
+    case "$path_choice" in
+        default) printf '%s\n' "$default"; return ;;
+        none) return ;;
+    esac
+    if ! (: </dev/tty) 2>/dev/null; then
+        printf '%s\n' "$default"
+        return
+    fi
+    cat >/dev/tty <<EOF
+Add ~/.codequilt/bin to PATH:
+  1) $names  (default)
+  2) ~/.bashrc only
+  3) ~/.profile only  (login shells, including remote access through \`cq machine add\`)
+  4) another file
+  5) do not modify
+EOF
+    while :; do
+        printf '> ' >/dev/tty
+        read -r answer </dev/tty || answer=5
+        case "$answer" in
+            "" | 1) printf '%s\n' "$default"; return ;;
+            2) say "$HOME/.bashrc"; return ;;
+            3) say "$HOME/.profile"; return ;;
+            4)
+                printf 'file: ' >/dev/tty
+                read -r file </dev/tty || file=""
+                case "$file" in "~/"*) file="$HOME/${file#\~/}" ;; esac
+                case "$file" in
+                    /*) say "$file"; return ;;
+                    *) say "give an absolute path or one starting with ~/" >/dev/tty ;;
+                esac
+                ;;
+            5) return ;;
+        esac
+    done
+}
+
+# Sources ~/.codequilt/env from each file on stdin and records them for --uninstall.
 add_to_path() {
     printf '%s\n' 'case ":$PATH:" in *":$HOME/.codequilt/bin:"*) ;; *) PATH="$HOME/.codequilt/bin:$PATH" ;; esac' >"$ROOT/env"
-    for rc in $RC_FILES; do
-        if [ "$rc" = "$HOME/.zshenv" ] && [ ! -e "$rc" ] && ! command -v zsh >/dev/null 2>&1; then
-            continue
-        fi
+    while IFS= read -r rc; do
         if ! grep -qxF "$ENV_LINE" "$rc" 2>/dev/null; then
             if [ -s "$rc" ] && [ -n "$(tail -c 1 "$rc")" ]; then echo >>"$rc"; fi
             say "$ENV_LINE" >>"$rc"
+            say "added to $rc: $ENV_LINE"
         fi
+        grep -qxF "$rc" "$RC_RECORD" 2>/dev/null || say "$rc" >>"$RC_RECORD"
     done
 }
 
 remove_from_path() {
     rm -f "$ROOT/env"
-    for rc in $RC_FILES; do
-        if [ -f "$rc" ] && grep -qxF "$ENV_LINE" "$rc"; then
-            grep -vxF "$ENV_LINE" "$rc" >"$rc.cq-tmp" || true
-            cat "$rc.cq-tmp" >"$rc"
-            rm -f "$rc.cq-tmp"
-        fi
-    done
+    if [ -f "$RC_RECORD" ]; then
+        while IFS= read -r rc; do
+            if [ -f "$rc" ] && grep -qxF "$ENV_LINE" "$rc"; then
+                grep -vxF "$ENV_LINE" "$rc" >"$rc.cq-tmp" || true
+                cat "$rc.cq-tmp" >"$rc"
+                rm -f "$rc.cq-tmp"
+                say "removed from $rc: $ENV_LINE"
+            fi
+        done <"$RC_RECORD"
+    fi
+    rm -f "$RC_RECORD"
 }
 
 add_desktop_entry() {
@@ -113,6 +164,8 @@ install_release() {
     [ "$(uname -sm)" = "Linux x86_64" ] || die "this script supports Linux x86_64 only (found $(uname -sm))"
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
+    # Asked once, before anything changes; a later run keeps the files already recorded.
+    if [ -s "$RC_RECORD" ]; then : >"$tmp/rc"; else choose_rc_files >"$tmp/rc"; fi
     if [ -n "$archive" ]; then
         cp "$archive" "$tmp/$ASSET"
     else
@@ -136,7 +189,7 @@ install_release() {
     done
     say "installed $("$BIN/cq" --version) into $BIN"
 
-    if [ "$modify_path" = 1 ]; then add_to_path; fi
+    if [ -s "$tmp/rc" ]; then add_to_path <"$tmp/rc"; fi
     if [ "$desktop" = 1 ]; then add_desktop_entry; fi
 
     missing="$(ldd "$BIN/cq-board" 2>/dev/null | awk '/not found/ {print $1}')"
@@ -154,7 +207,13 @@ install_release() {
     done
     case ":$PATH:" in
         *":$BIN:"*) ;;
-        *) if [ "$modify_path" = 1 ]; then say "open a new shell, or run: . \"\$HOME/.codequilt/env\""; fi ;;
+        *)
+            if [ -s "$RC_RECORD" ]; then
+                say "open a new shell, or run: . \"\$HOME/.codequilt/env\""
+            else
+                say "$BIN is not on PATH; add it yourself to run cq by name"
+            fi
+            ;;
     esac
 }
 
