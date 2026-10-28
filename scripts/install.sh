@@ -65,7 +65,7 @@ download() {
 }
 
 # Prints the shell files to source ~/.codequilt/env from, one per line, asking the user which
-# unless an option answered it. Without a terminal it takes the default.
+# unless an option answered it. Without a terminal it adds none.
 choose_rc_files() {
     default="$HOME/.profile
 $HOME/.bashrc" names="~/.profile and ~/.bashrc"
@@ -77,10 +77,7 @@ $HOME/.zshenv" names="~/.profile, ~/.bashrc and ~/.zshenv"
         default) printf '%s\n' "$default"; return ;;
         none) return ;;
     esac
-    if ! (: </dev/tty) 2>/dev/null; then
-        printf '%s\n' "$default"
-        return
-    fi
+    if ! (: </dev/tty) 2>/dev/null; then return; fi
     cat >/dev/tty <<EOF
 Add ~/.codequilt/bin to PATH:
   1) $names  (default)
@@ -211,7 +208,7 @@ install_release() {
             if [ -s "$RC_RECORD" ]; then
                 say "open a new shell, or run: . \"\$HOME/.codequilt/env\""
             else
-                say "$BIN is not on PATH; add it yourself to run cq by name"
+                say "$BIN is not on PATH; add it yourself, or run this script again with --yes"
             fi
             ;;
     esac

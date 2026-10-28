@@ -65,10 +65,11 @@ function Test-UserPath {
     @((Get-UserPath) -split ';' | Where-Object { $_ -eq $PathEntry -or $_ -eq $Bin }).Count -gt 0
 }
 
-# Asks the user unless an option answered it. Without a console to ask on it takes the default.
+# Asks the user unless an option answered it. Without a console to ask on it adds nothing.
 function Confirm-ModifyPath {
     if ($NoModifyPath) { return $false }
-    if ($Yes -or [Console]::IsInputRedirected) { return $true }
+    if ($Yes) { return $true }
+    if ([Console]::IsInputRedirected) { return $false }
     Write-Host "Add $PathEntry to PATH:"
     Write-Host '  1) user Path  (default)'
     Write-Host '  2) do not modify'
@@ -148,7 +149,7 @@ function Install-CodeQuilt {
         Write-Host 'restart the board to use the new version'
     }
     if ($modifyPath) { Write-Host 'open a new terminal to use cq from other shells' }
-    elseif (-not (Test-UserPath)) { Write-Host "$Bin is not on PATH; add it yourself to run cq by name" }
+    elseif (-not (Test-UserPath)) { Write-Host "$Bin is not on PATH; add it yourself, or run this script again with -Yes" }
 }
 
 function Uninstall-CodeQuilt {
