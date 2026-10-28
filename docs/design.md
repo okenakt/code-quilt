@@ -405,7 +405,8 @@ flowchart LR
     sh --> bin["~/.codequilt/bin<br/>cq・cq-orchestrator・cq-board"]
 ```
 
-- 配布物はGitHub Releasesに載せる、OSごとのアーカイブ（`codequilt-x86_64-pc-windows-msvc.zip`、`codequilt-x86_64-unknown-linux-gnu.tar.gz`）と `SHA256SUMS`、インストールスクリプト。アーカイブの直下に3つの実行ファイルと、Linuxではランチャー用のアイコン `codequilt.png` を置く。資産の名前にバージョンを入れないので、`releases/latest/download/…` で最新を取れる。リリースを作る仕組みはまだ無く、今は手でビルドしたアーカイブを `--archive` で入れる。バージョンはworkspaceの `version` だけに持つ（boardもCargoの値を使う）。
+- 配布物はGitHub Releasesに載せる、OSごとのアーカイブ（`codequilt-x86_64-pc-windows-msvc.zip`、`codequilt-x86_64-unknown-linux-gnu.tar.gz`）と `SHA256SUMS`、インストールスクリプト。アーカイブの直下に3つの実行ファイルと、Linuxではランチャー用のアイコン `codequilt.png` を置く。資産の名前にバージョンを入れないので、`releases/latest/download/…` で最新を取れる。バージョンはworkspaceの `version` だけに持つ（boardもCargoの値を使う）。
+- リリースはGitHub Actions（`.github/workflows/release.yml`）で作る。workspaceの `version` と同じ `vX.Y.Z` のタグをpushすると、WindowsとUbuntu 22.04でビルドし、資産を付けたドラフトを作る。中身を確かめてから手で公開する。Linux版をUbuntu 22.04でビルドするのは、それ以降のglibcを持つディストリビューションで動くようにするため。手で実行したとき（`workflow_dispatch`）は、アーカイブをワークフローのartifactに置くだけでリリースは作らない。
 - boardは常に同梱する。TauriのインストーラーやAppImageは使わず、`cq-board` を単体の実行ファイルとしてcqの隣に置く。本体の隣の `cq-*` は導入済みのプラグインになるので、配布のための仕組みは要らない。
 - 置き場所は `~/.codequilt/bin` に平置きで、バージョンごとには分けない。cq hostはhookとstatuslineにcq自身の絶対パスを書くので、更新しても同じパスに新しいcqがあるようにする。`PATH` はユーザーの範囲だけで、足すかどうかと場所をユーザーに選ばせてから足す（Linuxは `~/.codequilt/env` を選んだシェルの設定から読み、Windowsはユーザー環境変数）。Windowsのユーザー環境変数は展開しないまま読み書きし、ほかの項目の `%USERPROFILE%` などを崩さない。
 - 入れ替えは、Linuxでは新しいファイルを古いファイルの上にrenameする。Windowsでは使用中の実行ファイルは消せないが改名はできるので、古いものを `*.<時刻>.old` に改名してから置き、消せる `*.old` をその場で消す（残ったものは次のインストールで消す）。

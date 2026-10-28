@@ -4,7 +4,7 @@
 
 ## インストール
 
-WindowsとLinux（x86_64）に、cq・cq-orchestrator・cq-boardを `~/.codequilt/bin` に入れる。管理者権限は使わない。リモートのマシンにも同じ手順で入れる（boardも入るが、使わなければ要らない）。リリースはまだ無いので、今は自分でビルドしたアーカイブ（[design.md](design.md#配布) の形）を `--archive` で入れる。
+WindowsとLinux（x86_64）に、cq・cq-orchestrator・cq-boardを `~/.codequilt/bin` に入れる。管理者権限は使わない。リモートのマシンにも同じ手順で入れる（boardも入るが、使わなければ要らない）。最初のリリースを出すまでは、手で実行したリリースのワークフローのartifactか、自分でビルドしたアーカイブ（[design.md](design.md#配布) の形）を `--archive` で入れる。
 
 | OS | コマンド |
 | --- | --- |
