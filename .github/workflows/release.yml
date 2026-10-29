@@ -49,6 +49,7 @@ jobs:
         run: |
           mkdir pkg
           for b in cq cq-orchestrator cq-board; do cp "target/release/$b${{ matrix.exe }}" pkg/; done
+          cp README.md LICENSE pkg/
           if [ "$RUNNER_OS" = Windows ]; then
             7z a "codequilt-${{ matrix.target }}.zip" ./pkg/*
           else
