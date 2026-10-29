@@ -27,11 +27,12 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - name: Check the tag matches the workspace version
+      - name: Check the tag matches the workspace version and has a changelog entry
         if: github.ref_type == 'tag'
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
           [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != v$version"; exit 1; }
+          grep -qxF "## $GITHUB_REF_NAME" CHANGELOG.md || { echo "CHANGELOG.md has no ## $GITHUB_REF_NAME"; exit 1; }
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v7
         with:
@@ -77,4 +78,5 @@ jobs:
         run: |
           cp scripts/install.sh scripts/install.ps1 dist/
           (cd dist && sha256sum codequilt-* > SHA256SUMS)
-          gh release create "$GITHUB_REF_NAME" --draft --generate-notes dist/*
+          awk -v h="## $GITHUB_REF_NAME" '$0 == h { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" --draft --notes-file notes.md dist/*
