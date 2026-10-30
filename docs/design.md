@@ -412,3 +412,10 @@ flowchart LR
 - 入れ替えは、Linuxでは新しいファイルを古いファイルの上にrenameする。Windowsでは使用中の実行ファイルは消せないが改名はできるので、古いものを `*.<時刻>.old` に改名してから置き、消せる `*.old` をその場で消す（残ったものは次のインストールで消す）。
 - daemonは入れ替えの前に古いcqで止める。プロトコルのバージョンが違うdaemonは停止の要求を断るので、新しいcqでは止められないことがある。入れ替えの後、新しいcqで起動し直す。
 - 更新の仕組み（`cq update` など）は持たない。インストールスクリプトをもう一度実行するか、ソースからビルドする。
+
+### リリースの手順
+
+1. 必要なら、Actionsのreleaseを `main` で手で実行し、両OSのビルドとartifactのアーカイブを確かめる。
+2. `Cargo.toml` のworkspaceの `version` を上げ、`cargo check` で `Cargo.lock` も更新し、`CHANGELOG.md` の先頭に `## vX.Y.Z` の節を足して、コミットしてpushする。
+3. 注釈付きのタグを打ってpushする（`git tag -a vX.Y.Z -m "vX.Y.Z"`、`git push origin vX.Y.Z`）。GitHubの画面でリリースと一緒にタグを作ると、workflowの `gh release create` が既にあるリリースとぶつかって失敗するので使わない。
+4. できたドラフトで、リリースノート、資産（アーカイブ2つ、`SHA256SUMS`、`install.sh`、`install.ps1`）、アーカイブの中身を確かめて公開する。
